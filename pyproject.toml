@@ -33,7 +33,12 @@ pyoomph = { git = "https://github.com/comphy-lab/pyoomph", branch = "develop" }
 config-settings-package = { pyoomph = { "cmake.define.PYOOMPH_USE_MPI" = "ON", "build.tool-args" = "-j8" } }
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = [
+    "imageio>=2.37.4",
+    "imageio-ffmpeg>=0.6.0",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
 
 [tool.ruff]
 line-length = 100
