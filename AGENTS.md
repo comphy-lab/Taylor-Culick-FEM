@@ -62,9 +62,17 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 ## Validation order
 
 `cases/planar_comoving.py` must pass before any axisymmetric result is
-believed. The planar problem has an exact steady state at `U = sqrt(2)`; the
-axisymmetric one only approaches it asymptotically, so a broken constraint is
-easy to mistake for physics there and impossible to hide in the planar case.
+believed, because it is the only case with published data to check against:
+Savva & Bush, JFM 626 (2009), figure 6. At `Oh_SB = 0.5` this code gives
+`U/V_TC = 0.9297` at `t* = 30` against their ~0.93. Treat that as the
+regression target.
+
+Neither geometry has a true steady state -- the rim collects mass and grows
+without bound in both -- so a stationary solve diverges and the control only
+*approaches* `sqrt(2)`. Do not read an intermediate plateau as a converged
+value: the planar case sits near `0.83` from `t ~ 1` to `t ~ 3` and then climbs
+away from it. Comparing two runs early in the transient proves nothing about
+convergence, because every run agrees there regardless of mesh or domain.
 
 ## Repository conventions
 

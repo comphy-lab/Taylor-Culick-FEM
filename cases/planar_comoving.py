@@ -1,14 +1,31 @@
 """Planar Taylor-Culick retraction in a frame co-moving with the rim.
 
-This is the validation case. A semi-infinite two-dimensional sheet retracting
-into a rim has a genuine steady state in the co-moving frame, so the control
-velocity must equal the Taylor-Culick velocity exactly:
+This is the validation case. A semi-infinite two-dimensional sheet retracts at
+the Taylor-Culick velocity
 
-    V_TC = sqrt(2 sigma / (rho h0))  ->  sqrt(2)   in these units.
+    V_TC = sqrt(2 sigma / (rho h0))  ->  sqrt(2)   in these units,
 
-Any error in the Lagrange-multiplier constraint shows up directly as an offset
-in the recovered control ``U``. There is no asymptotics to hide behind here,
-which is exactly why this case runs before the axisymmetric one.
+which the recovered control ``U(t)`` must approach.
+
+Note there is **no true steady state**, even in the co-moving frame: the rim
+collects mass at a rate ``rho h V`` and therefore grows without bound. The
+classical result follows from ``d(mV)/dt = 2 sigma`` with ``m = rho h V t``, so
+``V`` is constant while ``m`` grows. A stationary solve of this problem is
+consequently ill-posed and diverges; the driver attempts one only as an
+optional extra and reports failure rather than masking it.
+
+The case is validated against Savva & Bush, JFM 626 (2009), figure 6, which
+gives the edge velocity against ``t* = t/tau_vis`` for a range of Ohnesorge
+number. Two convention traps in that comparison:
+
+  * their ``Oh = mu/sqrt(2 H rho gamma)`` carries a ``sqrt(2)`` that ours does
+    not, so our coded ``Oh = 0.05`` is their ``Oh = 0.035``;
+  * ``tau_vis = mu H / (2 gamma)`` is the *viscous* clock, and their curves
+    collapse onto it only for ``Oh >~ 0.5``. At lower ``Oh`` the approach is
+    inertial, set by rim growth in capillary time, and ``t*`` is meaningless.
+
+At ``Oh_SB = 0.5`` this case gives ``U/V_TC = 0.9297`` at ``t* = 30`` against
+their ~0.93.
 
 Geometry (half sheet, midplane symmetry at ``y = 0``):
 
@@ -28,7 +45,15 @@ the tip is held at ``x = 0`` and the undisturbed film, at rest in the
 laboratory, enters at ``u_x = -U``.
 """
 
-from pyoomph import *
+import os
+import sys
+
+# Sets HWLOC_COMPONENTS=-gl before MPI initialises; see the package docstring.
+# Must precede every pyoomph import, so it comes first and is not reordered.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import taylor_culick_fem  # noqa: F401,E402  (import for side effect: runtime env)
+
+from pyoomph import *  # noqa: E402
 from pyoomph.equations.navier_stokes import *
 from pyoomph.equations.ALE import *
 from pyoomph.expressions import *
@@ -166,12 +191,28 @@ def report(label: str, u: float) -> float:
 if __name__ == "__main__":
     import sys
 
-    t_end = 20.0
+    t_end, length, res, oh = 20.0, None, None, None
     for arg in sys.argv[1:]:
         if arg.startswith("--tend="):
             t_end = float(arg.split("=", 1)[1])
+        elif arg.startswith("--length="):
+            length = float(arg.split("=", 1)[1])
+        elif arg.startswith("--res="):
+            res = float(arg.split("=", 1)[1])
+        elif arg.startswith("--oh="):
+            oh = float(arg.split("=", 1)[1])
 
     with PlanarTaylorCulickProblem() as problem:
+        if length is not None:
+            problem.domain_length = length
+        if res is not None:
+            problem.resolution = res
+        if oh is not None:
+            problem.Oh = oh
+        print(
+            f"# L={problem.domain_length} res={problem.resolution} Oh={problem.Oh}",
+            flush=True,
+        )
         problem.initialise()
 
         # Transient from rest. A cold stationary Newton solve on a deforming

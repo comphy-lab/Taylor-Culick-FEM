@@ -47,14 +47,29 @@ V_TC = sqrt(2 sigma / (rho h0))  ->  sqrt(2) = 1.41421...
 
 ### 1. Planar (`cases/planar_comoving.py`) — validation
 
-A semi-infinite two-dimensional sheet retracting into a rim. In the co-moving
-frame this problem has a **genuine steady state**, and the control velocity must
-equal `sqrt(2)` exactly. That makes it a sharp test of the Lagrange-multiplier
-constraint: any error in the constraint shows up directly as an offset in `U`,
-with no asymptotics to hide behind.
+A semi-infinite two-dimensional sheet retracting into a rim. The control
+velocity must approach `sqrt(2)`.
 
-Run it first. If `U` does not sit on `sqrt(2)`, nothing downstream is
-trustworthy.
+There is **no true steady state**, even in the co-moving frame: the rim
+collects mass at rate `rho h V` and grows without bound, which is exactly how
+the classical result arises (`d(mV)/dt = 2 sigma` with `m = rho h V t` gives
+constant `V` and growing `m`). A stationary solve is therefore ill-posed and
+diverges; the driver attempts one only as an optional extra.
+
+Run it first, because it can be checked against published data. Savva & Bush,
+JFM **626** (2009), figure 6 gives the edge velocity against `t* = t/tau_vis`.
+At `Oh_SB = 0.5` this case gives
+
+| | `U/V_TC` at `t* = 30` |
+|---|---|
+| this code | **0.9297** |
+| Savva & Bush fig. 6 | ~0.93 |
+
+Two convention traps in that comparison: their `Oh = mu/sqrt(2 H rho gamma)`
+carries a `sqrt(2)` ours does not (our `Oh = 0.05` is their `0.035`), and
+`tau_vis = mu H/(2 gamma)` is the *viscous* clock, onto which their curves
+collapse only for `Oh >~ 0.5`. At lower `Oh` the approach is inertial and set
+by rim growth in capillary time, so `t*` is not a useful target.
 
 ### 2. Axisymmetric (`cases/axisymmetric_comoving.py`) — the physical problem
 
