@@ -45,13 +45,19 @@ the tip is held at ``x = 0`` and the undisturbed film, at rest in the
 laboratory, enters at ``u_x = -U``.
 """
 
+import math
 import os
-import sys
 
-# Sets HWLOC_COMPONENTS=-gl before MPI initialises; see the package docstring.
-# Must precede every pyoomph import, so it comes first and is not reordered.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import taylor_culick_fem  # noqa: F401,E402  (import for side effect: runtime env)
+# Must precede the first pyoomph (hence MPI) import, so it comes first and is
+# not reordered. hwloc's OpenGL backend enumerates NVIDIA displays by connecting
+# to /tmp/.X11-unix/X0, X1, ... directly -- it ignores DISPLAY, so unsetting that
+# does not help. On a host running a GNOME/Wayland session the compositor accepts
+# the socket but never completes the handshake for an unauthorised client, and
+# hwloc then blocks forever in poll(..., -1) inside MPI_Init. The symptom is that
+# `import pyoomph` hangs with no error, and that `mpirun -n 1 python ...` appears
+# to fix it. A solver has no reason to probe the display for topology.
+os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 from pyoomph import *  # noqa: E402
 from pyoomph.equations.navier_stokes import *
@@ -63,10 +69,13 @@ from pyoomph.meshes.zeta import (
     AssignZetaCoordinatesByEulerianCoordinate,
 )
 
-# Full sheet thickness is the length scale, so the simulated half-sheet is 0.5
-# thick and the rim cap radius equals that half-thickness.
+# Lengths are scaled on the sheet's FULL thickness h0, so the simulated half
+# sheet is 0.5 thick and the rim cap radius equals that half-thickness. Getting
+# this wrong moves the answer by exactly sqrt(2).
 HALF_THICKNESS = 0.5
-V_TAYLOR_CULICK = 2.0**0.5
+
+#: Taylor-Culick speed sqrt(2 gamma / (rho h0)) on the FULL thickness.
+V_TAYLOR_CULICK = math.sqrt(2.0)
 
 
 class PlanarSheetMesh(GmshTemplate):
@@ -186,59 +195,3 @@ def report(label: str, u: float) -> float:
     print(f"  relative error   = {rel_err:.3e}")
     print("=" * 64, flush=True)
     return rel_err
-
-
-if __name__ == "__main__":
-    import sys
-
-    t_end, length, res, oh = 20.0, None, None, None
-    for arg in sys.argv[1:]:
-        if arg.startswith("--tend="):
-            t_end = float(arg.split("=", 1)[1])
-        elif arg.startswith("--length="):
-            length = float(arg.split("=", 1)[1])
-        elif arg.startswith("--res="):
-            res = float(arg.split("=", 1)[1])
-        elif arg.startswith("--oh="):
-            oh = float(arg.split("=", 1)[1])
-
-    with PlanarTaylorCulickProblem() as problem:
-        if length is not None:
-            problem.domain_length = length
-        if res is not None:
-            problem.resolution = res
-        if oh is not None:
-            problem.Oh = oh
-        print(
-            f"# L={problem.domain_length} res={problem.resolution} Oh={problem.Oh}",
-            flush=True,
-        )
-        problem.initialise()
-
-        # Transient from rest. A cold stationary Newton solve on a deforming
-        # free surface diverges -- the interface has to find its own shape
-        # first. So march in time and watch the control settle, then (optionally)
-        # polish with a stationary solve seeded from the converged state.
-        history = problem.create_text_file_output(
-            "control.txt", header=["t", "U", "U_over_VTC"]
-        )
-        t, dt_out = 0.0, 0.1
-        while t < t_end - 1e-12:
-            t = min(t + dt_out, t_end)
-            problem.run(t, startstep=1e-4, maxstep=dt_out, temporal_error=1e-3)
-            u = problem.control_velocity()
-            now = float(problem.get_current_time(as_float=True))
-            history.add_row(now, u, u / V_TAYLOR_CULICK)
-            print(
-                f"t = {now:8.4f}   U = {u:.9f}   U/V_TC = {u / V_TAYLOR_CULICK:.9f}",
-                flush=True,
-            )
-        report("TRANSIENT, FINAL TIME", problem.control_velocity())
-
-        # Now the stationary solve is well-posed: it starts from the settled
-        # interface shape rather than the initial guess.
-        try:
-            problem.solve(max_newton_iterations=30)
-            report("STATIONARY SOLVE (seeded from transient)", problem.control_velocity())
-        except Exception as exc:  # noqa: BLE001 - report, do not mask
-            print(f"stationary polish failed: {exc}", flush=True)
