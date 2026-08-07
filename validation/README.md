@@ -1,5 +1,30 @@
 # Validation — planar Newtonian retraction
 
+## Scope: `Oh_SB <= 1`
+
+The campaign is bounded above at `Oh_SB = 1` (Vatsal, 2026-08-07). The reason is
+the window-sizing rule: the co-moving window must contain the diffusive
+footprint `sqrt(4 nu t)`, which scales with `mu`, so at `t* = 100`
+
+| `Oh_SB` | required `L/h0` |
+|---|---|
+| 0.035 | 13 |
+| 0.5 | 52 |
+| 1 | 104 |
+| 5 | 300 |
+| 10 | 600 |
+
+Beyond `Oh_SB = 1` the cost grows sharply for the least interesting physics --
+the strongly viscous limit where no rim forms and the curves collapse onto one
+another. `Oh_SB ~ 1` is where inertia and viscosity are comparable and the
+dynamics are richest.
+
+Consequence for the comparison matrix: the digitised Savva & Bush curves used
+are `Oh = 0.5` and `Oh = 1`; their `Oh = 5, 10, 100` curves and the Ahsan et al.
+high-`Oh` asymptotics are now out of DNS scope. The 1D Trouton solver is cheap
+enough to run at high `Oh` regardless, and its `Oh = 100` point is retained as
+evidence on the digitisation question (see Status), not as DNS scope.
+
 ## Campaign goal
 
 Two questions, asked separately in each regime because the physics and the
