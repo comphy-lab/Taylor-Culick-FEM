@@ -306,8 +306,13 @@ def main() -> None:
     print(f"{len(entries)} frames, t = {times.min():.3f} .. {times.max():.3f}", flush=True)
 
     hist_raw = np.loadtxt(args.control, comments="#")
-    hist = (hist_raw[:, 0], hist_raw[:, 2])  # t, U/V_TC   (right panel)
-    hist_abs = (hist_raw[:, 0], hist_raw[:, 1])  # t, U     (lab-frame shift)
+    # control.txt columns are  0:t  1:tstar  2:U  3:U/V_TC  -- both of these
+    # were off by one. The right panel drew raw U under a "V/V_TC" label, and
+    # the lab-frame shift added TSTAR to the x velocity instead of U, which at
+    # t* = 30 is a factor of 23 and saturated the entire colormap. That is why
+    # every rim rendered as flat yellow.
+    hist = (hist_raw[:, 0], hist_raw[:, 3])  # t, U/V_TC   (right panel)
+    hist_abs = (hist_raw[:, 0], hist_raw[:, 2])  # t, U     (lab-frame shift)
 
     # Velocity is bounded on [0, sqrt(2)] by construction: V_TC is the physical
     # ceiling for this problem, so a fixed scale is meaningful rather than
