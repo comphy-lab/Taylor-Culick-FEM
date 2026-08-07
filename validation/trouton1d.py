@@ -78,7 +78,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.sparse import lil_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 
 V_TC = math.sqrt(2.0)
 
@@ -88,42 +88,94 @@ def _grad(f: np.ndarray, m: np.ndarray) -> np.ndarray:
     return np.gradient(f, m, edge_order=2)
 
 
-def _rhs(_t: float, y: np.ndarray, n: int, m: np.ndarray, mu: float, tip_flux: float):
+def _grad_operator(m: np.ndarray):
+    """Sparse D with ``D @ f == np.gradient(f, m, edge_order=2)``.
+
+    The mass grid is fixed for the whole integration, so the non-uniform stencil
+    weights are constants -- but ``np.gradient`` rederives them on every call,
+    and the RHS calls it four times. Under a stiff BDF solve that is tens of
+    thousands of evaluations and profiled at ~45% of total runtime. Building the
+    operator once turns each into a banded mat-vec.
+
+    Weights are numpy's documented second-order non-uniform stencils; the
+    equivalence is asserted below rather than trusted.
+    """
+    n = m.size
+    hs, hd = m[1:-1] - m[:-2], m[2:] - m[1:-1]           # interior spacings
+    rows = np.concatenate([np.arange(1, n - 1)] * 3 + [[0, 0, 0], [n - 1] * 3])
+    cols = np.concatenate([np.arange(0, n - 2), np.arange(1, n - 1),
+                           np.arange(2, n), [0, 1, 2], [n - 3, n - 2, n - 1]])
+    h0, h1 = m[1] - m[0], m[2] - m[1]
+    g0, g1 = m[-2] - m[-3], m[-1] - m[-2]
+    vals = np.concatenate([
+        -hd / (hs * (hs + hd)),                          # interior f[i-1]
+        (hd - hs) / (hs * hd),                           # interior f[i]
+        hs / (hd * (hs + hd)),                           # interior f[i+1]
+        [-(2.0 * h0 + h1) / (h0 * (h0 + h1)),            # one-sided at m[0]
+         (h0 + h1) / (h0 * h1),
+         -h0 / (h1 * (h0 + h1))],
+        [g1 / (g0 * (g0 + g1)),                          # one-sided at m[-1]
+         -(g0 + g1) / (g0 * g1),
+         (2.0 * g1 + g0) / (g1 * (g0 + g1))],
+    ])
+    D = csr_matrix((vals, (rows, cols)), shape=(n, n))
+
+    probe = np.cos(3.0 * m / max(m[-1], 1e-30)) + 0.5 * m / max(m[-1], 1e-30)
+    err = np.max(np.abs(D @ probe - np.gradient(probe, m, edge_order=2)))
+    scale = max(np.max(np.abs(np.gradient(probe, m, edge_order=2))), 1e-30)
+    assert err / scale < 1e-10, f"grad operator mismatch: {err / scale:.3e}"
+    return D
+
+
+def _rhs(_t: float, y: np.ndarray, n: int, geom, mu: float, tip_flux: float):
+    D, cell, dm_face = geom  # all fixed by the mass grid; built once in run()
     h = np.maximum(y[:n], 1e-9)
     u = y[n : 2 * n]
 
     # --- surface curvature, via d/dx = h d/dm -------------------------------
-    h_m = _grad(h, m)
-    h_mm = _grad(h_m, m)
+    h_m = D @ h
+    h_mm = D @ h_m
     h_x = h * h_m
     h_xx = h * (h_m**2 + h * h_mm)
     kappa = 0.5 * h_xx / (1.0 + 0.25 * h_x**2) ** 1.5
-    kappa_m = _grad(kappa, m)
+    kappa_m = D @ kappa
 
     # --- viscous term, finite volume on the non-uniform grid ----------------
     # F_{i+1/2} = h^2 u_m on cell faces; the tip face carries the prescribed cap
     # pull instead of a computed gradient. Dividing by the CELL WIDTH (not a
     # uniform dm) keeps the operator conservative when the mesh is graded.
     h_mid = 0.5 * (h[1:] + h[:-1])
-    F = h_mid**2 * (u[1:] - u[:-1]) / (m[1:] - m[:-1])
+    F = h_mid**2 * (u[1:] - u[:-1]) / dm_face
     F_full = np.empty(n + 1)
     F_full[1:-1] = F
     F_full[0] = tip_flux  # <- Savva & Bush eq. 2.28, the massless-cap closure
     F_full[-1] = F[-1]
 
-    faces = np.empty(n + 1)
-    faces[1:-1] = 0.5 * (m[1:] + m[:-1])
-    faces[0], faces[-1] = m[0], m[-1]
-    cell = np.diff(faces)
-    cell[0] = faces[1] - faces[0]
-
     du = 4.0 * mu * (F_full[1:] - F_full[:-1]) / cell + h * kappa_m
-    dh = -(h**2) * _grad(u, m)
+    dh = -(h**2) * (D @ u)
 
     # Undisturbed far field.
     du[-1] = 0.0
     dh[-1] = 0.0
-    return np.concatenate([dh, du, u])
+    # State is (h, u) ONLY. The position x_t = u closes the system in the
+    # write-up but is never read back: no term in this RHS depends on x, and the
+    # only outputs are the tip speed and the far-field drift. Carrying it made a
+    # third of the unknowns structurally invisible to the Jacobian -- see run().
+    return np.concatenate([dh, du])
+
+
+def default_mass(mu: float, t_end: float) -> float:
+    """Sheet mass per unit width needed so the far field stays undisturbed.
+
+    Two requirements, take the larger:
+      * the tip accretes mass at ~rho h V_TC, so it consumes ~sqrt(2) t_end of
+        sheet over the run and must not reach the end;
+      * the viscous footprint sqrt(4 nu t) must fit.
+    A factor of 4 margin on the first is cheap in 1D and removes any doubt.
+    """
+    swept = 4.0 * math.sqrt(2.0) * t_end
+    diffusive = 6.0 * math.sqrt(4.0 * mu * max(t_end, 1e-12))
+    return max(30.0, swept, diffusive)
 
 
 def run(oh_sb: float, mass: float, n: int, tstar_end: float, n_out: int = 600,
@@ -141,24 +193,51 @@ def run(oh_sb: float, mass: float, n: int, tstar_end: float, n_out: int = 600,
     m = mass * xi**grade
     tip_flux = -1.0 / (2.0 * mu)  # gamma = 1
 
+    # Fixed-grid geometry, hoisted out of the RHS: the gradient operator, the
+    # finite-volume cell widths and the face spacings never change during the
+    # integration, and the RHS is evaluated tens of thousands of times.
+    faces = np.empty(n + 1)
+    faces[1:-1] = 0.5 * (m[1:] + m[:-1])
+    faces[0], faces[-1] = m[0], m[-1]
+    cell = np.diff(faces)
+    cell[0] = faces[1] - faces[0]
+    geom = (_grad_operator(m), cell, m[1:] - m[:-1])
+
     # Jacobian sparsity. Without this, the solver forms DENSE finite-difference
     # Jacobians on 3n unknowns -- 3n RHS evaluations each -- which is what made
     # a graded mesh appear to hang: grading shrinks the tip cell by ~10^3, the
     # viscous operator's stiffness rises as 1/dm^2, and the implicit solver then
     # needs Jacobians constantly. The coupling is banded (curvature reaches two
     # neighbours, so a half-bandwidth of 3 is safe), so this is cheap to supply.
+    #
+    # TWO BLOCKS, NOT THREE. An earlier version integrated x alongside (h, u)
+    # via x_t = u. Nothing in the RHS reads x, so its n Jacobian columns were
+    # exactly zero -- and that is not a harmless waste. scipy's num_jac probes
+    # each column by finite differences, finds an identically zero response, and
+    # multiplies its perturbation by NUM_JAC_FACTOR_INCREASE to try to provoke
+    # one. On a permanently dead column that factor compounds every Jacobian
+    # evaluation until it overflows float64, after which inf/NaN contaminate the
+    # whole numerical Jacobian: the "overflow encountered in multiply" storm out
+    # of _ivp/common.py, and the stalled integrations that came with it.
+    # Restricting the sparsity pattern alone does NOT cure it -- num_jac keeps
+    # per-column factors for every column it is handed -- so x is gone from the
+    # state. Recover it by quadrature from the returned h if it is ever wanted.
     band = 3
-    S = lil_matrix((3 * n, 3 * n), dtype=int)
-    for blk_r in range(3):
-        for blk_c in range(3):
+    S = lil_matrix((2 * n, 2 * n), dtype=int)
+    for blk_r in range(2):
+        for blk_c in range(2):
             for i in range(n):
                 lo, hi = max(0, i - band), min(n, i + band + 1)
                 S[blk_r * n + i, blk_c * n + lo : blk_c * n + hi] = 1
     S = S.tocsr()
 
-    y0 = np.concatenate([np.ones(n), np.zeros(n), m.copy()])
-    sol = solve_ivp(_rhs, (0.0, t_end), y0, t_eval=np.linspace(0.0, t_end, n_out),
-                    method="BDF", args=(n, m, mu, tip_flux), rtol=rtol, atol=atol,
+    y0 = np.concatenate([np.ones(n), np.zeros(n)])
+    # GEOMETRIC output sampling. u* rises through most of its range in the
+    # first per cent of the run, so uniform spacing leaves visible jumps near
+    # t = 0 and wastes points in the flat tail. t = 0 is prepended explicitly.
+    t_eval = np.concatenate([[0.0], np.geomspace(t_end * 1e-6, t_end, n_out - 1)])
+    sol = solve_ivp(_rhs, (0.0, t_end), y0, t_eval=t_eval,
+                    method="BDF", args=(n, geom, mu, tip_flux), rtol=rtol, atol=atol,
                     jac_sparsity=S)
     if not sol.success:
         raise RuntimeError(sol.message)
@@ -174,6 +253,7 @@ def main() -> None:
     ap.add_argument("--mass", type=float, default=None,
                     help="sheet mass per unit width; default max(30, 30*mu)")
     ap.add_argument("--n", type=int, default=2000)
+    ap.add_argument("--nout", type=int, default=600)
     ap.add_argument("--grade", type=float, default=2.0,
                     help="tip mesh clustering exponent; 1 = uniform")
     ap.add_argument("--tstar-end", type=float, default=30.0)
@@ -183,8 +263,9 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     for oh in args.oh:
         mu = oh * math.sqrt(2.0)
-        mass = args.mass if args.mass else max(30.0, 30.0 * mu)
-        t, tstar, ustar, drift, mu = run(oh, mass, args.n, args.tstar_end, grade=args.grade)
+        mass = args.mass if args.mass else default_mass(mu, args.tstar_end * mu / 2.0)
+        t, tstar, ustar, drift, mu = run(oh, mass, args.n, args.tstar_end,
+                                        n_out=args.nout, grade=args.grade)
 
         # Built-in check: the early-time response must follow sqrt(t*/pi).
         # Compare only where the asymptote is actually valid. Savva & Bush state
