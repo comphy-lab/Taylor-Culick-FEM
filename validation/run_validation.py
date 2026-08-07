@@ -33,8 +33,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
 import sys
 from pathlib import Path
+
+import numpy as np
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "simulationCases"))
@@ -49,20 +52,42 @@ from planar_comoving import PlanarTaylorCulickProblem  # noqa: E402
 DEFAULT_OH_SB = [0.5, 1.0, 5.0, 10.0]
 
 TSTAR_END = 30.0  # spans both figures
-SAFETY = 8.0  # window length in units of the Oh-proportional influence region
+SAFETY = 3.0  # multiples of the larger influence scale (see window_length)
 MIN_WINDOW = 12.0  # never shorter than this many sheet thicknesses
 
 
-def window_length(mu: float) -> float:
-    """Co-moving window length satisfying L >> Oh*h0 with a safety factor."""
-    return max(MIN_WINDOW, SAFETY * influence_length(mu))
+def window_length(mu: float, t_end: float) -> float:
+    """Co-moving window length, from the larger of two influence scales.
+
+    Two things set how far the tip disturbs the sheet, and the window must
+    contain the larger:
+
+    1. The STEADY Stokes length ``Oh * h0`` -- Deka & Pierson's "region of
+       influence of the tip motion is proportional to Oh".
+    2. The TRANSIENT diffusive spread ``sqrt(4 nu t)``, which GROWS with run
+       length. In our units ``nu = mu``, so this is ``sqrt(4 mu t_end)``.
+
+    The second dominates for any long run and was missing from the first
+    version of this function, which sized windows from (1) alone. That is why
+    an Oh_SB = 1 run at L = 12 gave u*(t*=30) = 0.819 while L = 25 gave 0.949:
+    the window was shorter than the diffusive footprint and the inlet clamp
+    was doing work it should not have been.
+
+    Because the requirement grows as sqrt(t_end), pushing to larger t* to get
+    closer to V_TC needs a proportionally longer window -- the co-moving frame
+    removes the need to span the retraction PATH, but not the need to span the
+    disturbed REGION.
+    """
+    diffusive = math.sqrt(4.0 * mu * t_end)
+    return max(MIN_WINDOW, SAFETY * max(influence_length(mu), diffusive))
 
 
-def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float) -> dict:
+def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
+             length: float | None = None, temporal_error: float = 1e-3) -> dict:
     mu = viscosity(oh_sb)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
-    L = window_length(mu)
+    L = length if length is not None else window_length(mu, t_end)
 
     meta = {
         "Oh_savva_bush": oh_sb,
@@ -73,7 +98,9 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float) ->
         "t_end": t_end,
         "domain_length": L,
         "L_over_Oh": L / mu,
+        "L_over_diffusive": L / math.sqrt(4.0 * mu * t_end),
         "resolution": resolution,
+        "temporal_error": temporal_error,
         "V_TC": V_TC,
     }
     outdir.mkdir(parents=True, exist_ok=True)
@@ -95,13 +122,21 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float) ->
         history = problem.create_text_file_output(
             "control.txt", header=["t", "tstar", "U", "U_over_VTC"]
         )
-        t, dt_out = 0.0, t_end / 300.0
-        while t < t_end - 1e-12:
-            t = min(t + dt_out, t_end)
-            problem.run(t, startstep=dt_out * 1e-3, maxstep=dt_out, temporal_error=1e-3)
+        # GEOMETRIC output spacing, not uniform. The interesting structure is at
+        # early time -- u* rises through most of its range in the first few per
+        # cent of the run -- and in the inertial regime tau_vis is so small that
+        # uniform sampling in t gives a step of several units in t*, which
+        # renders the early curve as straight segments. Geometric spacing puts
+        # the samples where the curve actually bends.
+        out_times = np.geomspace(t_end * 1e-4, t_end, 400)
+        prev = 0.0
+        for t in out_times:
+            problem.run(t, startstep=max((t - prev) * 1e-3, 1e-9),
+                        maxstep=max(t - prev, 1e-9), temporal_error=temporal_error)
             u = problem.control_velocity()
             now = float(problem.get_current_time(as_float=True))
             history.add_row(now, now / tau, u, u / V_TC)
+            prev = t
         meta["U_final"] = problem.control_velocity()
         meta["ustar_final"] = meta["U_final"] / V_TC
 
@@ -117,13 +152,20 @@ def main() -> None:
                     default=Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
                                  "newtonian-comoving-pyoomph/validation"))
     ap.add_argument("--resolution", type=float, default=0.06)
+    ap.add_argument("--length", type=float, default=None,
+                    help="override the Oh-derived co-moving window length")
+    ap.add_argument("--temporal-error", type=float, default=1e-3)
+    ap.add_argument("--tag", type=str, default="",
+                    help="suffix for the case directory, for convergence studies")
     ap.add_argument("--tstar-end", type=float, default=TSTAR_END)
     args = ap.parse_args()
 
     oh_list = args.oh if args.oh else DEFAULT_OH_SB
     root = args.results.resolve()
     for oh in oh_list:
-        run_case(oh, root / f"Oh_SB_{oh:g}", args.resolution, args.tstar_end)
+        name = f"Oh_SB_{oh:g}" + (f"_{args.tag}" if args.tag else "")
+        run_case(oh, root / name, args.resolution, args.tstar_end,
+                 args.length, args.temporal_error)
 
 
 if __name__ == "__main__":
