@@ -117,6 +117,22 @@ def free_surface(pts, sub, x_max) -> list[np.ndarray]:
     return keep
 
 
+DPI = 110
+
+
+def _even_inches(inches: float, dpi: int = DPI) -> float:
+    """Round a figure dimension up to an EVEN pixel count.
+
+    Deriving the canvas from the data aspect gives arbitrary sizes, and an odd
+    pixel dimension makes libx264 with yuv420p fail outright -- chroma is
+    subsampled 2x2, so both dimensions must be even. The frames render fine and
+    only the encode dies, with a bare broken pipe that says nothing about the
+    cause.
+    """
+    px = int(round(inches * dpi))
+    return (px + (px % 2)) / dpi
+
+
 def render(
     item, *, outdir: Path, mu: float, xlim, ylim, phi_lim, hist, hist_abs, x_max: float
 ) -> None:
@@ -137,19 +153,49 @@ def render(
     vel_lab[:, 0] += u_now
     umag = np.linalg.norm(vel_lab, axis=1)
 
-    # Explicit placement: the two colorbars flank the field panel, so they must
-    # not be allowed to collide with its title or axis labels.
-    fig = plt.figure(figsize=(23, 9.6))
-    axL = fig.add_axes([0.050, 0.300, 0.515, 0.550])
-    cax_u = fig.add_axes([0.080, 0.898, 0.455, 0.022])
-    cax_e = fig.add_axes([0.080, 0.104, 0.455, 0.022])
-    axR = fig.add_axes([0.665, 0.220, 0.315, 0.630])
+    # Layout is derived from the DATA aspect, not fixed in figure fractions.
+    # A fixed wide box plus set_aspect("equal") shrinks the drawn field to a
+    # square inside it and pads the remainder with blank canvas -- which is
+    # where the old figure lost roughly half its width. Sizing the box to
+    # dx:dy means equal aspect fills it exactly, and the colorbars inherit the
+    # same width so nothing has to be nudged by hand when the window changes.
+    dx, dy = xlim[1] - xlim[0], ylim[1] - ylim[0]
+    PH = 7.2                                        # field panel height, inches
+    PW = min(max(PH * dx / dy, 3.0), 13.0)          # width at equal aspect
+    RW = 6.2                                        # control-trace panel width
+    ml, gap, mr = 1.30, 1.70, 0.30                  # margins and inter-panel gap
+    # The dissipation label is a nested fraction under a radical and is far
+    # taller than the velocity label above, so the bottom margin is not the
+    # mirror of the top one.
+    mb, mt = 1.45, 0.85                             # room for the outer cbar labels
+    cb_h = 0.30
+    # Asymmetric on purpose: the gap BELOW the panel carries the x tick labels
+    # and the x axis label as well as clearing the colorbar, while the gap above
+    # clears nothing but the panel spine. Equal gaps put the lower colorbar on
+    # top of the "x/h_0" label.
+    gap_lo, gap_hi = 1.20, 0.32
+
+    FW = _even_inches(ml + PW + gap + RW + mr)
+    FH = _even_inches(mb + cb_h + gap_lo + PH + gap_hi + cb_h + mt)
+    y0 = (mb + cb_h + gap_lo) / FH                  # shared bottom of both panels
+
+    fig = plt.figure(figsize=(FW, FH))
+    axL = fig.add_axes([ml / FW, y0, PW / FW, PH / FH])
+    cax_e = fig.add_axes([ml / FW, mb / FH, PW / FW, cb_h / FH])
+    cax_u = fig.add_axes([ml / FW, (mb + cb_h + gap_lo + PH + gap_hi) / FH,
+                          PW / FW, cb_h / FH])
+    axR = fig.add_axes([(ml + PW + gap) / FW, y0, RW / FW, PH / FH])
 
     # ---- left: mirrored field panel --------------------------------------
     tri_up = Triangulation(pts[:, 0], pts[:, 1], sub)
     tri_lo = Triangulation(pts[:, 0], -pts[:, 1], sub)
 
-    c1 = axL.tripcolor(tri_up, umag, cmap="viridis", shading="gouraud", vmin=0.0, vmax=V_TC)
+    # Normalised by V_TC, not by the capillary velocity sqrt(sigma/rho h0). The
+    # right-hand panel plots V/V_TC, so scaling the field by anything else left
+    # the two halves of the same figure in different units -- the colorbar ran
+    # to sqrt(2) while the trace ran to 1, for the same physical speed.
+    c1 = axL.tripcolor(tri_up, umag / V_TC, cmap="viridis", shading="gouraud",
+                       vmin=0.0, vmax=1.0)
     c2 = axL.tripcolor(tri_lo, phi, cmap="hot_r", shading="flat", norm=LogNorm(*phi_lim))
 
     # The interface is drawn on both halves as a single thin magenta line.
@@ -188,18 +234,17 @@ def render(
              fontsize=26, color="w", bbox=box, zorder=8)
 
     cb1 = fig.colorbar(c1, cax=cax_u, orientation="horizontal")
-    cb1.set_label(r"$|u|_{\mathrm{lab}}\,/\,\sqrt{\sigma/\rho h_0}$",
-                  fontsize=21, labelpad=14)
-    cb1.ax.tick_params(labelsize=17, pad=6)
+    cb1.set_label(r"$|u|_{\mathrm{lab}}\,/\,V_{\mathrm{TC}}$", fontsize=25, labelpad=12)
+    cb1.ax.tick_params(labelsize=20, pad=5)
     cb1.ax.xaxis.set_label_position("top")
     cb1.ax.xaxis.set_ticks_position("top")
-    cb1.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0, 1.25, V_TC])
-    cb1.set_ticklabels(["0", "0.25", "0.50", "0.75", "1.00", "1.25", r"$\sqrt{2}$"])
+    cb1.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
+    cb1.set_ticklabels(["0", "0.25", "0.50", "0.75", "1"])
 
     cb2 = fig.colorbar(c2, cax=cax_e, orientation="horizontal")
     cb2.set_label(r"$\varepsilon\,/\,(\sigma/h_0)\sqrt{\sigma/\rho h_0}$",
-                  fontsize=21, labelpad=12)
-    cb2.ax.tick_params(labelsize=17, pad=5)
+                  fontsize=25, labelpad=10)
+    cb2.ax.tick_params(labelsize=20, pad=5)
 
     # ---- right: growing control trace ------------------------------------
     th, uh = hist
@@ -225,7 +270,7 @@ def render(
         sp.set_linewidth(2)
     axR.minorticks_on()
 
-    fig.savefig(dest, dpi=110)
+    fig.savefig(dest, dpi=DPI)
     plt.close(fig)
 
 
@@ -238,7 +283,17 @@ def main() -> None:
     ap.add_argument("--mu", type=float, default=0.05, help="Oh, the dynamic viscosity")
     ap.add_argument("--nframes", type=int, default=220)
     ap.add_argument("--fps", type=int, default=25)
+    # --xmax-domain is the INLET MARKER, not a view setting: free_surface() uses
+    # it to discard the far boundary edge, so it must equal the case's true
+    # domain length. The view window is separate, below.
     ap.add_argument("--xmax-domain", type=float, default=12.0)
+    # The rim is pinned near x = 0 in the co-moving frame and is the only part
+    # worth looking at; everything beyond it is undisturbed film. Framing a
+    # 110-unit domain in full would render the rim a few pixels wide.
+    ap.add_argument("--xlim", type=float, nargs=2, default=(-1.0, 9.0),
+                    help="view window in x; default is 10 units at the rim")
+    ap.add_argument("--ylim", type=float, nargs=2, default=(-5.0, 5.0),
+                    help="view window in y, mirrored about the midplane")
     ap.add_argument("--procs", type=int, default=8)
     args = ap.parse_args()
 
@@ -269,8 +324,8 @@ def main() -> None:
         render,
         outdir=args.frames_dir,
         mu=args.mu,
-        xlim=(-0.6, 8.4),
-        ylim=(-2.25, 2.25),
+        xlim=tuple(args.xlim),
+        ylim=tuple(args.ylim),
         phi_lim=phi_lim,
         hist=hist,
         hist_abs=hist_abs,
