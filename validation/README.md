@@ -1,5 +1,44 @@
 # Validation — planar Newtonian retraction
 
+## Campaign goal
+
+Two questions, asked separately in each regime because the physics and the
+appropriate reference differ:
+
+> **Q1. Is the result numerically converged?**
+> **Q2. Do we recover the Taylor-Culick velocity?**
+
+and then, for each regime, a comparison matrix. The cells are NOT equivalent
+evidence, and the difference matters when they disagree:
+
+### Low `Oh` (inertial) -- `inertial/`
+
+| compare against | what it can establish | caveat |
+|---|---|---|
+| our 1D Trouton solver | whether a discrepancy is model or code | **not independent** -- our implementation of their model; a shared misreading satisfies both |
+| fresh Basilisk DNS | genuine cross-method agreement | independent: VOF interface capturing, two-phase, different mesh, different code |
+| Wee et al. PRF 9, 103601 (2024) | published low-`Oh` behaviour | **finite drop** (`L0 = 100`, both ends), not semi-infinite; comparable only where `Oh << L0/h0` |
+
+Savva & Bush reach only `Oh_SB = 0.5`, past their own `Oh < 0.1` wave threshold,
+so the strongly inertial regime has **no digitised comparator** -- Q2 there is
+answered against `V_TC` itself plus convergence.
+
+### High `Oh` (viscous) -- `viscous/`
+
+| compare against | what it can establish | caveat |
+|---|---|---|
+| our 1D Trouton solver | whether a discrepancy is model or code | same non-independence caveat |
+| Savva & Bush figs 5, 6 | whole-curve `u*(t*)` agreement | 1D lubrication vs our 2D NS; their approximation is *strongest* here, so a disagreement most likely indicts us |
+| Ahsan et al. arXiv:2507.04603 | asymptotic **structure** | not a `u*(t*)` curve: compare the exponential profile with Stokes-length decay, the linear amplitude growth, and the `O(1/T^2)` velocity convergence |
+
+### Status against the goal
+
+- Q1 answered for `Oh_SB = 1`: mesh and time tolerance converged to 0.06 %;
+  **domain length is the controlling parameter** and needs the diffusive rule.
+- Q2 open. `u*` reaches 0.949 at `t* = 30` (`L = 25`) and 0.950 at `t = 29.7`
+  for the inertial case; both still climbing. `u* -> 1` only asymptotically, so
+  answering Q2 needs long `t*` on a correspondingly long window.
+
 ## The claim
 
 > The co-moving sharp-interface FEM formulation reproduces the published edge
