@@ -83,7 +83,9 @@ def window_length(mu: float, t_end: float) -> float:
 
 
 def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
-             length: float | None = None, temporal_error: float = 1e-3) -> dict:
+             length: float | None = None, temporal_error: float = 1e-3,
+             restart_from: Path | None = None,
+             checkpoint_every: int = 0) -> dict:
     mu = viscosity(oh_sb)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
@@ -119,6 +121,21 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
         problem.resolution = resolution
         problem.initialise()
 
+        t_start = 0.0
+        if restart_from is not None:
+            # Continue an existing run rather than repeating the first t_start
+            # units. The geometric output schedule spends most of its steps
+            # early, so extending a finished run from its last state costs a
+            # fraction of redoing it, and the state dump carries the mesh and
+            # the rim it grew -- neither of which the initial condition knows.
+            problem.load_state(str(restart_from), ignore_outstep=True)
+            t_start = float(problem.get_current_time(as_float=True))
+            print(f"  restarted from {restart_from.name} at t = {t_start:.4f} "
+                  f"(t* = {t_start / tau:.2f})", flush=True)
+            if t_start >= t_end:
+                raise SystemExit(f"restart state is already at t={t_start:.3f} >= "
+                                 f"target t_end={t_end:.3f}; nothing to do")
+
         history = problem.create_text_file_output(
             "control.txt", header=["t", "tstar", "U", "U_over_VTC"]
         )
@@ -128,15 +145,33 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
         # uniform sampling in t gives a step of several units in t*, which
         # renders the early curve as straight segments. Geometric spacing puts
         # the samples where the curve actually bends.
-        out_times = np.geomspace(t_end * 1e-4, t_end, 400)
-        prev = 0.0
-        for t in out_times:
+        # On a restart the interesting structure is no longer at t = 0, so the
+        # schedule spans the REMAINING interval. Anchoring it at t_end * 1e-4
+        # would put most of the samples behind the restart point and then jump
+        # the solver forward in one enormous step.
+        if t_start > 0.0:
+            out_times = np.geomspace(t_start * 1.001, t_end, 400)
+        else:
+            out_times = np.geomspace(t_end * 1e-4, t_end, 400)
+        prev = t_start
+        if checkpoint_every:
+            # pyoomph dumps a full restart state at EVERY internal step by
+            # default. At 300k dof that is ~15 MiB a step and it dominated the
+            # campaign's storage. Restartability is worth keeping, so states are
+            # written on a schedule instead of being switched off entirely.
+            problem.write_states = False
+            ckpt_dir = outdir / "checkpoints"
+            ckpt_dir.mkdir(exist_ok=True)
+
+        for k, t in enumerate(out_times):
             problem.run(t, startstep=max((t - prev) * 1e-3, 1e-9),
                         maxstep=max(t - prev, 1e-9), temporal_error=temporal_error)
             u = problem.control_velocity()
             now = float(problem.get_current_time(as_float=True))
             history.add_row(now, now / tau, u, u / V_TC)
             prev = t
+            if checkpoint_every and (k + 1) % checkpoint_every == 0:
+                problem.save_state(str(ckpt_dir / f"ckpt_{k + 1:04d}.dump"), quiet=True)
         meta["U_final"] = problem.control_velocity()
         meta["ustar_final"] = meta["U_final"] / V_TC
 
@@ -158,14 +193,29 @@ def main() -> None:
     ap.add_argument("--tag", type=str, default="",
                     help="suffix for the case directory, for convergence studies")
     ap.add_argument("--tstar-end", type=float, default=TSTAR_END)
+    ap.add_argument("--checkpoint-every", type=int, default=0,
+                    help="write a restart state every N outputs instead of every "
+                         "internal step. 0 keeps pyoomph's default. The default "
+                         "wrote ~2400 dumps per case and 86%% of a 507 GiB tree; "
+                         "10 checkpoints give the same restart capability.")
+    ap.add_argument("--restart-from", type=Path, default=None,
+                    help="pyoomph state dump to continue from; the run then "
+                         "spans that state's time to --tstar-end. Only valid "
+                         "for a single --oh, since one state belongs to one case.")
     args = ap.parse_args()
+    if args.restart_from is not None:
+        if not args.restart_from.exists():
+            raise SystemExit(f"restart state not found: {args.restart_from}")
+        if args.oh and len(args.oh) > 1:
+            raise SystemExit("--restart-from takes a single --oh")
 
     oh_list = args.oh if args.oh else DEFAULT_OH_SB
     root = args.results.resolve()
     for oh in oh_list:
         name = f"Oh_SB_{oh:g}" + (f"_{args.tag}" if args.tag else "")
         run_case(oh, root / name, args.resolution, args.tstar_end,
-                 args.length, args.temporal_error)
+                 args.length, args.temporal_error, args.restart_from,
+                 args.checkpoint_every)
 
 
 if __name__ == "__main__":
