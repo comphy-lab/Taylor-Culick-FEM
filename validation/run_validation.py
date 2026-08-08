@@ -119,6 +119,20 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
         problem.Oh = mu
         problem.domain_length = L
         problem.resolution = resolution
+        if restart_from is not None:
+            # pyoomph's runmode defaults to "delete", and in that mode
+            # initialise() empties EVERY subdirectory of the output directory
+            # before anything else runs. That destroys _gmsh, whose
+            # REMESH_*.msh the state dump reloads by name, and liquid/, which
+            # holds the entire field output -- and it happens before the
+            # load_state below, so the default turns a restart into silent data
+            # loss followed by a missing-file crash. "overwrite" writes into the
+            # existing tree without deleting it.
+            #
+            # There is no public setter. parse_cmd_line(), which initialise()
+            # calls, only assigns _runmode when a --runmode flag is present, so
+            # a value set here survives.
+            problem._runmode = "overwrite"
         problem.initialise()
 
         t_start = 0.0
