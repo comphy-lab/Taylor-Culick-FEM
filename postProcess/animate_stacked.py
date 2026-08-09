@@ -4,21 +4,28 @@ This is the production layout. It supersedes the side-by-side arrangement of
 ``animate_planar.py`` for presentation use, and differs from both predecessors
 in what it puts where:
 
-  row 1  the ENTIRE co-moving domain, ``x`` from 0 to ``L0`` -- the framing of
-         ``animate_full_domain.py``. Velocity magnitude above the midplane,
-         viscous dissipation rate below, free surface over both, inlet marked.
-  row 2  the recovered control velocity ``U(t)/V_TC``, drawn up to the current
-         frame. CENTRED and deliberately narrow: a trace stretched to the full
-         width of a 200-thickness domain is a flat line with no readable
-         structure, and the approach to ``V_TC`` is the point of it.
+  row 1  the DISTURBED part of the co-moving domain: ``x`` from 0 out to just
+         beyond where the film stops noticing the rim. Velocity magnitude
+         above the midplane, viscous dissipation rate below, free surface over
+         both.
+  row 2  left, the recovered control velocity ``U(t)/V_TC`` drawn up to the
+         current frame; right, the two colourbars.
 
-Why the whole domain rather than a window at the rim: the co-moving
-formulation is only valid while the inlet stays quiescent, and the
-domain-length sweep (``u* = 0.819`` at ``L = 12`` against ``0.950`` at
-``L >= 40``) says truncation dominated the answer until the window was long
-enough. Row 1 makes that a question you can answer by looking.
+Why not the entire domain to ``L0``: the production windows run to
+``L0 = 140-340`` while the disturbance reaches a few tens of thicknesses, so a
+full-domain frame is 80-90% undisturbed film and the rim renders a few pixels
+wide. ``--xmax auto`` measures the disturbance front on the LAST frame -- the
+furthest it ever reaches -- and frames slightly beyond it. The window is fixed
+for the whole animation, so the view does not breathe; the caption states
+``L0`` so the truncation is visible even when the inlet is off-screen.
 
-The time axis of row 2 is LOGARITHMIC. The solver writes on a geometric output
+The front is measured from the lab-frame velocity and from the interface
+together. Either alone misses a case: at high ``Oh`` the film is set in motion
+well ahead of any visible thickening, and at low ``Oh`` the capillary-wave
+train deforms the interface where the velocity perturbation is already tiny.
+
+The time axis of row 2 is LOGARITHMIC and spans exactly the first to the last
+recorded point, with no padding. The solver writes on a geometric output
 schedule, so successive frames are spaced by a growing ``dt``; on a linear axis
 the marker crawls for most of the run and then bolts. Log time makes the marker
 travel at roughly constant speed and shows the asymptotic approach to
@@ -161,12 +168,53 @@ def _reconstructed_frames(case_dir: Path, log: Path) -> list[tuple[float, Path]]
     return out
 
 
+def disturbance_front(path: Path, u_frame: float, L0: float,
+                      u_tol: float = 2e-3, h_tol: float = 5e-3) -> float:
+    """Largest ``x`` at which the film still notices the rim.
+
+    Two independent detectors, because either alone under-reads a limit of the
+    problem:
+
+    * **velocity.** In the laboratory frame the undisturbed film is at rest by
+      construction -- the inlet imposes ``u_x = -U`` and the shift adds ``+U``
+      -- so any ``|u|`` above the tolerance is disturbance. This is the one
+      that binds at high ``Oh``, where the viscous footprint ``sqrt(4 nu t)``
+      sets fluid moving far ahead of any visible thickening.
+    * **interface.** The half-thickness relaxes to ``h0/2``, and a departure
+      from it is disturbance. This is the one that binds at low ``Oh``, where
+      the capillary-wave train ripples the surface out past the point where
+      the velocity perturbation has dropped below ``u_tol``.
+
+    The reference half-thickness is taken as the MEDIAN over the outer tenth
+    of the domain rather than the nominal 0.5, so a small systematic offset in
+    a particular run does not read as disturbance everywhere.
+    """
+    pts, sub, vel, _ = load_frame(path)
+    lab = vel.copy()
+    lab[:, 0] += u_frame
+    mag = np.linalg.norm(lab, axis=1) / V_TC
+    x_u = float(pts[mag > u_tol, 0].max()) if np.any(mag > u_tol) else 0.0
+
+    segs = free_surface(pts, sub, L0)
+    x_h = 0.0
+    if segs:
+        node = np.unique(np.round(np.vstack([np.vstack(s) for s in segs]), 9),
+                         axis=0)
+        far = node[node[:, 0] > 0.9 * L0]
+        h_inf = float(np.median(far[:, 1])) if len(far) else 0.5
+        off = np.abs(node[:, 1] - h_inf) > h_tol
+        if np.any(off):
+            x_h = float(node[off, 0].max())
+
+    return max(x_u, x_h)
+
+
 # --------------------------------------------------------------------------
 # rendering
 # --------------------------------------------------------------------------
 
 def render(item, *, outdir: Path, mu: float, xlim, ylim, phi_lim, hist,
-           hist_abs, x_max: float, tlim, oh_label: str) -> None:
+           hist_abs, x_max: float, tlim, oh_label: str, L0: float) -> None:
     i, (t, path) = item
     dest = outdir / f"frame_{i:05d}.png"
     if dest.exists():
@@ -192,42 +240,49 @@ def render(item, *, outdir: Path, mu: float, xlim, ylim, phi_lim, hist,
     PW = min(PW_MAX, PH * dx / dy)
     equal_aspect = PW >= PH * dx / dy - 1e-9
 
-    # Row 2 is centred and narrow on purpose (see module docstring). It is
-    # sized against the row-1 panel so the proportion holds whatever the
-    # domain aspect turns out to be, with a floor so short domains still get a
-    # legible trace.
-    RW = min(max(0.40 * PW, 6.0), 10.0)
-    RH = 4.5
-
     ml, mr = 1.30, 0.50
     # The row-2 x label is a fraction under a radical and is roughly twice the
     # height of a bare tick label, so the bottom margin is not the mirror of
     # the top one. At 0.95 in it was clipped.
-    mb, mt = 1.75, 0.80
-    cb_h = 0.28
-    gap_hi = 0.30          # panel spine -> velocity colorbar
-    gap_lo = 1.15          # x tick labels and x label -> dissipation colorbar
-    gap_mid = 1.45         # dissipation colorbar label -> row 2
+    mb, mt = 1.55, 0.55
+    cb_h = 0.30
+    gap_rows = 1.30        # row-1 x label -> row 2
 
-    # Colorbars are centred on the panel and capped rather than spanning it.
-    # A 26-inch bar 0.28 in tall reads as a decorative stripe and puts its
-    # ticks metres from the field they describe.
-    CW = min(PW, 13.0)
-    cb_x = (ml + 0.5 * (PW - CW)) / 1.0
+    # Row 2 splits its width: the trace on the left, the two colourbars on the
+    # right. The two are PARTITIONED, not sized independently -- when the x
+    # crop makes the field panel narrow, independently floored widths sum to
+    # more than the panel and the colourbars land on top of the plot.
+    #
+    # Row 2 also sets a width floor of its own. The field panel can come out
+    # under 9 inches once the view is cropped to the disturbance front, and a
+    # 4-inch colourbar cannot carry readable tick labels at this font size.
+    ROW2_MIN = 13.0
+    row2_w = max(PW, ROW2_MIN)
+    gap_cols = 0.05 * row2_w
+    RW = 0.40 * (row2_w - gap_cols)
+    CW = (row2_w - gap_cols) - RW
+    RH = min(RW, 7.0)                 # the trace is square, but bounded
 
-    FW = _block_inches(ml + PW + mr)
-    FH = _block_inches(mb + RH + gap_mid + cb_h + gap_lo + PH + gap_hi + cb_h + mt)
+    content_w = max(PW, row2_w)
+    FW = _block_inches(ml + content_w + mr)
+    FH = _block_inches(mb + RH + gap_rows + PH + mt)
 
     fig = plt.figure(figsize=(FW, FH))
 
-    y_row1 = (mb + RH + gap_mid + cb_h + gap_lo) / FH
-    ax = fig.add_axes([ml / FW, y_row1, PW / FW, PH / FH])
-    cax_e = fig.add_axes([cb_x / FW, (mb + RH + gap_mid) / FH, CW / FW, cb_h / FH])
-    cax_u = fig.add_axes([cb_x / FW, y_row1 + (PH + gap_hi) / FH, CW / FW, cb_h / FH])
-    # Centred on the FIELD panel, not on the canvas: the left margin carries the
-    # y label and the right one does not, so canvas-centring would sit visibly
-    # off to the right of the thing it describes.
-    axR = fig.add_axes([(ml + 0.5 * (PW - RW)) / FW, mb / FH, RW / FW, RH / FH])
+    # Field panel centred over row 2 when row 2 is the wider of the two.
+    ax_x = ml + 0.5 * (content_w - PW)
+    y_row1 = (mb + RH + gap_rows) / FH
+    ax = fig.add_axes([ax_x / FW, y_row1, PW / FW, PH / FH])
+    axR = fig.add_axes([ml / FW, mb / FH, RW / FW, RH / FH])
+
+    # Colourbars stacked and vertically centred against the trace. Velocity on
+    # top to match the panel above, where velocity is the upper half.
+    cb_left = ml + row2_w - CW
+    cb_gap = 0.26 * RH
+    cb_lo_y = mb + 0.5 * RH - 0.5 * (2 * cb_h + cb_gap)
+    cax_e = fig.add_axes([cb_left / FW, cb_lo_y / FH, CW / FW, cb_h / FH])
+    cax_u = fig.add_axes([cb_left / FW, (cb_lo_y + cb_h + cb_gap) / FH,
+                          CW / FW, cb_h / FH])
 
     # ---- row 1: the whole domain -----------------------------------------
     tri_up = Triangulation(pts[:, 0], pts[:, 1], sub)
@@ -243,9 +298,15 @@ def render(item, *, outdir: Path, mu: float, xlim, ylim, phi_lim, hist,
                                      linewidths=1.4, zorder=5, capstyle="round"))
     ax.axhline(0.0, color="0.45", lw=0.9, ls=(0, (6, 4)), zorder=6)
 
-    ax.axvline(x_max, color="0.25", lw=2.0, ls=(0, (2, 2)), zorder=7)
-    ax.text(x_max, ylim[1], " inlet", ha="right", va="top", rotation=90,
-            fontsize=17, color="0.25", zorder=8)
+    # The inlet is only drawn when the framing actually reaches it. When the
+    # view is cropped to the disturbance front the inlet is off-screen, and a
+    # marker at the panel edge would claim the domain ends there -- which is
+    # exactly the misreading the full-domain view existed to prevent. The
+    # caption carries L0 instead.
+    if x_max <= xlim[1] + 1e-9:
+        ax.axvline(x_max, color="0.25", lw=2.0, ls=(0, (2, 2)), zorder=7)
+        ax.text(x_max, ylim[1], " inlet", ha="right", va="top", rotation=90,
+                fontsize=17, color="0.25", zorder=8)
 
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
@@ -266,11 +327,14 @@ def render(item, *, outdir: Path, mu: float, xlim, ylim, phi_lim, hist,
     if not equal_aspect:
         label += r"   ($y$ stretched)"
     # Bottom right, not top right: the top right is where the inlet marker's
-    # rotated label lives, and at large L the two sit on top of each other.
-    # The lower half far from the rim is undisturbed film, so nothing is
-    # covered here.
+    # rotated label lives when it is drawn at all. The lower half far from the
+    # rim is undisturbed film, so nothing is covered here.
     ax.text(0.994, 0.06, label, transform=ax.transAxes, ha="right",
             fontsize=22, color="w", bbox=box, zorder=9)
+    if x_max > xlim[1] + 1e-9:
+        # State the truncation the framing hides.
+        ax.text(0.994, 0.88, rf"domain $L_0/h_0 = {L0:g}$", transform=ax.transAxes,
+                ha="right", fontsize=19, color="w", bbox=box, zorder=9)
 
     cb1 = fig.colorbar(c1, cax=cax_u, orientation="horizontal")
     cb1.set_label(r"$|u|_{\mathrm{lab}}\,/\,V_{\mathrm{TC}}$", fontsize=23, labelpad=11)
@@ -300,8 +364,10 @@ def render(item, *, outdir: Path, mu: float, xlim, ylim, phi_lim, hist,
     mask = th <= t + 1e-12
     axR.plot(th[mask], uh[mask], color=TRACE_COLOR, lw=3.0, zorder=3)
     if mask.any():
+        # clip_on off: the axis ends exactly at the last data point, so on the
+        # final frame a clipped marker would be sliced in half by the spine.
         axR.plot(th[mask][-1], uh[mask][-1], "o", ms=12, color=TRACE_COLOR,
-                 mec="k", mew=1.8, zorder=4)
+                 mec="k", mew=1.8, zorder=4, clip_on=False)
 
     axR.set_xscale("log")
     axR.set_xlim(*tlim)
@@ -330,6 +396,11 @@ def main() -> None:
                     help="default: <out>.frames alongside the video")
     ap.add_argument("--reconstruct", type=Path, default=None,
                     help="launcher log to rebuild a restart-truncated pvd from")
+    ap.add_argument("--xmax", type=float, default=None,
+                    help="fix the view window in x; default measures the "
+                         "disturbance front on the last frame")
+    ap.add_argument("--xmax-pad", type=float, default=1.18,
+                    help="multiple of the measured front to frame out to")
     ap.add_argument("--nframes", type=int, default=240)
     ap.add_argument("--fps", type=int, default=25)
     ap.add_argument("--procs", type=int, default=8)
@@ -364,14 +435,34 @@ def main() -> None:
     hist_raw = load_control(args.case_dir)
     hist = (hist_raw[:, 0], hist_raw[:, 3])       # t, U/V_TC   (row 2)
     hist_abs = (hist_raw[:, 0], hist_raw[:, 2])   # t, U        (lab-frame shift)
-    tlim = (t_lo, max(times.max(), hist_raw[-1, 0]) * 1.05)
+    # Exactly the first and last recorded points, no padding. The axis is
+    # logarithmic so the first point must be positive.
+    t_hist = hist_raw[hist_raw[:, 0] > 0, 0]
+    tlim = (float(t_hist.min()), float(t_hist.max()))
 
     # y extent from the LAST frame: the rim grows monotonically, so that frame
     # bounds every earlier one and one read beats scanning the series.
-    pts_last, _, _, _ = load_frame(entries[-1][1])
+    t_last, p_last = entries[-1]
+    pts_last, _, _, _ = load_frame(p_last)
     y_hi = float(np.nanmax(np.abs(pts_last[:, 1])))
     ylim = (-(y_hi + 0.6), y_hi + 0.6)
-    xlim = (-0.5, L0 + 0.5)
+
+    # The x window is fixed for the whole animation and sized on the LAST
+    # frame, where the disturbance has reached furthest. Sizing per frame
+    # would make the view breathe and destroy any sense of scale.
+    if args.xmax is not None:
+        x_hi = args.xmax
+    else:
+        u_last = float(np.interp(t_last, hist_abs[0], hist_abs[1]))
+        front = disturbance_front(p_last, u_last, L0)
+        # The floor only stops the panel coming out taller than it is wide,
+        # which happens at low Oh where the rim grows large but its influence
+        # stays local. It is not meant to pad the window, and at 4 y_hi it was
+        # doing exactly that -- doubling a 45-thickness front to 94.
+        x_hi = min(L0 + 0.5, args.xmax_pad * max(front, 1.2 * y_hi))
+        print(f"disturbance front at x = {front:.1f}; "
+              f"framing x <= {x_hi:.1f} of L0 = {L0:g}", flush=True)
+    xlim = (-0.5, x_hi)
 
     phi_hi = 0.0
     for _, p in entries[:: max(1, len(entries) // 12)]:
@@ -387,7 +478,7 @@ def main() -> None:
 
     work = partial(render, outdir=frames_dir, mu=mu, xlim=xlim, ylim=ylim,
                    phi_lim=phi_lim, hist=hist, hist_abs=hist_abs, x_max=L0,
-                   tlim=tlim, oh_label=oh_label)
+                   tlim=tlim, oh_label=oh_label, L0=L0)
     with Pool(args.procs) as pool:
         for n, _ in enumerate(pool.imap_unordered(work, list(enumerate(entries)), 1), 1):
             if n % 25 == 0:
