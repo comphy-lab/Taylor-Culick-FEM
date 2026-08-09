@@ -85,7 +85,7 @@ def window_length(mu: float, t_end: float) -> float:
 def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
              length: float | None = None, temporal_error: float = 1e-3,
              restart_from: Path | None = None,
-             checkpoint_every: int = 0) -> dict:
+             checkpoint_every: int = 0, n_outputs: int = 400) -> dict:
     mu = viscosity(oh_sb)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
@@ -164,9 +164,28 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
         # would put most of the samples behind the restart point and then jump
         # the solver forward in one enormous step.
         if t_start > 0.0:
-            out_times = np.geomspace(t_start * 1.001, t_end, 400)
+            # The output cadence IS the timestep: maxstep below is set to the
+            # output interval and the temporal-error controller never binds (it
+            # reports ~1e-12 against a 1e-3 tolerance), so dt sits on that cap
+            # every step. Keeping n_outputs at its cold-start value here would
+            # pack the same number of samples into the shorter remaining span
+            # and silently do 5-10x more solver work than the original schedule
+            # -- which is exactly what happened on the 2026-08-08 restart.
+            # Warn loudly rather than silently rescaling: finer is slower AND
+            # more accurate, so it is the operator's call, not a default.
+            fresh_ratio = (t_end / (t_end * 1e-4)) ** (1.0 / (n_outputs - 1))
+            this_ratio = (t_end / t_start) ** (1.0 / (n_outputs - 1))
+            matched = math.ceil(1 + (n_outputs - 1) * math.log(t_end / t_start)
+                                / math.log(1e4))
+            if fresh_ratio - 1.0 > 2.0 * (this_ratio - 1.0):
+                print(f"  WARNING: {n_outputs} outputs over the remaining span is "
+                      f"{(fresh_ratio - 1.0) / (this_ratio - 1.0):.1f}x finer than the "
+                      f"cold-start cadence, so dt is that much smaller and the run "
+                      f"that much slower. --n-outputs {matched} would match it.",
+                      flush=True)
+            out_times = np.geomspace(t_start * 1.001, t_end, n_outputs)
         else:
-            out_times = np.geomspace(t_end * 1e-4, t_end, 400)
+            out_times = np.geomspace(t_end * 1e-4, t_end, n_outputs)
         prev = t_start
         if checkpoint_every:
             # pyoomph dumps a full restart state at EVERY internal step by
@@ -212,6 +231,12 @@ def main() -> None:
                          "internal step. 0 keeps pyoomph's default. The default "
                          "wrote ~2400 dumps per case and 86%% of a 507 GiB tree; "
                          "10 checkpoints give the same restart capability.")
+    ap.add_argument("--n-outputs", type=int, default=400,
+                    help="number of geometrically spaced output points. This is "
+                         "NOT just an output setting: maxstep is clamped to the "
+                         "output interval and the temporal-error controller never "
+                         "binds, so this value sets dt and therefore both the cost "
+                         "and the temporal accuracy of the run.")
     ap.add_argument("--restart-from", type=Path, default=None,
                     help="pyoomph state dump to continue from; the run then "
                          "spans that state's time to --tstar-end. Only valid "
@@ -229,7 +254,7 @@ def main() -> None:
         name = f"Oh_SB_{oh:g}" + (f"_{args.tag}" if args.tag else "")
         run_case(oh, root / name, args.resolution, args.tstar_end,
                  args.length, args.temporal_error, args.restart_from,
-                 args.checkpoint_every)
+                 args.checkpoint_every, args.n_outputs)
 
 
 if __name__ == "__main__":
