@@ -51,7 +51,9 @@ computation is performed in a frame co-moving with the rim: the tip is pinned
 at the origin and the frame velocity `U(t)` is promoted to a global unknown.
 The far field enters at `-U` through a Lagrange-multiplier (`EnforcedDirichlet`)
 condition. Only the upper half is solved; the midplane is a symmetry line. At
-low `Oh` a train of decaying capillary waves runs ahead of the rim.*
+low `Oh` a train of decaying capillary waves runs ahead of the rim. The sheet
+outline is not a sketch: it is a computed interface, `Oh_SB = 0.035` at
+`t ≈ 15`, so the rim proportions and the wave train are the real ones.*
 
 ---
 
@@ -195,11 +197,18 @@ to trip over on a restart.
 
 ## 4. Phenomenology across `Oh`
 
-![Figure 2: free surface across Oh at a common time](figures/fig2_phenomenology.png)
+![Figure 2: velocity and dissipation across Oh at a common time](figures/fig2_phenomenology.png)
 
-*Figure 2. Free surface at a common inertio-capillary time `t ≈ 25`, over a
+*Figure 2. Velocity magnitude (upper half) and viscous dissipation rate
+`ε = 2μ D:D` (lower half) at a common inertio-capillary time `t ≈ 25`, over a
 factor-29 range in `Oh`. Distances are from the pinned tip in units of `h0`;
-the sheet is mirrored about the midplane.*
+the sheet is mirrored about the midplane and the free surface is drawn over
+both halves. Velocity is in the **laboratory** frame — the co-moving solution
+shifted by `U(t)` — so the undisturbed film reads zero and the rim reads `≈ 1`.
+Both colour scales are **shared across the panels**, which is the point: a
+per-panel rescale would hide the `Oh` dependence the figure exists to show.
+The dissipation reconstruction is one order lower than the P2 velocity field
+(see `postProcess/animate_planar.py`), so it is visualisation-grade.*
 
 The sequence shows the whole story:
 
@@ -218,7 +227,49 @@ The sequence shows the whole story:
 Note that the rim height at fixed `t` is remarkably insensitive to `Oh` (all
 four peak near `3 h0`), because the mass collected is set by the retraction
 velocity, which is itself `Oh`-independent. What changes is how that mass is
-*distributed*.
+*distributed* — and, in the lower halves, where the energy goes. At
+`Oh = 0.035` dissipation is confined to the neck and to the capillary-wave
+train, both of them thin; by `Oh = 1` it fills the whole thickened region and
+there is no localised structure left to speak of.
+
+---
+
+## 4a. The retraction velocity
+
+`u*(t) = U/V_TC` is the observable the whole campaign exists to measure, and
+the eight-point log-spaced sweep is the measurement.
+
+![Figure 3: u*(t) across the Oh sweep](figures/fig3_velocity.png)
+
+*Figure 3. Recovered control velocity `u* = U/V_TC` against the
+inertio-capillary clock for the eight-point sweep, `Oh_SB = 0.035` to `1`. The
+time axis is logarithmic because the solver writes on a geometric output
+schedule. Legend gives the final `u*` reached by each case. Two features are
+physical, not numerical: the low-`Oh` overshoot near `t ≈ 0.7`, where the rim
+first forms and briefly outruns its own quasi-steady value, and the ripples at
+`Oh ≤ 0.1` and late time, which are the capillary-wave train beating against
+the rim.*
+
+Every case is still climbing at the end of its record. None reached the
+`u* = 0.995` target the sweep was sized for; the sweep was stopped at
+`u* ≈ 0.979–0.993` to settle the timestep question of §6.3 first.
+
+![Figure 4: 1 - u* against the viscous clock](figures/fig4_approach.png)
+
+*Figure 4. The same data as the gap `1 - u*` against the viscous clock
+`t* = t/τ_vis`, on log-log axes. Dashed lines are least-squares fits over the
+last decade of each record; the fitted exponent `a` in `1 - u* ∝ t*^a` is given
+per case.*
+
+Figure 4 is the reason a single global fit is not usable. The exponent runs
+from `-0.435` at `Oh_SB = 0.035` to `-0.588` at `Oh_SB = 1` and is **not**
+monotone in between — `Oh_SB = 0.61945` fits `-0.474`, out of order with its
+neighbours. That case has the second-shortest record in `t*` and is still in
+the crossover from the inertial transient when its last decade begins, so the
+non-monotonicity is most likely a fit-window artefact rather than physics. It
+is left visible rather than smoothed away, because the honest statement is
+that the exponent is `≈ -0.5` across the middle of the sweep and the two ends
+are not yet resolved well enough to argue about.
 
 ---
 
@@ -360,10 +411,12 @@ uv run python validation/run_validation.py --oh 1.0 --tag dt200 \
 **Not established.**
 
 - The long-time limit `v(t → ∞)`. The production sweep targets `u* = 0.995` at
-  eight log-spaced `Oh` from 0.035 to 1; the approach is a power law
-  `1 - u* ∝ t*^-a` with `a` running from `-0.438` at `Oh = 0.035` to `-0.549`
-  at `Oh = 1`, so the exponent is **not** constant across the sweep and a single
-  global fit mis-sizes both ends.
+  eight log-spaced `Oh` from 0.035 to 1 and reached `0.979–0.993` before it was
+  stopped (figure 3). The approach is a power law `1 - u* ∝ t*^a` with `a`
+  measured at `-0.435` (`Oh = 0.035`) to `-0.588` (`Oh = 1`) over the last
+  decade of each record, so the exponent is **not** constant across the sweep
+  and a single global fit mis-sizes both ends. It is also not cleanly
+  monotone — see the note under figure 4.
 - Why the converged 1D model sits ~3% above the 2D FEM (§5).
 - Anything at `Oh_SB > 1`, which is deliberately out of scope (§3.3).
 
@@ -400,8 +453,26 @@ Convergence studies:
 
 ```bash
 uv run python validation/trouton1d_convergence.py --study all   # 1D, all three
-uv run python postProcess/make_docs_figures.py --out docs/figures
 ```
+
+Figures and animations:
+
+```bash
+# All four docs figures. --sweep and --archive point at the run roots; any
+# case that is not mounted is skipped with a warning. --only takes a subset.
+uv run python postProcess/make_docs_figures.py --out docs/figures
+
+# Production animation: whole domain on top, centred u*(t) underneath.
+uv run python postProcess/animate_stacked.py \
+    --case-dir <run-root>/Oh_SB_0.2377_u995 \
+    --out Oh_SB_0.23770_u995_stacked.mp4 --nframes 240 --procs 8
+```
+
+`animate_stacked.py` reads `case.json` for the viscosity and the domain
+length, so the only positional input is the case directory. For a case whose
+`liquid.pvd` was truncated by a restart, pass the launcher log to
+`--reconstruct` and the index-to-time map is rebuilt from its `OUTPUT at t=`
+lines.
 
 **Simulation data is not in this repository.** Runs write to the project run
 root on the compute host; custody is recorded in the project tracker. The
@@ -412,7 +483,20 @@ data is not mounted.
 
 - `control.txt` is **truncated** on restart, and checkpoint numbering restarts
   at `ckpt_0020`. Preserve the pre-restart copies and concatenate in
-  post-processing.
+  post-processing. Note that for the three restarted sweep cases
+  `control_part1.txt` runs *further* in time than the post-restart
+  `control.txt` does, because the restart resumed from an earlier checkpoint —
+  so neither file alone is the trajectory. `postProcess/animate_stacked.py`
+  exposes `load_control()`, which merges them.
+- **`liquid.pvd` is truncated the same way, and the VTUs are worse.** The
+  post-restart run rewrites `liquid_000000.vtu` upward, so on those cases the
+  low-index files no longer hold the pre-restart state and the collection file
+  no longer indexes the surviving high-index ones. The times are recoverable:
+  the launcher log prints `OUTPUT at t=` once per emitted VTU in order, and
+  that series was checked against an intact `liquid.pvd` and matched exactly
+  (max difference `0.0` over 2120 entries). `animate_stacked.py --reconstruct
+  <log>` does the rebuild. Affects `Oh_SB = 0.0565`, `0.09121` and `0.14724`;
+  the other five sweep cases were never restarted and are intact.
 - PARDISO accepted solves with large backward error on the highest-`Oh` cases
   (`repair_bad_solves` is off). The recorded `u*` trajectories are strictly
   monotone with no jumps, so Newton recovered, but treat `Oh ≥ 0.38` as
