@@ -6,6 +6,14 @@ a frame co-moving with the retracting rim.
 Built on [pyoomph](https://github.com/comphy-lab/pyoomph) (a Python front-end to
 oomph-lib), tracked against the CoMPhy fork's `develop` branch.
 
+> **Start here: [`docs/README.md`](docs/README.md)** — the campaign write-up for
+> Newtonian retraction at arbitrary Ohnesorge number. It covers the method, the
+> convergence evidence, the comparison against Savva & Bush (2009), and the
+> `√2` convention mismatch between this code and the published literature.
+> Written as an extension of Appendix A of
+> [Sanjay *et al.*, JFM 948 (2022) A14](https://arxiv.org/abs/2202.13400) to
+> arbitrary `Oh`, with FEM in place of Basilisk.
+
 ## Why FEM here
 
 The existing Basilisk study of this problem
@@ -87,11 +95,15 @@ in the metric, not as a change of variables.
 ## Layout
 
 ```
-cases/                  runnable problem definitions
-src/taylor_culick_fem/  shared equations, meshes, diagnostics
-postProcess/            analysis and figures
-tests/                  regression tests
+simulationCases/        runnable problem definitions (2D co-moving, 1D Trouton)
+validation/             validation drivers, convergence studies, digitised data
+postProcess/            analysis and figure generation
+campaign/               the exact scripts used to run the Oh sweep on Stokes
+docs/                   campaign write-up and figures
 ```
+
+Simulation output does not live here. Runs write to the project run root on the
+compute host; custody is recorded in the project tracker.
 
 ## Environment
 
