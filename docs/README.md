@@ -307,22 +307,31 @@ lubrication model and Navier–Stokes is the open question flagged in §5.
 Because `dt` is set by the output cadence (§3.4), the campaign values were
 checked against it directly at `Oh_SB = 1`, `t* = 30`, `L = 40`:
 
-| `--n-outputs` | `u*(30)` | difference | ratio |
-|---|---|---|---|
-| 100 | 0.9503405929 | | |
-| 200 | 0.9502772866 | `-6.331e-05` | |
-| 400 | 0.9502600436 | `-1.724e-05` | 3.67 |
+| `--n-outputs` | `u*(30)` | difference | ratio | implied order |
+|---|---|---|---|---|
+| 100 | 0.9503405929 | | | |
+| 200 | 0.9502772866 | `-6.331e-05` | | |
+| 400 | 0.9502600436 | `-1.724e-05` | 3.67 | 1.88 |
+| 800 | 0.9502529574 | `-7.086e-06` | 2.43 | 1.28 |
 
-Ratio ≈ 4 is **second-order** convergence, as expected from BDF2, and in sharp
-contrast to the first-order 1D model. Richardson extrapolation gives
-`u*(30) → 0.9502543`, so the entire spread from the coarsest schedule tested
-down to `dt → 0` is **8.6e-5**.
+The first refinements are close to **second order**, as expected from BDF2 and
+in sharp contrast to the clean first-order behaviour of the 1D model — but the
+observed order **degrades** to ~1.3 by the finest pair. Two reasons not to read
+much into that: the geometric output schedule is not a uniform `dt` refinement,
+so the ratio is not a textbook convergence order; and by `nout = 800` the
+differences are `7e-6`, where other error sources are comparable.
+
+What matters for the campaign is the magnitude, and it is unambiguous. The
+total spread from the coarsest schedule tested to the finest is **8.8e-5**, and
+Richardson on the last pair puts the remaining change at only `2e-6`–`7e-6`
+(`u*(30) → 0.95025`, taking `p = 2` or `p = 1` as bounds).
 
 Two consequences:
 
 1. **The campaign's `u*` values are not schedule-dependent** at any level that
-   matters, and the converged limit agrees with the previously recorded
-   `0.95026` to `5.7e-6`.
+   matters: `8.8e-5` across an eightfold refinement, against the `0.41%`
+   (`3.9e-3`) offset from Savva & Bush that the campaign is trying to resolve.
+   The limit agrees with the previously recorded `0.95026` to about `1e-5`.
 2. Runs may therefore use a **coarse output cadence** without loss of accuracy,
    which matters because cadence is the dominant cost lever (§3.4).
 
@@ -344,7 +353,8 @@ uv run python validation/run_validation.py --oh 1.0 --tag dt200 \
   answer, converged for `L ≥ 40` at `Oh_SB = 1`.
 - `u*(t*=30) = 0.95026` at `Oh_SB = 1`, converged in mesh, window and timestep.
 - A 0.41% offset from the digitised Savva & Bush value that is not numerical.
-- Second-order temporal behaviour, so the campaign may be run cheaply.
+- Temporal error below `1e-4` across an eightfold change in output cadence,
+  so the campaign may be run at a coarse cadence.
 - The phenomenological sequence of figure 2 across a factor 29 in `Oh`.
 
 **Not established.**
