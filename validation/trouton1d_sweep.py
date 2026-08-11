@@ -11,8 +11,10 @@ THE TIMESTEP IS THE WHOLE PROBLEM, AND IT IS NOT SELF-DIAGNOSING. On this
 problem pyoomph's temporal error estimator reports ~1e-12 against a 1e-3
 tolerance while the true discretisation error is O(1e-3) -- it under-reports by
 about nine orders and therefore never binds. dt sits on ``maxstep`` on every
-single step. The solver is additionally forced onto BDF1 (BDF2 fails at its
-third timestep, see trouton1d_pyoomph.py), so the error is FIRST order in dt.
+single step. UNTIL 2026-08-11 the solver was additionally forced onto BDF1, so
+the error was FIRST order in dt; it now runs BDF2 at second order (observed
+1.99) and a single run is converged, but the fixed-maxstep design below is kept
+because it is what makes any convergence claim checkable at all.
 Consequence: any u* from this code is a function of maxstep until proven
 otherwise, and a run that "looks converged" because the estimator says 1e-12 is
 telling you nothing. That is how an earlier three-way agreement with Savva &
