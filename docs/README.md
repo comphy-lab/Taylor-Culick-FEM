@@ -463,10 +463,16 @@ that looked obvious from the solver log:
 | **`7.50 × 10⁻⁴`** | **2613** | **5122** | **245.0** | **245** |
 | `3.52 × 10⁻⁴` | 1600 | 900 | 182.1 | 177 |
 | `8.79 × 10⁻⁵` | 3200 | 900 | 95.3 | 97 |
+| `2.20 × 10⁻⁵` | 6400 | 900 | 45.4 | 53 |
 
 ```
-t*_fail  =  5561 · dm₁^0.434            (Oh_SB = 1)
+t*_fail  =  5655 · dm₁^0.435            (Oh_SB = 1)
 ```
+
+over a 64× range in tip cell size, three domain lengths, two formulations and
+step counts from 8×10³ to 1.2×10⁵. The fit is worst at the finest mesh
+(45.4 observed against 53 predicted, a 15% miss) and the law should be read as
+the scaling it demonstrates rather than a precise predictor.
 
 The bolded row is the **production** run, on a domain 5.7× larger and a step
 count entirely different from the probes, and it sits on the fit to three
@@ -572,8 +578,9 @@ The solver therefore now defaults to `h` on `"D0"` (cell-constant) and `u` on
 `"C1"` (vertices) — thickness per cell, velocity per vertex, no midside degrees
 of freedom anywhere. This is the finite-element realisation of the staggered
 grid of Savva & Bush's figure 22. It runs to `t* = 400` on a mesh where every
-co-located variant dies at `174`, and past `t* = 230` at `N = 3200` where the
-co-located scheme dies at `87` — 2.6× beyond the failure point at the mesh where
+co-located variant dies at `174`, and past `t* = 250` at `N = 3200` where the
+co-located scheme dies at `87` — 2.9× beyond, and 5.5× past where `N = 6400`
+co-located dies the failure point at the mesh where
 the old scheme is weakest, so the cure is not an artefact of one lucky mesh. It
 does this at **a quarter of the degrees of freedom**,
 and it reproduces the existing answer: `u*(30) = 0.9805910803` against the
