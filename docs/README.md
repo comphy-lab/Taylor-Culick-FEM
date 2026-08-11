@@ -818,6 +818,117 @@ converged.
 
 ---
 
+## 6.7 Numerical sensitivity of the 1D solver, consolidated
+
+Because the reduced model contains **no Ohnesorge number** (§6.6), sweeping `Oh`
+tests nothing. The meaningful axis of variation is the numerics, and everything
+below was measured at `Oh_SB = 1` unless stated. Collected here because the
+individual results were otherwise spread across the development history and
+easy to mistake for anecdote.
+
+Reference quantity throughout: `u*(t* = 30)`, converged value `0.980728`.
+
+### Spatial discretisation
+
+Seven arrangements, `N = 1600`, spanning 3200 to 12802 degrees of freedom:
+
+| variant | thickness | velocity | dof | fate |
+|---|---|---|---|---|
+| A | `C2` + `p`,`κ` | `C2` | 12802 | dies `t* = 182.1` |
+| C | `C1` | `C2` | 4800 | dies `t* = 173.9` |
+| E | `C2` + `p` on `D1`, `κ` | `C2` | 12801 | dies `t* = 173.9` |
+| G | `D1` | `C2` | 6400 | dies `t* = 182.1` |
+| H | `D2` | `C2` | 8000 | dies `t* = 182.1` |
+| J | `D0` | `C2` | 4800 | dies `t* = 182.1` |
+| **I** | **`D0`** | **`C1`** | **3200** | **completes `t* = 400`** |
+
+Two things at once. The **velocity** space alone decides survival — every `u` on
+`C2` fails near `t* ≈ 174–182` regardless of the thickness space; `u` on `C1`
+does not fail. And all seven **agree on `u*(t)` to six or seven significant
+figures** out to `t* = 115`. The parasitic mode lives in the rim interior and
+never reaches the tip velocity, so the answer was never in doubt — only the
+reachable horizon was.
+
+### Mesh refinement (co-located scheme only)
+
+Six runs, tip cell `dm₁ = M/N²` spanning a 64× range, three domain lengths, step
+counts from `8×10³` to `1.2×10⁵`:
+
+```
+t*_fail = 5655 · dm₁^0.435
+```
+
+with the production run predicted to 1%. **A finer mesh fails sooner**, so the
+co-located scheme does not converge and refinement is counterproductive. Fixed
+by staggering, not by resolution.
+
+### Change of variable
+
+`f = h²` against `h`, both space arrangements, independently derived residuals:
+
+| | `nsteps = 6400` | Richardson `dt → 0` |
+|---|---|---|
+| `h`, co-located | `0.9805907141` | `0.9807277205` |
+| `h`, staggered | `0.9805910803` | `0.9807280867` |
+| `f`, co-located | `0.9805173458` | `0.9807277056` |
+| `f`, staggered | `0.9805177121` | `0.9807280717` |
+
+`7.5×10⁻⁵` relative apart at fixed `dt`, **`1.5×10⁻⁸` in the limit**. Two
+independently derived nonlinear discretisations converging to the same number to
+eight digits is a stronger statement about the equations than any single-form
+convergence study. `f` is not the default: same limit, `1.54×` worse error
+constant, no extra reach.
+
+### Time integration
+
+| scheme | successive ratio | order | value at `nsteps = 6400` |
+|---|---|---|---|
+| BDF1 | 1.97 / 1.99 / 1.99 | 1.0 | `0.9805910803` |
+| BDF2 | 3.96 | 2.0 | `0.9807281257` |
+
+The BDF2 value sits `3.9×10⁻⁸` from the *BDF1* `dt → 0` limit, and the two
+Richardson limits agree to `7.5×10⁻⁸`. So a **single BDF2 run is the converged
+answer**; the two-level extrapolation every earlier 1D result required is
+obsolete. Independently, BDF2 at 200 steps beats BDF1 at 1600 by ~250× in error.
+
+The failure time of the co-located scheme is *not* a timestep effect: variant C
+at `N = 1600` dies at `t* = 173.88` at both `nsteps = 8000` and `40000`,
+identical to output-row resolution across a 5× change in `dt`.
+
+### Domain length
+
+`far_field_drift` is recorded at every output and is **exactly zero** in every
+production run, with the disturbed region reaching `m ≈ 30–125` of `M = 2393` to
+`6068`. The far field never binds; it is checked rather than assumed.
+
+### Oh-independence
+
+Measured, not merely derived: across `Oh_SB = 0.2`, `1`, `5` the curves lie
+`4×10⁻⁵` apart at `t* = 0.1` and `2×10⁻⁷` apart for `t* ≥ 5`.
+
+### Independent implementation
+
+Against the numpy port of Ahsan et al.'s `L = ∞` solver (§6.6): max `|Δu*| =
+7.1×10⁻⁵` over four decades of time, with the residual attributable to the
+reference. The port itself matches the original MATLAB to `5×10⁻¹⁰`.
+
+### Summary
+
+| axis varied | spread in `u*` |
+|---|---|
+| spatial discretisation (7 arrangements) | `~10⁻⁶`–`10⁻⁷` |
+| variable (`f` vs `h`), `dt → 0` | `1.5×10⁻⁸` |
+| time scheme (BDF1 vs BDF2), `dt → 0` | `7.5×10⁻⁸` |
+| Ohnesorge number (0.2 → 5) | `2×10⁻⁷` |
+| independent implementation | `7.1×10⁻⁵` |
+
+The last row is the largest, and it bounds everything: **`u*(t)` from this solver
+is reproducible to better than `10⁻⁴` against a code that shares nothing with it
+but the equations.** Every internal knob moves the answer by one to three orders
+less than that.
+
+---
+
 ## 7. What is and is not established
 
 **Established.**
