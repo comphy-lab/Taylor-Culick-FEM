@@ -629,6 +629,70 @@ uv run python postProcess/compare_1d_2d.py --json-out /tmp/cmp.json
 
 ---
 
+## 6.5 Reconciliation with Ahsan et al.: two laws, two time windows
+
+The `t*⁻²` decay of the 1D deficit is not an artefact. Ahsan, Brandão,
+Davidovitch & Stone (arXiv:2507.04603) derive exactly it for a highly viscous
+planar sheet, their eq. (7.11):
+
+```
+dXc/dT  ~  1 - 1/(1+T)²          deficit ~ T⁻², prefactor independent of Oh
+```
+
+in the visco-inertial time `T = t/t_I` with `t_I = 4µh₀/γ`. In our variables
+`T = t*/4`, and their Ohnesorge is `Oh_paper = 2·Oh_SB` (they scale on the
+half-thickness). Their prefactor carries no `Oh` — the reduced problem contains
+only the length group `L`, and in the `L = ∞` limit even that goes. So both
+features of our 1D solver, the `T⁻²` exponent **and** the collapse of `u*(t*)`
+onto a single Oh-independent curve, are the published behaviour of the long-wave
+model, not a defect of ours.
+
+**Two cautions on citing this.** Their paper contains a second `1/T²`, eq.
+(6.10) `dXc/dT ~ L/(1+T)²`, which is the speed decaying to *zero* because a
+finite sheet runs out — a different physical statement from the approach to
+`u_TC`. And the coefficient in (7.11) is an initial-condition-dependent
+numerical fit, not asymptotics: they state that `U₋₂` "remains undetermined" and
+that such corrections "depend on the full history of the retraction". The
+exponent is the robust comparison; the prefactor is not.
+
+**Why this removes the apparent contradiction with §6.4.** Their theory is
+derived for `Oh ≫ 1` and is explicitly declared invalid beyond `T = O(Oh)`,
+where the thin-film description breaks down into a *"two-dimensional inertial
+regime … governed by the full two-dimensional Navier–Stokes equations"* in which
+they expect classical rim formation — a regime they decline to analyse
+(*"Extending the present theory to either regime is challenging"*). Their window
+of validity is therefore `1 ≪ T ≪ Oh`.
+
+Now note where our `2D` law puts its own crossover. `1 - u* = (1/2√π)√(Oh_SB/t*)`
+becomes `O(1)` at `t* ~ Oh_SB`, i.e. at `T ~ Oh` — **the same crossover time they
+identify from the opposite side.** The consistent reading is that the two laws
+describe two windows of the same problem:
+
+| window | law | source |
+|---|---|---|
+| `1 ≪ T ≪ Oh` | `1 - u* ∝ T⁻²`, Oh-independent | long-wave; Ahsan et al. eq. (7.11); our 1D solver |
+| `T ≳ Oh` | `1 - u* = (1/2√π)√(Oh_SB/t*)` | full Navier–Stokes; this campaign |
+
+This also explains why the 1D and 2D curves *diverge* rather than sitting at a
+fixed offset, and it reframes the "1D is 3% high at `Oh_SB = 1`" note of §5: at
+`Oh_SB = 1` the first window is `1 ≪ T ≪ 2`, which barely exists, so essentially
+the whole of our sweep lies in the second. The 3% was the value at one crossing
+point, not a discrepancy to be explained away.
+
+**The prediction this makes, and it is testable.** At larger `Oh` the first
+window widens. At `Oh_SB = 5` (`Oh_paper = 10`) a 2D run should show a `T⁻²`
+stretch over roughly `4 ≪ t* ≪ 40` before crossing to `t*⁻¹ᐟ²`. Seeing that
+crossover in the 2D solver would confirm the two-window picture directly; not
+seeing it would break it. That is the single most informative case this campaign
+could still run, and it is out of the current `Oh_SB ≤ 1` scope of §3.3.
+
+Nothing in Ahsan et al. offers a `t⁻¹ᐟ²` law, a viscous-boundary-layer argument,
+or the constant `1/(2√π)`. Their only `T^{1/2}` is the *early-time growth* of the
+speed, `dXc/dT ~ 2√(T/π)` (eq. 5.10), which is a different statement. The
+`t*⁻¹ᐟ²` law and its constant remain ours to argue.
+
+---
+
 ## 7. What is and is not established
 
 **Established.**
