@@ -78,22 +78,36 @@ class TroutonSheet(Equations):
     def define_fields(self):
         self.define_scalar_field("h", self.space)
         self.define_scalar_field("u", self.space)
-        self.define_scalar_field("p", self.space)      # p = dh/dm
-        self.define_scalar_field("kappa", self.space)
+        # p AND kappa ARE ONLY UNKNOWNS WHEN THE CAPILLARY TERM USES THEM.
+        # With with_capillarity=False, kappa never enters the momentum residual
+        # and p is used only inside kappa_expr, so both are a one-way downstream
+        # projection that cannot influence h or u -- yet they sat in the same
+        # Newton system and set the convergence test. That is what killed every
+        # production run: the residual went bit-identical across Newton steps
+        # 7-10 and stayed unchanged while the controller halved dt forty times
+        # to 9.3e-13. A residual invariant under dt -> 0 cannot be in a row
+        # containing partial_t, so the stall was in the algebraic (p, kappa)
+        # rows, not in the physics.
+        #
+        # Why those rows are unsolvable here: on the failure profiles kappa
+        # reaches 8.6e3 to 4.9e5 as a sign-alternating node-to-node mode where
+        # the physical curvature is O(1/h) ~ 0.016, and d(kappa_expr)/dp is
+        # 6.3e5 to 2.4e6 against a kappa-row diagonal of O(dm) = 1.9e-4. A
+        # 1e9-1e10 row/column scaling disparity inside an otherwise O(1) system
+        # puts the Newton update below the accuracy floor of the linear solve,
+        # which is why raising max_newton_iterations to 40 and switching on a
+        # globally convergent line search both bought nothing -- line search
+        # cannot rescue an update that is itself inaccurate.
+        if self.with_capillarity:
+            self.define_scalar_field("p", self.space)      # p = dh/dm
+            self.define_scalar_field("kappa", self.space)
 
     def define_residuals(self):
-        h, u, p, kap = var("h"), var("u"), var("p"), var("kappa")
-        ht, ut, pt, kt = (testfunction(n) for n in ("h", "u", "p", "kappa"))
+        h, u = var("h"), var("u")
+        ht, ut = testfunction("h"), testfunction("u")
 
         h_m = grad(h)[0]
         u_m = grad(u)[0]
-        p_m = grad(p)[0]
-        kap_m = grad(kap)[0]
-
-        # Surface curvature via d/dx = h d/dm, with p standing in for h_m.
-        h_x = h * p
-        h_xx = h * (p * p + h * p_m)
-        kappa_expr = 0.5 * h_xx / (1.0 + 0.25 * h_x * h_x) ** 1.5
 
         # 1. mass:      h_t = -h^2 u_m
         self.add_residual(weak(partial_t(h) + h * h * u_m, ht))
@@ -104,14 +118,22 @@ class TroutonSheet(Equations):
         #    nothing because u is pinned there, so its test function vanishes.
         self.add_residual(weak(partial_t(u), ut))
         self.add_residual(4.0 * self.mu * weak(h * h * u_m, grad(ut)[0]))
+
         if self.with_capillarity:
+            p, kap = var("p"), var("kappa")
+            pt, kt = testfunction("p"), testfunction("kappa")
+            p_m, kap_m = grad(p)[0], grad(kap)[0]
+
+            # Surface curvature via d/dx = h d/dm, with p standing in for h_m.
+            h_x = h * p
+            h_xx = h * (p * p + h * p_m)
+            kappa_expr = 0.5 * h_xx / (1.0 + 0.25 * h_x * h_x) ** 1.5
+
             self.add_residual(-weak(h * kap_m, ut))
-
-        # 3. auxiliary: p = h_m
-        self.add_residual(weak(p - h_m, pt))
-
-        # 4. curvature, projected onto the same space
-        self.add_residual(weak(kap - kappa_expr, kt))
+            # 3. auxiliary: p = h_m
+            self.add_residual(weak(p - h_m, pt))
+            # 4. curvature, projected onto the same space
+            self.add_residual(weak(kap - kappa_expr, kt))
 
 
 class TipFlux(Equations):
@@ -197,7 +219,12 @@ class Trouton1DProblem(Problem):
         self += mesh
 
         eqs = TroutonSheet(mu=self.mu, with_capillarity=self.with_capillarity)
-        eqs += InitialCondition(h=1, u=0, p=0, kappa=0)
+        # Must match define_fields: pyoomph raises if an initial condition names
+        # a field the element does not carry.
+        if self.with_capillarity:
+            eqs += InitialCondition(h=1, u=0, p=0, kappa=0)
+        else:
+            eqs += InitialCondition(h=1, u=0)
         eqs += TipFlux(mu=self.mu) @ "left"
         # Far end: undisturbed sheet. Valid only while the disturbance has not
         # arrived, which the driver checks by monitoring h and u there.
