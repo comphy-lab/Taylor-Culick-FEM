@@ -442,30 +442,69 @@ diverge. The 1D exponent is stable across `Oh_SB = 0.09121 … 1`; at `0.0565` a
 exponent is quoted there and figure 3 draws the finest measured level instead of
 the extrapolation.
 
-**The 1D solver does not survive to the asymptotic regime.** Every run at every
-`Oh` terminated with Newton stalled at its iteration cap, residual frozen
-between `4 × 10⁻⁴` and `1.5 × 10⁻³`. The termination is *not* a timestep
-artefact and *not* a solver-setting artefact:
+**The 1D solver did not survive to the asymptotic regime, and the reason was a
+discretisation defect rather than the model's physical limit.** Every run in the
+first sweep terminated with Newton stalled at its iteration cap, residual frozen
+between `4 × 10⁻⁴` and `1.5 × 10⁻³`, at rim thicknesses `h_tip` of `62`
+(`Oh_SB = 1`) to `337` (`0.035`). The termination was not a timestep artefact —
+at `Oh_SB = 0.38372`, `nsteps = 169242`, `338485`, `676971` all stopped at
+`t* = 431`, `405`, `405` — and not a nonlinear-solver artefact, since a retry
+with the Newton cap at 40 and a globally convergent line search stopped in the
+same place.
 
-- at `Oh_SB = 0.38372`, `nsteps = 169242`, `338485` and `676971` all stop at
-  `t* = 431`, `405`, `405`;
-- at `Oh_SB = 0.09121`, `nsteps = 291421`, `582843`, `1165686` all stop near
-  `t* = 856`;
-- a retry with the Newton cap raised to 40 *and* a globally convergent line
-  search stops in the same place.
+It was the auxiliary block. In the original 4-field formulation `(h, u, p, κ)`,
+setting `with_capillarity=False` leaves `κ` out of the momentum residual and
+uses `p` only inside `κ`, so both became a one-way downstream projection that
+could not influence `h` or `u` — while still sitting in the same Newton system
+and setting the convergence test. The evidence is direct: the residual goes
+**bit-identical** across Newton steps 7–10 and stays unchanged while the
+controller halves `dt` some forty times down to `9.3 × 10⁻¹³`. A residual
+invariant under `dt → 0` cannot belong to a row containing `∂ₜ`, so the stall
+was in the algebraic `p` and `κ` rows.
 
-What is common to every termination is the rim thickness. `h_tip` at failure
-runs from `62` at `Oh_SB = 1` to `337` at `0.035`, against an initial sheet
-thickness of `1`. The long-wave model assumes a slender sheet; a rim two orders
-of magnitude thicker than the film is far outside that, and the stalled Newton
-is the formulation reporting it. The 1D curves in figure 3 therefore simply end,
-marked `×`, at `t* = 245` (`Oh_SB = 1`) to `1268` (`0.035`) — one to two decades
-short of where the 2D `t*⁻¹ᐟ²` law is measured.
+Those rows were unsolvable in floating point. On the failure profiles `κ`
+reaches `8.6 × 10³`–`4.9 × 10⁵` as a sign-alternating node-to-node mode where
+the physical curvature is `O(1/h) ≈ 0.016`, and `∂κ_expr/∂p` is
+`6.3 × 10⁵`–`2.4 × 10⁶` against a `κ`-row diagonal of `O(dm) = 1.9 × 10⁻⁴` — a
+`10⁹`–`10¹⁰` scaling disparity inside an otherwise `O(1)` system, which puts the
+Newton update below the accuracy floor of the linear solve. That is why more
+iterations and a line search bought nothing: neither can rescue an update that
+is itself inaccurate.
 
-The practical consequence is that **the two models cannot be compared in the
-asymptotic regime at all**, because only one of them reaches it. The comparison
-above is an early-time comparison plus a statement about the *trend* each model
-is on when the 1D one stops.
+Savva & Bush met the same pathology and designed around it. They integrate on a
+**staggered** mesh and note explicitly (Appendix, p. 238) that *"implementation
+with a non-staggered grid introduced spurious oscillations in the curvature in
+the long time limit"*. They report no stiffness limit and no maximum rim
+thickness — they simply stop at `t* = 30`, reaching `h_m/H ≈ 9`. Our failures
+were at `t* = 245`–`1348` and `h_tip = 62`–`337`, i.e. 8–45× beyond their
+integration horizon and 7–37× their largest rim.
+
+**Fix.** `p` and `κ` are now unknowns only when `with_capillarity=True`
+(`simulationCases/trouton1d_pyoomph.py`). The 2-field `(h, u)` system reproduces
+`u*(30) = 0.9805907141` **bit-identically**, as it must, since the removed
+fields could not influence the solution. Two further items are known and not yet
+acted on: `h` carries a genuine vertex/midside checkerboard on `C2` elements
+(the mass residual is a pointwise ODE with no spatial operator on `h`, so
+nothing damps the odd/even mode), reaching 65% relative amplitude at
+`Oh_SB = 0.035`; and refinement makes the failure *earlier*, not later, which is
+the signature of a mesh-scale parasitic mode and means `h`-adaptivity is the
+wrong lever.
+
+The results reported above were computed with the original 4-field solver and
+therefore end where it stopped. **They are not invalidated** — the extrapolated
+`u*(t*)` values reproduce the independently recorded `0.98073`, and the removed
+fields provably cannot affect `h` or `u` — but the asymptotic reach of the 1D
+model is an open question again rather than a settled limit.
+
+**A caution on slenderness.** It is tempting to read the breakdown as the
+long-wave assumption failing. The rim aspect ratio `h_tip/L_rim` crosses 1 at
+`t* ≈ 0.2`–`4` in every case, i.e. essentially immediately, and reaches
+`23`–`2113` at the old failure points. So slenderness is violated from the start,
+long before anything breaks, and cannot serve as the stopping criterion. Savva &
+Bush say as much (p. 223): the equations *"become singular as we approach the
+film tip… nevertheless, such models perform surprisingly well"*. A defensible
+pre-registered horizon is instead `t* = 100`, about 3× beyond their published
+range and well past `u* = 0.99`.
 
 ![Figure 3](figures/fig3_1d_vs_2d.png)
 
@@ -526,9 +565,11 @@ uv run python postProcess/compare_1d_2d.py --json-out /tmp/cmp.json
   hardware delivered.
 - Whether `1/(2√π)` is exact. Five cases agreeing to within 1% is suggestive of
   a closed form, not proof of one; no derivation is offered here.
-- Why the 1D model breaks down at `h_tip ≈ 62–337` rather than continuing, and
-  whether a reformulation (rescaled unknowns, adaptive mass mesh) would carry it
-  further, or whether that is the model's true limit (§6.4).
+- How far the 1D model reaches once its auxiliary block is removed. The
+  `h_tip ≈ 62–337` breakdown is now understood as a discretisation defect and
+  fixed (§6.4); the new asymptotic reach has not yet been measured. A second,
+  untouched defect remains: `h` carries a vertex/midside checkerboard on `C2`
+  elements that grows to 65% relative amplitude at `Oh_SB = 0.035`.
 - Anything at `Oh_SB > 1`, which is deliberately out of scope (§3.3).
 
 ---
