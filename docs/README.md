@@ -526,16 +526,46 @@ high-`Oh` **no-rim** regime, which is not evidence that their scheme survives a
 steep rim of that thickness. They report no planar breakdown, no stiffness limit
 and no maximum rim thickness; they simply stop, without saying why.
 
-**Status of the results above.** They were computed with the 4-field solver and
-end where it stopped. They are not invalidated — the removed fields provably
-cannot influence `h` or `u`, and the extrapolated `u*(t*)` reproduces the
-independently recorded `0.98073` — but the asymptotic reach of this 1D
-implementation is an open question, and a run that ends in solver death is
-reporting its mesh, not its physics. Production 1D runs should therefore stop at
-a **pre-registered physical horizon** that every mesh reaches identically.
-`t* = 100` is defensible: it is over 3× beyond the published Savva & Bush range,
-`u*` is already `0.999+` there, and `h_tip = 1 + t*/4` exactly, so the horizon
-can equivalently be stated as a rim thickness.
+**The reported `u*(t)` is not contaminated, and this was tested rather than
+assumed.** Five discretisations were run at `N = 1600` — co-located 4-field
+(12802 dof), `h` on `C1` (4800), `p` on `D1` (12801), `h` on `D1` (6400), `h` on
+`D2` (8000) — and they agree on `u*(t*)` to **six or seven significant figures at
+every output row** out to `t* = 115`. The parasitic mode lives in the rim
+interior and never reaches the tip velocity. So the science output is robust and
+only the solver's reachable *horizon* is fragile: the 1D curves reported above
+stand over the range they cover, and what is in doubt is how far that range
+could be extended, not what it says.
+
+**The deeper cause: `h_m` is a divergent quantity being stored in continuous
+quadratics.** Savva & Bush solve for `f = h²` rather than `h`, and say why
+(p. 236): *"rearranged to solve for `f = h²`, because the slope of `h`, which
+goes like `√(r − r₀(t))` near the tip, becomes infinite there. Doing so avoids
+the difficulties in taking the derivatives of `h` to evaluate the curvature at
+the tip."* This implementation carries `p = h_m` as its own `C2` field, so the
+`p = 2.3 × 10⁴` observed at the tip node is not a bug — it is the discretisation
+faithfully trying to resolve an infinity in a space that cannot represent one.
+Two further differences from their scheme point the same way: they stagger `f`
+at nodes against `u` at midpoints, which is exactly the arrangement this
+co-located `C2`/`C2` formulation is not, and their far field is Neumann where
+this one imposes Dirichlet `h = 1, u = 0`.
+
+A useful independent check falls out of the same comparison: their eq. (2.29)
+gives `h_m = H(1 + t/(4 τ_vis))`, and this code reproduces `h_tip = 1 + t*/4`
+exactly.
+
+**Consequence for practice.** A run that ends in solver death is reporting its
+mesh, not its physics. Production 1D runs should stop at a **pre-registered
+physical horizon** that every mesh reaches identically. `t* = 100` is
+defensible: over 3× beyond the published Savva & Bush range, `u*` already
+`0.999+` there, and since `h_tip = 1 + t*/4` exactly, the horizon can
+equivalently be stated as a rim thickness.
+
+**The route to a solver that would go further**, in order of expected payoff:
+solve for `f = h²` instead of `h`; stagger the pairing (`h` cell-wise against
+`u` on vertices, the FEM realisation of their MAC arrangement); relax the
+far-field Dirichlet to Neumann; and only then revisit the bulk capillary term,
+which is independently wrong. None of this is needed for the results reported
+here, and none of it should be attempted by refining the present scheme.
 
 **A caution on slenderness.** It is tempting to read the breakdown as the
 long-wave assumption failing. The rim aspect ratio `h_tip/L_rim` crosses 1 at
