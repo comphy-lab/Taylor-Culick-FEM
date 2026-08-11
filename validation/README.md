@@ -55,6 +55,55 @@ answered against `V_TC` itself plus convergence.
 | our 1D Trouton solver | whether a discrepancy is model or code | same non-independence caveat |
 | Savva & Bush figs 5, 6 | whole-curve `u*(t*)` agreement | 1D lubrication vs our 2D NS; their approximation is *strongest* here, so a disagreement most likely indicts us |
 | Ahsan et al. arXiv:2507.04603 | asymptotic **structure** | not a `u*(t*)` curve: compare the exponential profile with Stokes-length decay, the linear amplitude growth, and the `O(1/T^2)` velocity convergence |
+| Ahsan et al. **solver**, ported in `ahsan_thinfilm.py` | whole-curve `u*(t*)` against an INDEPENDENT implementation of the same equations | independent code, independent discretisation, independent authors -- but the same continuous model, so it cannot indict the model itself |
+
+### Ahsan et al. as an independent 1D implementation (2026-08-11)
+
+`ahsan_thinfilm.py` is a faithful Python port of their released MATLAB
+(`github.com/taosifahsan/Thin-Film-Simulations`), verified against the original
+run under GNU Octave to 5e-10, the precision of Octave's ASCII output.
+
+The load-bearing fact is that **their reduced problem is our model exactly**.
+Their eqs (2.15)-(2.19), with `h0 = H/2`, `Oh_paper = 2 Oh_SB`, `T = t*/4` and
+`U = u*`, are our `h_t + (h u)_x = 0`, `Du/Dt = (4 mu/h)(h u_x)_x` with the
+Savva & Bush tip closure `h u_x = -1/(2 mu)` -- i.e. our solver's DEFAULT
+configuration, `with_capillarity=False`. They drop the bulk capillary term
+because they prove it negligible at `Oh >> 1` (their eq. 2.11), not for
+convenience. Their eq (3.10a) `H(Xc,T) = 1+T` is our `h_tip = 1 + t*/4`.
+
+Consequence, and it is checkable: the reduced problem has **no parameter but
+`L`**, so `u*(t*)` must be independent of `Oh_SB`. Measured across
+`Oh_SB = 0.2, 1, 5`: 4e-5 apart at `t* = 0.1`, 2e-7 by `t* >= 5`.
+
+Result at `L = infinity`, `T` in `(1e-3, 50]` (`t*` to 200):
+
+| quantity | value |
+|---|---|
+| max `\|du*\|`, pyoomph vs port | 7.1e-5 |
+| RMS `\|du*\|` | 4.2e-5 |
+| max relative | 5.5e-4 |
+| port's own 1x-vs-2x resolution floor | 8.5e-5 |
+
+The two agree at the joint discretisation floor. Refining the reference moves
+it toward pyoomph, not away.
+
+**Does `with_capillarity=False` cost anything?** Their `thin_film.m` is the
+same problem WITH the bulk capillary term and a finite `Oh` tip, so it answers
+this directly. Deviation of its `U` from the capillarity-free curve, at
+`L = 10`, as the grid is refined:
+
+| `T` | `Oh_p=10`, `dx=0.067` | `dx=0.022` | `dx=0.0074` | `Oh_p=40`, `dx=0.089` | `dx=0.030` |
+|---|---|---|---|---|---|
+| 0.20 | -15.0% | -9.6% | -6.6% | -14.5% | -7.9% |
+| 0.50 | -13.5% | -5.6% | -2.0% | -14.8% | -5.3% |
+| 0.75 | -13.2% | -4.2% | -0.1% | -15.1% | -4.5% |
+
+Monotone in `dx` towards zero at fixed `Oh`, and the same at `Oh_p = 40`. The
+double-digit gaps are their scheme failing to resolve its own hard-imposed
+`sqrt` tip, not physics. So the neglected bulk capillary term is a sub-per-cent
+effect here and does not explain -- or threaten -- the 7e-5 agreement above.
+It is not converged at the finest grid run, so treat the residual 1-2% as an
+upper bound rather than a measurement.
 
 ### Status against the goal
 
