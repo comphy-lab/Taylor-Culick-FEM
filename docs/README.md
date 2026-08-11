@@ -452,49 +452,90 @@ at `Oh_SB = 0.38372`, `nsteps = 169242`, `338485`, `676971` all stopped at
 with the Newton cap at 40 and a globally convergent line search stopped in the
 same place.
 
-It was the auxiliary block. In the original 4-field formulation `(h, u, p, κ)`,
-setting `with_capillarity=False` leaves `κ` out of the momentum residual and
-uses `p` only inside `κ`, so both became a one-way downstream projection that
-could not influence `h` or `u` — while still sitting in the same Newton system
-and setting the convergence test. The evidence is direct: the residual goes
-**bit-identical** across Newton steps 7–10 and stays unchanged while the
-controller halves `dt` some forty times down to `9.3 × 10⁻¹³`. A residual
-invariant under `dt → 0` cannot belong to a row containing `∂ₜ`, so the stall
-was in the algebraic `p` and `κ` rows.
+**The cause is that the discrete problem has no short-wave regularisation.** A
+mesh ladder at fixed `Oh_SB = 1` settles it, and it rules out the explanation
+that looked obvious from the solver log:
 
-Those rows were unsolvable in floating point. On the failure profiles `κ`
-reaches `8.6 × 10³`–`4.9 × 10⁵` as a sign-alternating node-to-node mode where
-the physical curvature is `O(1/h) ≈ 0.016`, and `∂κ_expr/∂p` is
-`6.3 × 10⁵`–`2.4 × 10⁶` against a `κ`-row diagonal of `O(dm) = 1.9 × 10⁻⁴` — a
-`10⁹`–`10¹⁰` scaling disparity inside an otherwise `O(1)` system, which puts the
-Newton update below the accuracy floor of the linear solve. That is why more
-iterations and a line search bought nothing: neither can rescue an update that
-is itself inaccurate.
+| `dm₁ = M/N²` | `N` | `M` | `t*_fail` | fit |
+|---|---|---|---|---|
+| `5.63 × 10⁻³` | 400 | 900 | > 400 (survived to run cap) | 588 |
+| `1.41 × 10⁻³` | 800 | 900 | 317.4 | 322 |
+| **`7.50 × 10⁻⁴`** | **2613** | **5122** | **245.0** | **245** |
+| `3.52 × 10⁻⁴` | 1600 | 900 | 182.1 | 177 |
+| `8.79 × 10⁻⁵` | 3200 | 900 | 95.3 | 97 |
 
-Savva & Bush met the same pathology and designed around it. They integrate on a
-**staggered** mesh and note explicitly (Appendix, p. 238) that *"implementation
-with a non-staggered grid introduced spurious oscillations in the curvature in
-the long time limit"*. They report no stiffness limit and no maximum rim
-thickness — they simply stop at `t* = 30`, reaching `h_m/H ≈ 9`. Our failures
-were at `t* = 245`–`1348` and `h_tip = 62`–`337`, i.e. 8–45× beyond their
-integration horizon and 7–37× their largest rim.
+```
+t*_fail  =  5561 · dm₁^0.434            (Oh_SB = 1)
+```
 
-**Fix.** `p` and `κ` are now unknowns only when `with_capillarity=True`
-(`simulationCases/trouton1d_pyoomph.py`). The 2-field `(h, u)` system reproduces
-`u*(30) = 0.9805907141` **bit-identically**, as it must, since the removed
-fields could not influence the solution. Two further items are known and not yet
-acted on: `h` carries a genuine vertex/midside checkerboard on `C2` elements
-(the mass residual is a pointwise ODE with no spatial operator on `h`, so
-nothing damps the odd/even mode), reaching 65% relative amplitude at
-`Oh_SB = 0.035`; and refinement makes the failure *earlier*, not later, which is
-the signature of a mesh-scale parasitic mode and means `h`-adaptivity is the
-wrong lever.
+The bolded row is the **production** run, on a domain 5.7× larger and a step
+count entirely different from the probes, and it sits on the fit to three
+significant figures. The failure time is set by the tip cell size alone, and it
+is essentially independent of the timestep — halving `dt` at `N = 3200` moves it
+by two or three output rows, an order of magnitude less than the mesh effect.
 
-The results reported above were computed with the original 4-field solver and
-therefore end where it stopped. **They are not invalidated** — the extrapolated
-`u*(t*)` values reproduce the independently recorded `0.98073`, and the removed
-fields provably cannot affect `h` or `u` — but the asymptotic reach of the 1D
-model is an open question again rather than a settled limit.
+**A finer mesh fails sooner.** There is no mesh on which this converges, which is
+the definition of a non-convergent scheme, and it means the failure cannot be
+refined away: refinement shortens the horizon. That is the signature of a
+mesh-scale mode whose growth rate rises with wavenumber, so the finest available
+mode always wins.
+
+Linearising the two governing equations about a uniform state gives one strongly
+damped branch and one branch that is **neutral at every wavenumber** — no
+short-wave decay at all. The term that would provide it is the bulk capillary
+`h ∂_m κ` in the momentum residual, which `with_capillarity=False` switches off.
+So the breakdown is not a solver defect to be tuned around: it is the
+model-as-configured having no mechanism to suppress the mesh-scale mode, and
+that mode saturating. It is directly visible in the production profiles as a
+vertex/midside checkerboard in `h` — at `Oh_SB = 0.035` two smooth interleaved
+curves at `245` and `148` at the same location, while `u` is smooth to six
+digits.
+
+**What did *not* fix it, recorded because the log made both look compelling.**
+The residual goes bit-identical across Newton steps 7–10 while the controller
+halves `dt` some forty times to `9.3 × 10⁻¹³`, which localises the *stall* to the
+algebraic `p` and `κ` rows — those fields are a one-way downstream projection
+when `with_capillarity=False`, and `κ` reaches `10³`–`10⁵` where the physical
+curvature is `≈ 0.016`. Removing them from the unknown set is therefore a
+legitimate simplification, and the 2-field system reproduces
+`u*(30) = 0.9805907141` bit-identically. **But it does not delay the failure at
+all**: at `N = 3200` the 4-field and 2-field variants die at the identical output
+row, as do variants with `h` moved off the midside nodes onto `C1`. The
+auxiliary block was where the stall surfaced, not what caused it.
+
+Enabling the capillary term is not a drop-in remedy either. With `p` on the `D1`
+space — the exact, element-local representation of `h_m` for a `C2` `h`, and so
+free of the spurious oscillation — the run reaches `u* = 1.97` before failing at
+`t* = 79`, i.e. 40% **above** the Taylor–Culick limit, which is unphysical. So
+repairing the curvature representation does not rescue the capillary term: the
+term `-weak(h·κ_m, u_test)` as written appears to be wrong on its own merits,
+not merely fed by a noisy `κ`. This is new evidence on the open question in §5,
+where the term was switched off on the strength of a bad `u*(30) = 0.106` and
+the docstring conceded the diagnosis was ambiguous.
+
+**Comparison with Savva & Bush.** They integrate on a **staggered** mesh
+following Eggers & Dupont, solving for `f = h²` because the slope of `h` goes
+like `√(r - r₀)` and is infinite at the tip (p. 236), and they state that
+*"implementation with a non-staggered grid introduced spurious oscillations in
+the curvature in the long time limit"* (p. 238). So the pathology is known and
+they designed around it. Two caveats on that comparison, both worth stating: the
+Appendix numerics describe the **axisymmetric** system, with the planar case
+given only as *"in a similar manner"* (p. 219); and their planar figures stop at
+`t* = 30` with `h_m/H ≲ 9`, that maximum occurring at `Oh = 1000` — the
+high-`Oh` **no-rim** regime, which is not evidence that their scheme survives a
+steep rim of that thickness. They report no planar breakdown, no stiffness limit
+and no maximum rim thickness; they simply stop, without saying why.
+
+**Status of the results above.** They were computed with the 4-field solver and
+end where it stopped. They are not invalidated — the removed fields provably
+cannot influence `h` or `u`, and the extrapolated `u*(t*)` reproduces the
+independently recorded `0.98073` — but the asymptotic reach of this 1D
+implementation is an open question, and a run that ends in solver death is
+reporting its mesh, not its physics. Production 1D runs should therefore stop at
+a **pre-registered physical horizon** that every mesh reaches identically.
+`t* = 100` is defensible: it is over 3× beyond the published Savva & Bush range,
+`u*` is already `0.999+` there, and `h_tip = 1 + t*/4` exactly, so the horizon
+can equivalently be stated as a rim thickness.
 
 **A caution on slenderness.** It is tempting to read the breakdown as the
 long-wave assumption failing. The rim aspect ratio `h_tip/L_rim` crosses 1 at
