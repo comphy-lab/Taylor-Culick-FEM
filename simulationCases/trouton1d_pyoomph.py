@@ -33,6 +33,67 @@ free boundary is a coordinate rather than something to track. With d/dx = h d/dm
     h_t|_m = -h^2 u_m
     u_t|_m = 4 mu d_m(h^2 u_m) + h kappa_m
 
+THE CHANGE OF VARIABLE f = h^2 (Savva & Bush p. 236, and their eq. A1).
+------------------------------------------------------------------------
+They do not solve for h. They solve for f = h^2, and they say why: near the tip
+the profile is a parabola on its side, h ~ sqrt(r - r0(t)), so h_r is INFINITE
+at r = r0. Every h-derivative in the curvature is then unrepresentable exactly
+where the tip closure acts. f = h^2 is linear in (r - r0) there, so f_r is
+finite and the curvature becomes a ratio of finite quantities.
+
+DERIVATION, PLANAR, SURFACE AT z = +-h/2.
+
+(a) Curvature. With h = f^{1/2},
+
+        h_x  = f_x / (2 f^{1/2})
+        h_xx = f_xx / (2 f^{1/2}) - f_x^2 / (4 f^{3/2})
+             = (2 f f_xx - f_x^2) / (4 f^{3/2})
+
+    Substituting into kappa = (1/2) h_xx / [1 + (1/4) h_x^2]^{3/2} and using
+    1 + (1/4) h_x^2 = 1 + f_x^2/(16 f) = (16 f + f_x^2) / (16 f):
+
+        kappa = (2 f f_xx - f_x^2) / (8 f^{3/2})  *  (16 f)^{3/2} / (16 f + f_x^2)^{3/2}
+              = 8 (2 f f_xx - f_x^2) / (16 f + f_x^2)^{3/2}
+
+    which is EXACTLY the first term of their eq. (A 1); their second term,
+    f_r / [r (16 f + f_r^2)^{1/2}], is the azimuthal curvature of the
+    axisymmetric sheet and has no planar counterpart. That the two agree term
+    for term is the check that our 1/2 and 1/4 factor convention -- full
+    thickness h, interface at +-h/2 -- is the same as theirs.
+
+(b) Mass. h_t = -h^2 u_m and f = h^2 give f_t = 2 h h_t = -2 h^3 u_m, i.e.
+
+        f_t = -2 f^{3/2} u_m
+
+(c) Momentum. h^2 = f exactly, so the viscous operator is
+
+        4 mu d_m(h^2 u_m) = 4 mu d_m(f u_m)
+
+    which is LINEAR in f. That is much of the point: in the h-form the same
+    term is quadratic, so its Jacobian carries an 8 mu h u_m d_m(.) block that
+    the f-form simply does not have. The capillary term carries the remaining
+    square root, u_t = ... + f^{1/2} kappa_m.
+
+(d) Tip closure. h^2 u_m|_{m=0} = -1/(2 mu) becomes f u_m|_{m=0} = -1/(2 mu),
+    the same number, and it is still the natural boundary term of the same
+    conservative operator. TipFlux is therefore unchanged.
+
+(e) Curvature in the mass coordinate. With d/dx = h d/dm = f^{1/2} d/dm,
+
+        f_x  = f^{1/2} f_m
+        f_xx = f^{1/2} d_m(f^{1/2} f_m) = f_m^2 / 2 + f f_mm
+
+    so 2 f f_xx - f_x^2 = f f_m^2 + 2 f^2 f_mm - f f_m^2 = 2 f^2 f_mm and
+    16 f + f_x^2 = f (16 + f_m^2). The f^{3/2} and the f^2 cancel down to
+
+        kappa = 16 f^{1/2} f_mm / (16 + f_m^2)^{3/2}
+
+    Note what happened: every negative power of f has gone. In the h-form the
+    equivalent expression divides by h and by (1 + h_x^2/4)^{3/2} with
+    h_x = h h_m unbounded; here the only nonlinearity left is a bounded
+    rational function of f_m. This is why the f-form can carry capillarity at
+    the tip at all, and it is what the with_capillarity guard used to point at.
+
 MIXED FORMULATION. The curvature carries h_xx, a second derivative, which C0
 Lagrange elements cannot represent. Rather than reach for C1 elements, p = h_m
 is carried as its own field, so every derivative in the residual is first order:
@@ -58,7 +119,8 @@ from __future__ import annotations
 import math
 
 from pyoomph import DirichletBC, Equations, InitialCondition, Problem, TextFileOutput
-from pyoomph.expressions import grad, partial_t, testfunction, var, weak
+from pyoomph.expressions import (grad, partial_t, square_root, testfunction,
+                                 var, weak)
 from pyoomph.meshes.simplemeshes import LineMesh
 
 V_TC = math.sqrt(2.0)
@@ -68,24 +130,41 @@ class TroutonSheet(Equations):
     """Slender-sheet retraction in the Lagrangian mass coordinate."""
 
     def __init__(self, mu: float, space: str = "C2", with_capillarity: bool = True,
-                 staggered: bool = True):
+                 staggered: bool = True, variable: str = "h"):
         super().__init__()
         self.mu = mu
         self.with_capillarity = with_capillarity
         self.staggered = staggered
         self.space = space
+        if variable not in ("f", "h"):
+            raise ValueError(f"variable must be 'f' or 'h', not {variable!r}")
+        # THE THICKNESS UNKNOWN IS ONE FIELD UNDER TWO NAMES. Everything
+        # downstream (initial condition, Dirichlet value, diagnostics) keys off
+        # this name, so the two formulations share one code path rather than
+        # forking the Problem.
+        self.variable = variable
+        self.thickness_field = variable
+        # The auxiliary gradient field is p = h_m in the h-form and q = f_m in
+        # the f-form. Different symbols because they are different quantities:
+        # substituting one for the other in the curvature is a silent factor of
+        # 2 h.
+        self.grad_field = "q" if variable == "f" else "p"
         if staggered and with_capillarity:
-            # p = h_m is meaningless for a cell-constant h: grad(h) is zero
-            # inside every element. A staggered capillary formulation needs the
-            # curvature built from f = h^2 as Savva & Bush do (their eq. A1),
-            # which is not implemented here. Fail loudly rather than silently
-            # integrating a zero curvature.
+            # The gradient of a cell-constant thickness is zero inside every
+            # element, so the auxiliary field is identically zero and the
+            # curvature with it. This is a property of the D0 space, NOT of the
+            # choice of variable -- the f-form fixes the tip singularity of the
+            # curvature, not the absence of an elementwise gradient. Fail loudly
+            # rather than silently integrating a zero curvature.
             raise ValueError(
                 "staggered=True does not support with_capillarity=True: a D0 "
-                "thickness has zero elementwise gradient, so p = h_m is "
-                "identically zero. Use staggered=False, or implement the "
-                "f = h^2 curvature of Savva & Bush eq. (A1).")
-        # gamma = 1 in code units; this is Savva & Bush eq. 2.28.
+                "thickness has zero elementwise gradient, so its gradient "
+                f"field {self.grad_field} = d/dm is identically zero. Use "
+                "staggered=False; with variable='f' the co-located capillary "
+                "formulation uses the Savva & Bush eq. (A1) curvature, which "
+                "is regular at the tip.")
+        # gamma = 1 in code units; this is Savva & Bush eq. 2.28. Identical in
+        # both variables, since h^2 u_m = f u_m.
         self.tip_flux = -1.0 / (2.0 * mu)
 
     def define_fields(self):
@@ -118,11 +197,16 @@ class TroutonSheet(Equations):
         # inherits it through h_t = -h^2 u_m. The h checkerboard visible in the
         # profiles is the print of the mode, not its source -- which is why every
         # earlier fix aimed at h, or at the p/kappa block, changed nothing.
+        #
+        # THE STAGGERED/CO-LOCATED SWITCH IS ORTHOGONAL TO THE h/f SWITCH. The
+        # spaces below are chosen by `staggered`; only the NAME of the thickness
+        # unknown is chosen by `variable`. All four combinations are legal
+        # (modulo the capillarity guard above).
         if self.staggered:
-            self.define_scalar_field("h", "D0")
+            self.define_scalar_field(self.thickness_field, "D0")
             self.define_scalar_field("u", "C1")
         else:
-            self.define_scalar_field("h", self.space)
+            self.define_scalar_field(self.thickness_field, self.space)
             self.define_scalar_field("u", self.space)
         # p AND kappa ARE ONLY UNKNOWNS WHEN THE CAPILLARY TERM USES THEM.
         # With with_capillarity=False, kappa never enters the momentum residual
@@ -145,10 +229,17 @@ class TroutonSheet(Equations):
         # globally convergent line search both bought nothing -- line search
         # cannot rescue an update that is itself inaccurate.
         if self.with_capillarity:
-            self.define_scalar_field("p", self.space)      # p = dh/dm
+            # p = dh/dm, or q = df/dm
+            self.define_scalar_field(self.grad_field, self.space)
             self.define_scalar_field("kappa", self.space)
 
     def define_residuals(self):
+        if self.variable == "f":
+            self._define_residuals_f()
+        else:
+            self._define_residuals_h()
+
+    def _define_residuals_h(self):
         h, u = var("h"), var("u")
         ht, ut = testfunction("h"), testfunction("u")
 
@@ -179,6 +270,50 @@ class TroutonSheet(Equations):
             self.add_residual(-weak(h * kap_m, ut))
             # 3. auxiliary: p = h_m
             self.add_residual(weak(p - h_m, pt))
+            # 4. curvature, projected onto the same space
+            self.add_residual(weak(kap - kappa_expr, kt))
+
+    def _define_residuals_f(self):
+        """Savva & Bush's f = h^2. See the derivation in the module docstring.
+
+        The two residual sets are the SAME continuous problem; nothing here is
+        a modelling change. What changes is where the nonlinearity sits: the
+        viscous term becomes linear in the unknown thickness variable and the
+        curvature loses every negative power of the thickness, at the cost of
+        an f^{3/2} in the mass equation and an f^{1/2} in the capillary term.
+        """
+        f, u = var("f"), var("u")
+        ft, ut = testfunction("f"), testfunction("u")
+
+        f_m = grad(f)[0] if not self.staggered else None
+        u_m = grad(u)[0]
+        sqrt_f = square_root(f)
+
+        # 1. mass:      f_t = -2 f^{3/2} u_m      [ = 2 h h_t = -2 h^3 u_m ]
+        self.add_residual(weak(partial_t(f) + 2.0 * f * sqrt_f * u_m, ft))
+
+        # 2. momentum:  u_t = 4 mu d_m(f u_m) + f^{1/2} kappa_m
+        #    h^2 = f, so the viscous term is LINEAR in f -- its Jacobian block
+        #    is 4 mu <v_m, u_m> in f and 4 mu <v_m, f> in u, with no
+        #    8 mu h u_m term. Same integration by parts, so the tip closure is
+        #    still the natural boundary term and TipFlux is unchanged.
+        self.add_residual(weak(partial_t(u), ut))
+        self.add_residual(4.0 * self.mu * weak(f * u_m, grad(ut)[0]))
+
+        if self.with_capillarity:
+            q, kap = var("q"), var("kappa")
+            qt, kt = testfunction("q"), testfunction("kappa")
+            q_m, kap_m = grad(q)[0], grad(kap)[0]
+
+            # kappa = 16 f^{1/2} f_mm / (16 + f_m^2)^{3/2}, i.e. Savva & Bush
+            # eq. (A 1) without their azimuthal term, pushed through
+            # d/dx = f^{1/2} d/dm. Bounded as f -> 0 at the tip, which is the
+            # entire reason for the change of variable.
+            kappa_expr = 16.0 * sqrt_f * q_m / (16.0 + q * q) ** 1.5
+
+            self.add_residual(-weak(sqrt_f * kap_m, ut))
+            # 3. auxiliary: q = f_m
+            self.add_residual(weak(q - f_m, qt))
             # 4. curvature, projected onto the same space
             self.add_residual(weak(kap - kappa_expr, kt))
 
@@ -235,6 +370,42 @@ class Trouton1DProblem(Problem):
         # See TroutonSheet.define_fields for the evidence. Co-located C2/C2 is
         # retained only to reproduce runs made before 2026-08-11.
         self.staggered = True
+        # THE THICKNESS UNKNOWN: "f" solves for f = h^2 as Savva & Bush do
+        # (p. 236); "h" is the original formulation. Orthogonal to `staggered`:
+        # all four combinations run.
+        #
+        # DEFAULT "h", AND THAT IS A MEASURED RESULT RATHER THAN INERTIA. The
+        # f-form was implemented and verified at Oh_SB = 1 on 2026-08-11, and
+        # the verification says it is the same continuous problem and a
+        # slightly worse discretisation of it while with_capillarity is False:
+        #
+        #   * SAME EQUATIONS. Richardson-extrapolated to dt -> 0, u*(30) is
+        #     0.9807280717 (f, staggered) against 0.9807280867 (h, staggered),
+        #     a relative difference of 1.5e-8 -- and 1.5e-8 co-located as well.
+        #     Two independent nonlinear discretisations agreeing to eight
+        #     digits in the limit is the strongest correctness evidence
+        #     available for the algebra above.
+        #   * WORSE AT FINITE dt. At the reference nsteps = 6400 the f-form
+        #     gives 0.9805177121 against 0.9805910803, off by 7.5e-5 relative,
+        #     because its BDF1 error constant is 1.54x larger: the mass
+        #     equation gained the f^{3/2} that the h-form does not carry.
+        #     Same story on h_tip against the exact 1 + t*/4 -- 1.6e-4 relative
+        #     against 1.1e-5 -- and both extrapolate to the same 1.1e-5.
+        #   * NO EXTRA REACH. At N = 1600, M = 900 both staggered forms run the
+        #     full t* = 400 cap. Co-located, the f-form dies at t* = 154 where
+        #     the h-form dies at t* = 169 -- marginally SOONER. That is the
+        #     expected result given the velocity space, not the thickness
+        #     variable, is the discriminator, and it is direct evidence that
+        #     f = h^2 is not a cure for the co-located mode.
+        #   * NO CHEAPER. ~10.9 vs ~11.4 timesteps/s on the same mesh; the
+        #     linear viscous term is paid back by the f^{3/2} mass term.
+        #
+        # So the change of variable earns nothing here and costs accuracy. It
+        # is NOT dead code, though, and this default should flip the moment
+        # with_capillarity is revisited: the reason Savva & Bush solve for f is
+        # the curvature at the tip, and eq. (A1) is the only form of it that is
+        # bounded there. Set variable="f" to get it.
+        self.variable = "h"
         # BDF1, NOT pyoomph's default BDF2. BDF2 fails at the third timestep,
         # every time, on this problem: the fields are healthy (h = 1.000005,
         # u_tip = 3e-3, nothing negative), Newton converges to 1e-10, and it
@@ -269,13 +440,20 @@ class Trouton1DProblem(Problem):
         self += mesh
 
         eqs = TroutonSheet(mu=self.mu, with_capillarity=self.with_capillarity,
-                           staggered=self.staggered)
+                           staggered=self.staggered, variable=self.variable)
         # Must match define_fields: pyoomph raises if an initial condition names
-        # a field the element does not carry.
+        # a field the element does not carry. The undisturbed sheet is h = 1,
+        # hence f = h^2 = 1 -- the same number, which is why the initial
+        # condition needs no branch on the variable, only on its name.
+        # Read the field names off the equations BEFORE the first `+=`: that
+        # operator returns a combined EquationTree, not the TroutonSheet, so
+        # `eqs.thickness_field` stops resolving after it.
+        thickness, gradfield = eqs.thickness_field, eqs.grad_field
+        ic = {thickness: 1, "u": 0}
         if self.with_capillarity:
-            eqs += InitialCondition(h=1, u=0, p=0, kappa=0)
-        else:
-            eqs += InitialCondition(h=1, u=0)
+            ic[gradfield] = 0
+            ic["kappa"] = 0
+        eqs += InitialCondition(**ic)
         eqs += TipFlux(mu=self.mu) @ "left"
         # Far end: undisturbed sheet. Valid only while the disturbance has not
         # arrived, which the driver checks by monitoring h and u there.
@@ -287,7 +465,7 @@ class Trouton1DProblem(Problem):
         if self.staggered:
             eqs += DirichletBC(u=0) @ "right"
         else:
-            eqs += DirichletBC(h=1, u=0) @ "right"
+            eqs += DirichletBC(**{thickness: 1, "u": 0}) @ "right"
         eqs += TextFileOutput()
 
         self += eqs @ "sheet"
@@ -336,18 +514,29 @@ class Trouton1DProblem(Problem):
         return float(node.value(idx["u"]))
 
     def tip_thickness(self) -> float:
-        """h at the tip. Returns NaN in the staggered scheme.
+        """h at the tip, as sqrt(f) when the unknown is f. NaN if unavailable.
 
         A "D0" thickness is elementwise-constant and carries no nodal value, so
-        there is nothing to read at m = 0. NaN rather than a guess: the exact
-        result h_tip = 1 + t*/4 is available analytically (Savva & Bush eq. 2.29,
-        which this code reproduces exactly in the co-located scheme), so a caller
-        that needs it should use that rather than have this method invent one.
+        in the staggered scheme there is nothing to read at m = 0. NaN rather
+        than a guess: the exact result h_tip = 1 + t*/4 is available
+        analytically (Savva & Bush eq. 2.29, which this code reproduces exactly
+        in the co-located scheme), so a caller that needs it should use that
+        rather than have this method invent one.
+
+        In the f-form the stored unknown is f = h^2, so this takes the square
+        root and returns a THICKNESS in both formulations -- the column means
+        the same thing in every output file. Clamped at zero first: f is only
+        non-negative as a matter of physics, not as a constraint the discrete
+        problem enforces, and a transiently negative tip value should surface as
+        NaN rather than as a domain error inside math.sqrt.
         """
         if self.staggered:
             return float("nan")
         node, idx = self._tip_node_and_indices()
-        return float(node.value(idx["h"]))
+        val = float(node.value(idx[self.variable]))
+        if self.variable == "h":
+            return val
+        return math.sqrt(val) if val >= 0.0 else float("nan")
 
     def far_field_drift(self) -> tuple[float, float]:
         """|h - 1| and |u| at m = M.
@@ -363,5 +552,15 @@ class Trouton1DProblem(Problem):
         # and the far field is Neumann rather than pinned, so only the velocity
         # drift is available. It is the more sensitive of the two anyway: the
         # disturbance arrives as motion before it measurably thins the sheet.
-        dh = float("nan") if self.staggered else abs(float(node.value(idx["h"])) - 1.0)
+        # Reported as a THICKNESS drift in both formulations: the undisturbed
+        # state is h = 1 and f = 1, but away from it |f - 1| = |h^2 - 1| is
+        # about twice |h - 1|, so comparing a raw f residual against the same
+        # drift tolerance would be a factor-of-two tightening by accident.
+        if self.staggered:
+            dh = float("nan")
+        else:
+            val = float(node.value(idx[self.variable]))
+            h_far = val if self.variable == "h" else (
+                math.sqrt(val) if val >= 0.0 else float("nan"))
+            dh = abs(h_far - 1.0)
         return dh, abs(float(node.value(idx["u"])))

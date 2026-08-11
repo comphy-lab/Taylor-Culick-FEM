@@ -73,7 +73,8 @@ def auto_nelem(mass: float) -> int:
 def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
              temporal_error: float, outroot: Path, mass: float | None,
              nelem: int | None, drift_tol: float,
-             max_newton: int | None = None, gcn: bool = False) -> dict:
+             max_newton: int | None = None, gcn: bool = False,
+             variable: str | None = None, staggered: bool | None = None) -> dict:
     # ONE CASE PER DIRECTORY. An earlier version put each case in a subdirectory
     # of a shared root; pyoomph did not honour that and wrote into the root
     # instead, so the metadata write then failed on a directory that did not
@@ -84,6 +85,13 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
     with Trouton1DProblem() as p:
         p.Oh_SB = oh_sb
+        # Both default in the problem class; overriding here is what makes an
+        # h-form vs f-form regression a one-flag re-run of the same driver
+        # rather than a second script that can drift out of step with this one.
+        if variable is not None:
+            p.variable = variable
+        if staggered is not None:
+            p.staggered = staggered
         t_end = tstar_end * p.tau_vis
         p.mass = auto_mass(t_end) if mass is None else mass
         p.nelem = auto_nelem(p.mass) if nelem is None else nelem
@@ -103,6 +111,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             "nsteps": nsteps, "dt": dt, "n_outputs": n_outputs,
             "temporal_error": temporal_error,
             "with_capillarity": p.with_capillarity,
+            "variable": p.variable, "staggered": p.staggered,
             "scheme": p.default_timestepping_scheme,
             "V_TC": V_TC,
         }
@@ -112,7 +121,8 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
         history = p.create_text_file_output(
             "control1d.txt",
-            header=["t", "tstar", "u_tip", "ustar", "h_tip", "drift_h", "drift_u"])
+            header=["t", "tstar", "u_tip", "ustar", "h_tip", "drift_h",
+                    "drift_u", "h_tip_exact"])
 
         out_times = np.geomspace(t_end * 1e-4, t_end, n_outputs)
         prev = 0.0
@@ -151,8 +161,14 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             now = float(p.get_current_time(as_float=True))
             u = p.tip_velocity()
             dh, du = p.far_field_drift()
-            history.add_row(now, now / p.tau_vis, u, u / V_TC,
-                            p.tip_thickness(), dh, du)
+            tstar = now / p.tau_vis
+            # Savva & Bush eq. 2.29: the tip closure transports mass into the
+            # cap at a constant rate, so the exact tip thickness is 1 + t*/4
+            # for EVERY Oh. Carried alongside the computed h_tip so the two are
+            # in the same file at the same times -- an appended column, since
+            # postProcess/compare_1d_2d.py indexes this table positionally.
+            history.add_row(now, tstar, u, u / V_TC,
+                            p.tip_thickness(), dh, du, 1.0 + tstar / 4.0)
             # dh is NaN in the staggered scheme (cell-constant h, Neumann far
             # field); max() would poison the running worst-case with it.
             worst_drift = max([worst_drift] + [abs(v) for v in (dh, du)
@@ -161,6 +177,8 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
         meta["ustar_final"] = p.tip_velocity() / V_TC
         meta["h_tip_final"] = p.tip_thickness()
+        meta["h_tip_exact_final"] = 1.0 + tstar_end / 4.0
+        meta["tstar_reached"] = float(p.get_current_time(as_float=True)) / p.tau_vis
         meta["worst_far_field_drift"] = worst_drift
         # Not fatal: the run is still the best available record and the drift is
         # in the output for anyone re-reading it. But an answer computed on a
@@ -196,12 +214,19 @@ def main() -> None:
                          "late-time large-rim regime")
     ap.add_argument("--gcn", action="store_true",
                     help="globally convergent (line-search) Newton")
+    ap.add_argument("--variable", choices=("f", "h"), default=None,
+                    help="thickness unknown: f = h^2 (Savva & Bush) or h. "
+                         "Default: the solver default (h).")
+    ap.add_argument("--colocated", dest="staggered", action="store_false",
+                    default=None,
+                    help="co-located spaces instead of the staggered default")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
     run_case(args.oh, args.tstar_end, args.nsteps, args.n_outputs,
              args.temporal_error, args.out.resolve(), args.mass, args.nelem,
-             args.drift_tol, args.max_newton, args.gcn)
+             args.drift_tol, args.max_newton, args.gcn,
+             args.variable, args.staggered)
 
 
 if __name__ == "__main__":
