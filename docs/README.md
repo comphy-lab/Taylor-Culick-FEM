@@ -560,12 +560,36 @@ defensible: over 3× beyond the published Savva & Bush range, `u*` already
 `0.999+` there, and since `h_tip = 1 + t*/4` exactly, the horizon can
 equivalently be stated as a rim thickness.
 
-**The route to a solver that would go further**, in order of expected payoff:
-solve for `f = h²` instead of `h`; stagger the pairing (`h` cell-wise against
-`u` on vertices, the FEM realisation of their MAC arrangement); relax the
-far-field Dirichlet to Neumann; and only then revisit the bulk capillary term,
-which is independently wrong. None of this is needed for the results reported
-here, and none of it should be attempted by refining the present scheme.
+**The fix, found and implemented.** The discriminator is the **velocity** space,
+not the thickness space. A variant sweep at `N = 1600` is unambiguous: with `u`
+on `C2` the run dies at `t* ≈ 174`–`182` whether `h` is `C2`, `C1`, `D0`, `D1`
+or `D2` — five spaces, 4800 to 12802 dof — and with `u` on `C1` it does not fail
+at all. The parasitic mode lives on the **midside nodes of the quadratic
+velocity field**; `h` merely inherits it through `h_t = -h²u_m`. That is why
+every fix aimed at `h`, or at the `p`/`κ` block, changed nothing.
+
+The solver therefore now defaults to `h` on `"D0"` (cell-constant) and `u` on
+`"C1"` (vertices) — thickness per cell, velocity per vertex, no midside degrees
+of freedom anywhere. This is the finite-element realisation of the staggered
+grid of Savva & Bush's figure 22. It runs to `t* = 400` on a mesh where every
+co-located variant dies at `174`, at **a quarter of the degrees of freedom**,
+and it reproduces the existing answer: `u*(30) = 0.9805910803` against the
+co-located `0.9805907141`, a relative difference of `3.7 × 10⁻⁷`, and agreement
+to `7.1 × 10⁻⁵` on `u_tip` across all 183 common output rows. Co-located remains
+selectable as `staggered=False` for reproducing pre-2026-08-11 runs.
+
+Two consequences of the change are worth knowing. A `D0` thickness has no nodal
+value, so `tip_thickness()` returns `NaN` and the far-field `h` drift is
+unavailable — the exact `h_tip = 1 + t*/4` covers the first, and the velocity
+drift is the more sensitive domain check anyway. And `with_capillarity=True` is
+rejected outright in the staggered scheme, because `p = h_m` is identically zero
+for a cell-constant `h`; a staggered capillary formulation needs the `f = h²`
+curvature of their eq. (A1).
+
+**Remaining, in order:** switch to `f = h²` (their p. 236 — `h_x` is genuinely
+infinite at the tip, which is why `p` and `κ` are unrepresentable); then revisit
+`with_capillarity`, which is independently wrong. Neither is needed for the
+results reported here, and neither should be attempted by refining.
 
 **A caution on slenderness.** It is tempting to read the breakdown as the
 long-wave assumption failing. The rim aspect ratio `h_tip/L_rim` crosses 1 at

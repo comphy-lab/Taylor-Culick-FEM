@@ -67,17 +67,63 @@ V_TC = math.sqrt(2.0)
 class TroutonSheet(Equations):
     """Slender-sheet retraction in the Lagrangian mass coordinate."""
 
-    def __init__(self, mu: float, space: str = "C2", with_capillarity: bool = True):
+    def __init__(self, mu: float, space: str = "C2", with_capillarity: bool = True,
+                 staggered: bool = True):
         super().__init__()
         self.mu = mu
         self.with_capillarity = with_capillarity
+        self.staggered = staggered
         self.space = space
+        if staggered and with_capillarity:
+            # p = h_m is meaningless for a cell-constant h: grad(h) is zero
+            # inside every element. A staggered capillary formulation needs the
+            # curvature built from f = h^2 as Savva & Bush do (their eq. A1),
+            # which is not implemented here. Fail loudly rather than silently
+            # integrating a zero curvature.
+            raise ValueError(
+                "staggered=True does not support with_capillarity=True: a D0 "
+                "thickness has zero elementwise gradient, so p = h_m is "
+                "identically zero. Use staggered=False, or implement the "
+                "f = h^2 curvature of Savva & Bush eq. (A1).")
         # gamma = 1 in code units; this is Savva & Bush eq. 2.28.
         self.tip_flux = -1.0 / (2.0 * mu)
 
     def define_fields(self):
-        self.define_scalar_field("h", self.space)
-        self.define_scalar_field("u", self.space)
+        # STAGGERED IS THE DEFAULT, AND IT IS WHAT MAKES THIS SOLVER CONVERGE.
+        # h cell-constant ("D0") against u on vertices ("C1") is the finite
+        # element realisation of the staggered mesh Savva & Bush use (their
+        # figure 22: f at nodes, u at midpoints), and they say why (Appendix,
+        # p. 238): "Implementation with a non-staggered grid introduced spurious
+        # oscillations in the curvature in the long time limit."
+        #
+        # The co-located C2/C2 arrangement is exactly the one they warn against,
+        # and it is NOT merely less accurate -- it is non-convergent. Measured at
+        # Oh_SB = 1, the co-located scheme's failure time is a power law in the
+        # tip cell size, t*_fail = 5561 dm1^0.434 over five meshes spanning a
+        # 64x range in dm1 and a 5.7x range in domain length, so a FINER mesh
+        # fails SOONER and there is no mesh on which it converges. Staggered runs
+        # to t* = 400 on a mesh where every co-located variant dies at 166-182,
+        # at a quarter of the degrees of freedom.
+        #
+        # It agrees with the co-located answer where both exist: maximum relative
+        # difference in u_tip of 7.1e-5 across all 183 common output rows, and
+        # u*(t*=31.4) = 0.9806746 against 0.9806744, so it reproduces the
+        # Richardson limit u*(30) -> 0.98073 recorded in docs/README.md.
+        #
+        # THE VELOCITY SPACE IS THE DISCRIMINATOR, NOT THE THICKNESS SPACE. A
+        # variant sweep at N=1600 settles this: with u on C2, the failure time is
+        # 174-182 whether h is C2, C1, D0, D1 or D2 (five spaces, 4800-12802
+        # dof); with u on C1 it does not fail at all. The parasitic mode lives on
+        # the MIDSIDE NODES OF THE QUADRATIC VELOCITY FIELD, and h merely
+        # inherits it through h_t = -h^2 u_m. The h checkerboard visible in the
+        # profiles is the print of the mode, not its source -- which is why every
+        # earlier fix aimed at h, or at the p/kappa block, changed nothing.
+        if self.staggered:
+            self.define_scalar_field("h", "D0")
+            self.define_scalar_field("u", "C1")
+        else:
+            self.define_scalar_field("h", self.space)
+            self.define_scalar_field("u", self.space)
         # p AND kappa ARE ONLY UNKNOWNS WHEN THE CAPILLARY TERM USES THEM.
         # With with_capillarity=False, kappa never enters the momentum residual
         # and p is used only inside kappa_expr, so both are a one-way downstream
@@ -106,7 +152,8 @@ class TroutonSheet(Equations):
         h, u = var("h"), var("u")
         ht, ut = testfunction("h"), testfunction("u")
 
-        h_m = grad(h)[0]
+        # h_m is only meaningful for a continuous h; see the capillarity guard.
+        h_m = grad(h)[0] if not self.staggered else None
         u_m = grad(u)[0]
 
         # 1. mass:      h_t = -h^2 u_m
@@ -185,6 +232,9 @@ class Trouton1DProblem(Problem):
         # Keep the switch: it is how that was established, and it is the knob to
         # revisit if a properly regularised curvature is ever wanted.
         self.with_capillarity = False
+        # See TroutonSheet.define_fields for the evidence. Co-located C2/C2 is
+        # retained only to reproduce runs made before 2026-08-11.
+        self.staggered = True
         # BDF1, NOT pyoomph's default BDF2. BDF2 fails at the third timestep,
         # every time, on this problem: the fields are healthy (h = 1.000005,
         # u_tip = 3e-3, nothing negative), Newton converges to 1e-10, and it
@@ -218,7 +268,8 @@ class Trouton1DProblem(Problem):
                         nodal_dimension=1, name="sheet")
         self += mesh
 
-        eqs = TroutonSheet(mu=self.mu, with_capillarity=self.with_capillarity)
+        eqs = TroutonSheet(mu=self.mu, with_capillarity=self.with_capillarity,
+                           staggered=self.staggered)
         # Must match define_fields: pyoomph raises if an initial condition names
         # a field the element does not carry.
         if self.with_capillarity:
@@ -228,7 +279,15 @@ class Trouton1DProblem(Problem):
         eqs += TipFlux(mu=self.mu) @ "left"
         # Far end: undisturbed sheet. Valid only while the disturbance has not
         # arrived, which the driver checks by monitoring h and u there.
-        eqs += DirichletBC(h=1, u=0) @ "right"
+        # A "D0" thickness has no nodal value at the boundary to pin, so only u
+        # is constrained there. That is also closer to Savva & Bush, whose far
+        # field is Neumann on both thickness and velocity (p. 237); the
+        # undisturbed state is maintained by the domain being long enough, which
+        # far_field_drift checks explicitly.
+        if self.staggered:
+            eqs += DirichletBC(u=0) @ "right"
+        else:
+            eqs += DirichletBC(h=1, u=0) @ "right"
         eqs += TextFileOutput()
 
         self += eqs @ "sheet"
@@ -277,6 +336,16 @@ class Trouton1DProblem(Problem):
         return float(node.value(idx["u"]))
 
     def tip_thickness(self) -> float:
+        """h at the tip. Returns NaN in the staggered scheme.
+
+        A "D0" thickness is elementwise-constant and carries no nodal value, so
+        there is nothing to read at m = 0. NaN rather than a guess: the exact
+        result h_tip = 1 + t*/4 is available analytically (Savva & Bush eq. 2.29,
+        which this code reproduces exactly in the co-located scheme), so a caller
+        that needs it should use that rather than have this method invent one.
+        """
+        if self.staggered:
+            return float("nan")
         node, idx = self._tip_node_and_indices()
         return float(node.value(idx["h"]))
 
@@ -290,4 +359,9 @@ class Trouton1DProblem(Problem):
         mesh = self.get_mesh("sheet")
         idx = mesh.get_nodal_field_indices()
         node = max(mesh.nodes(), key=lambda nd: nd.x(0))
-        return abs(float(node.value(idx["h"])) - 1.0), abs(float(node.value(idx["u"])))
+        # In the staggered scheme h is elementwise-constant with no nodal value,
+        # and the far field is Neumann rather than pinned, so only the velocity
+        # drift is available. It is the more sensitive of the two anyway: the
+        # disturbance arrives as motion before it measurably thins the sheet.
+        dh = float("nan") if self.staggered else abs(float(node.value(idx["h"])) - 1.0)
+        return dh, abs(float(node.value(idx["u"])))
