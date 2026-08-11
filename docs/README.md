@@ -572,7 +572,10 @@ The solver therefore now defaults to `h` on `"D0"` (cell-constant) and `u` on
 `"C1"` (vertices) — thickness per cell, velocity per vertex, no midside degrees
 of freedom anywhere. This is the finite-element realisation of the staggered
 grid of Savva & Bush's figure 22. It runs to `t* = 400` on a mesh where every
-co-located variant dies at `174`, at **a quarter of the degrees of freedom**,
+co-located variant dies at `174`, and past `t* = 230` at `N = 3200` where the
+co-located scheme dies at `87` — 2.6× beyond the failure point at the mesh where
+the old scheme is weakest, so the cure is not an artefact of one lucky mesh. It
+does this at **a quarter of the degrees of freedom**,
 and it reproduces the existing answer: `u*(30) = 0.9805910803` against the
 co-located `0.9805907141`, a relative difference of `3.7 × 10⁻⁷`, and agreement
 to `7.1 × 10⁻⁵` on `u_tip` across all 183 common output rows. Co-located remains
