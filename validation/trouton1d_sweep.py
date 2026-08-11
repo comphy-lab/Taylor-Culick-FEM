@@ -153,7 +153,10 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             dh, du = p.far_field_drift()
             history.add_row(now, now / p.tau_vis, u, u / V_TC,
                             p.tip_thickness(), dh, du)
-            worst_drift = max(worst_drift, abs(dh), abs(du))
+            # dh is NaN in the staggered scheme (cell-constant h, Neumann far
+            # field); max() would poison the running worst-case with it.
+            worst_drift = max([worst_drift] + [abs(v) for v in (dh, du)
+                                               if v == v])
             prev = t
 
         meta["ustar_final"] = p.tip_velocity() / V_TC
