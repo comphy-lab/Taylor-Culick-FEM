@@ -396,6 +396,95 @@ uv run python validation/run_validation.py --oh 1.0 --tag dt200 \
 
 ---
 
+## 6.4 The 1D long-wave model against the 2D FEM
+
+The 1D reduced-order model of §5 exists to be compared against the full
+Navier–Stokes solution. That comparison is now done, at all eight sweep `Oh`,
+and it has three results — one of which makes the naive version of the
+comparison impossible.
+
+**The 1D model is universal in `t*`; the 2D solution is not.** Extrapolated to
+`dt → 0`, the 1D solver returns the *same* `u*(t*)` at every Ohnesorge number to
+five decimal places:
+
+| `t*` | 1 | 3 | 10 | 30 | 100 |
+|---|---|---|---|---|---|
+| 1D, any `Oh_SB` | 0.50058 | 0.72368 | 0.90992 | 0.98071 | 0.99779 |
+| 2D, `Oh_SB = 1` | 0.44407 | 0.68507 | 0.87608 | 0.95026 | 0.97457 |
+| 2D, `Oh_SB = 0.14724` | — | 0.45430 | 0.78218 | 0.87018 | 0.92618 |
+| 2D, `Oh_SB = 0.035` | — | — | — | 0.89460 | 0.82835 |
+
+The spread across `Oh` in the 1D rows is under `3 × 10⁻⁵`, i.e. at the level of
+the extrapolation itself. This is a property of the model rather than a
+coincidence: once time is measured in `τ_vis = μH/(2γ)`, the Ohnesorge number
+scales out of the long-wave equations entirely. The 2D solution retains a strong
+`Oh` dependence at every time — a factor of two in `1 - u*` between
+`Oh_SB = 0.035` and `1` at `t* = 30`. **A one-parameter family cannot be
+reproduced by a model that has collapsed that parameter away**, so the
+disagreement is structural, not a matter of tuning.
+
+Two consistency checks confirm the pipeline rather than the physics: the
+extrapolated 1D value `u*(30) = 0.98071` reproduces the independently recorded
+`0.98073` of §6.3, and the 2D value `0.95026` reproduces §6.2.
+
+**The asymptotic decay laws differ in exponent, not just prefactor.** Fitting
+`1 - u* = C t*^a` over the last half of each record:
+
+| | `a` | behaviour |
+|---|---|---|
+| 2D FEM | `-0.490` to `-0.500` (five cases) | `1 - u* = (1/2√π)√(Oh_SB/t*)` |
+| 1D long-wave | `-1.95` to `-2.01` (six cases) | `1 - u* ∝ t*⁻²` |
+
+The 1D deficit therefore collapses far faster than the true one, and the
+*relative* error grows without bound: the two curves are not offset, they
+diverge. The 1D exponent is stable across `Oh_SB = 0.09121 … 1`; at `0.0565` and
+`0.035` the Richardson correction exceeds the deficit being corrected, so no
+exponent is quoted there and figure 3 draws the finest measured level instead of
+the extrapolation.
+
+**The 1D solver does not survive to the asymptotic regime.** Every run at every
+`Oh` terminated with Newton stalled at its iteration cap, residual frozen
+between `4 × 10⁻⁴` and `1.5 × 10⁻³`. The termination is *not* a timestep
+artefact and *not* a solver-setting artefact:
+
+- at `Oh_SB = 0.38372`, `nsteps = 169242`, `338485` and `676971` all stop at
+  `t* = 431`, `405`, `405`;
+- at `Oh_SB = 0.09121`, `nsteps = 291421`, `582843`, `1165686` all stop near
+  `t* = 856`;
+- a retry with the Newton cap raised to 40 *and* a globally convergent line
+  search stops in the same place.
+
+What is common to every termination is the rim thickness. `h_tip` at failure
+runs from `62` at `Oh_SB = 1` to `337` at `0.035`, against an initial sheet
+thickness of `1`. The long-wave model assumes a slender sheet; a rim two orders
+of magnitude thicker than the film is far outside that, and the stalled Newton
+is the formulation reporting it. The 1D curves in figure 3 therefore simply end,
+marked `×`, at `t* = 245` (`Oh_SB = 1`) to `1268` (`0.035`) — one to two decades
+short of where the 2D `t*⁻¹ᐟ²` law is measured.
+
+The practical consequence is that **the two models cannot be compared in the
+asymptotic regime at all**, because only one of them reaches it. The comparison
+above is an early-time comparison plus a statement about the *trend* each model
+is on when the 1D one stops.
+
+![Figure 3](figures/fig3_1d_vs_2d.png)
+
+*Figure 3. Solid: 2D co-moving FEM. Dashed: 1D long-wave model extrapolated to
+`dt → 0`; dotted where the Richardson correction exceeds the deficit and the
+finest measured level is shown instead. `×` marks the 1D breakdown. (a) the
+approach to `V_TC`; every 1D curve lies on top of every other, because `Oh`
+scales out of the long-wave equations. (b) the deficit `1 - u*`; the grey dotted
+reference lines are `(1/2√π)√(Oh/t*)` at `Oh_SB = 0.035` and `1`. The 1D deficit
+falls as `t*⁻²` and leaves the physical law rather than approaching it.*
+
+Regenerate with:
+
+```bash
+uv run python postProcess/compare_1d_2d.py --json-out /tmp/cmp.json
+```
+
+---
+
 ## 7. What is and is not established
 
 **Established.**
@@ -407,17 +496,39 @@ uv run python validation/run_validation.py --oh 1.0 --tag dt200 \
 - Temporal error below `1e-4` across an eightfold change in output cadence,
   so the campaign may be run at a coarse cadence.
 - The phenomenological sequence of figure 2 across a factor 29 in `Oh`.
+- **The long-time limit.** `v(t → ∞) = V_TC` at every `Oh`, approached
+  diffusively as
+
+  ```
+  1 - u*(t*)  =  (1 / 2√π) · √(Oh_SB / t*)
+  ```
+
+  Five cases spanning a factor 6.8 in `Oh` sit within 1% of the constant
+  `1/(2√π) = 0.28209` — `0.2837`, `0.2823`, `0.2816`, `0.2813`, `0.2793` at
+  `Oh_SB = 0.14724`, `0.2377`, `0.38372`, `0.61945`, `1.0` — with the measured
+  exponent at `-0.4901` to `-0.4998` against the predicted `-1/2`. There is no
+  `Oh`-dependent asymptotic deficit: viscosity sets *how slowly* `V_TC` is
+  reached, not *what* is reached. This supersedes the earlier reading of the
+  exponent as non-constant across the sweep; that was measured on records too
+  short at both ends of the `Oh` range, not a real drift.
+- **The 1D long-wave model is universal in `t*` and the 2D solution is not**
+  (§6.4), so the two cannot agree across `Oh` in principle. The 1D deficit falls
+  as `t*⁻²` against the true `t*⁻¹ᐟ²`.
 
 **Not established.**
 
-- The long-time limit `v(t → ∞)`. The production sweep targets `u* = 0.995` at
-  eight log-spaced `Oh` from 0.035 to 1 and reached `0.979–0.993` before it was
-  stopped (figure 3). The approach is a power law `1 - u* ∝ t*^a` with `a`
-  measured at `-0.435` (`Oh = 0.035`) to `-0.588` (`Oh = 1`) over the last
-  decade of each record, so the exponent is **not** constant across the sweep
-  and a single global fit mis-sizes both ends. It is also not cleanly
-  monotone — see the note under figure 4.
-- Why the converged 1D model sits ~3% above the 2D FEM (§5).
+- The onset of the asymptotic regime. The three lowest `Oh` are still outside
+  it: `C√Oh = 0.2945`, `0.3340`, `0.4072` at `Oh_SB = 0.09121`, `0.0565`,
+  `0.035`, i.e. `+4%`, `+18%`, `+44%`, with exponents `-0.487`, `-0.457`,
+  `-0.429`. The trend is monotone in `Oh` and consistent with an onset time that
+  grows as `Oh` falls, but the scaling of that onset is **not** measured, and
+  reaching it at `Oh_SB = 0.035` needs one to two decades more `t*` than the
+  hardware delivered.
+- Whether `1/(2√π)` is exact. Five cases agreeing to within 1% is suggestive of
+  a closed form, not proof of one; no derivation is offered here.
+- Why the 1D model breaks down at `h_tip ≈ 62–337` rather than continuing, and
+  whether a reformulation (rescaled unknowns, adaptive mass mesh) would carry it
+  further, or whether that is the model's true limit (§6.4).
 - Anything at `Oh_SB > 1`, which is deliberately out of scope (§3.3).
 
 ---
