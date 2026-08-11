@@ -759,6 +759,65 @@ speed, `dXc/dT ~ 2√(T/π)` (eq. 5.10), which is a different statement. The
 
 ---
 
+## 6.6 Independent verification against Ahsan et al.
+
+Two separate checks, and the distinction between them matters.
+
+**The port is faithful to the original.** Ahsan et al. publish MATLAB
+(`github.com/taosifahsan/Thin-Film-Simulations`). It is ported to numpy as
+`validation/ahsan_thinfilm.py` — three scripts: their full model, their
+Appendix D reduced model, and their `L = ∞` reduced model, which is the one that
+matches this campaign's semi-infinite co-moving geometry exactly and needs no
+parameter matching. The port was then checked against the *original code* run
+under a user-local GNU Octave install:
+
+| script | configuration | max abs difference |
+|---|---|---|
+| `thin_film_L=infty_Oh_large.m` | N=500, NT=5000, T=2.5 | `5.0e-10` |
+| `thin_film_Oh_large.m` | L=20, N=1000, NT=5000, T=1 | `5.0e-10` |
+| `thin_film.m` | Oh=10, ε=10, N=2000, NT=10⁴ | `5.0e-10` |
+
+`5×10⁻¹⁰` is the write precision of Octave's `save -ascii`, so the ports match to
+**every digit that can be compared**. This turns "the port looks faithful" into a
+measurement, and it is worth the trouble: a comparison against a mis-ported
+reference is worse than no comparison, because it looks like evidence.
+
+**Our solver agrees with theirs.** Against the refined `L = ∞` reference, over
+`T ∈ (10⁻³, 50]`, 599 points, four decades of time:
+
+```
+max |Δu*| = 7.1e-5      RMS 4.2e-5      max relative 5.5e-4
+```
+
+This is agreement between implementations that share nothing but the equations:
+different authors, different language, a static Lagrangian frame against our
+mass coordinate, and Crank–Nicolson with Picard iteration and a Thomas solve
+against our finite elements with BDF2. **The residual is the reference's
+discretisation error, not ours** — refining their grid moves the difference from
+`1.13e-4` toward `7.1e-5`, i.e. toward us, and their own 1×-vs-2× resolution
+floor is `8.5e-5`.
+
+Two corollaries fall out of the comparison and are recorded because each settles
+something that had been argued from first principles rather than measured.
+
+Their tip condition (2.18a) `H V_X = -1` is *exactly* this code's `TipFlux`, and
+their eq. (3.10a) `H(Xc,T) = 1+T` is *exactly* our `h_tip = 1 + t*/4`. Those
+coincide only under `T = t*/4` and `Oh_paper = 2·Oh_SB`, so the unit conversion
+of §6.5 is now confirmed by two independent physical identities rather than by
+algebra alone.
+
+And `with_capillarity = False` is **their model, not our approximation**. Ahsan
+et al.'s reduced problem (2.15)–(2.19), pushed into our units, is this solver's
+default configuration; they drop the bulk capillary term by proving it
+negligible at `Oh ≫ 1`, not for convenience. Their *full* model, which retains
+the term, converges onto the capillarity-free curve as its grid is refined
+(`-13.2% → -4.2% → -0.1%` as `dx` falls by 9×) — the large early gaps were their
+scheme failing to resolve its own hard-imposed `√` tip, not physics. Treat 1–2%
+as an upper bound on the term's effect, since even their finest grid is not
+converged.
+
+---
+
 ## 7. What is and is not established
 
 **Established.**
