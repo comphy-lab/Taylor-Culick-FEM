@@ -10,7 +10,10 @@ two separate comparisons instead: an EARLY-TIME one over the window where both
 solvers have data, and an ASYMPTOTIC one where the 1D side is a power-law
 extrapolation rather than a measurement, and is labelled as such.
 
-THE TIMESTEP IS NOT OPTIONAL HERE. The 1D solver is forced onto BDF1 and its
+THE TIMESTEP IS NOT OPTIONAL HERE -- FOR THE DATA THIS SCRIPT READS. Those runs
+predate the 2026-08-11 switch to BDF2, so they are first order and need the
+Richardson treatment below. A re-run on the current solver would not.
+The 1D solver was forced onto BDF1 and its
 temporal error estimator under-reports by about nine orders, so dt sits on
 maxstep every step and every u* is a function of it. Each Oh was therefore run
 at two or three fixed dt. This script interpolates each dt level onto a common

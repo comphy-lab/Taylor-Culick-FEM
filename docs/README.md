@@ -295,8 +295,17 @@ early-time asymptote misses by RMS 1.34. That is a physical argument supported
 by agreement, not a derivation, and it is equally consistent with the
 mixed-formulation curvature simply being too noisy on a graded mesh.
 
-**The 1D model is temporally unconverged.** It is forced onto **BDF1** because
-BDF2 fails at its third timestep on this problem, and BDF1 is only first-order.
+**The 1D model was temporally unconverged, and is no longer.** It ran on
+**BDF1** until 2026-08-11 because BDF2 was recorded as failing at its third
+timestep. That failure is no longer reproducible — BDF2 now completes in every
+configuration tried, including co-located and with capillarity on — so the
+solver has been switched to **BDF2** and delivers clean second order: at
+`Oh_SB = 1`, `t* = 30`, `N = 400`, `u*(30) = 0.9807275968`, `0.9807280191`,
+`0.9807281257` at `nsteps = 1600`, `3200`, `6400`, successive ratio `3.96`,
+observed order `1.99`. A single BDF2 run at `nsteps = 6400` sits `3.9e-8` from
+the BDF1 `dt → 0` Richardson limit, so **the two-level extrapolation that every
+earlier 1D number required is no longer needed.** Which change fixed it is not
+established and is deliberately not guessed at.
 Its temporal error is *not* controlled by the tolerance — `temporal_error` from
 `1e-3` to `1e-6` returns bit-identical answers — and halving the step moves the
 answer at a clean first-order rate:

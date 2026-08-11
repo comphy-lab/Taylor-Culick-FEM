@@ -406,15 +406,46 @@ class Trouton1DProblem(Problem):
         # the curvature at the tip, and eq. (A1) is the only form of it that is
         # bounded there. Set variable="f" to get it.
         self.variable = "h"
-        # BDF1, NOT pyoomph's default BDF2. BDF2 fails at the third timestep,
-        # every time, on this problem: the fields are healthy (h = 1.000005,
-        # u_tip = 3e-3, nothing negative), Newton converges to 1e-10, and it
-        # still collapses dt to the 1e-12 floor. BDF1 runs the same case to
-        # t* = 1 and reproduces the exact tip growth h = 1 + t/(2 mu) to four
-        # decimals. The suspected cause is BDF2's two-level history against the
-        # sqrt(t) start-up singularity of an impulsively loaded tip, but the
-        # switch is justified empirically, not by that explanation.
-        self.default_timestepping_scheme = "BDF1"
+        # BDF2. THIS WAS "BDF1" UNTIL 2026-08-11, AND THAT COST A FACTOR OF
+        # ~250 IN ACCURACY PER STEP FOR NOTHING.
+        #
+        # The old comment recorded that BDF2 "fails at the third timestep, every
+        # time, on this problem" -- dt collapsing to the 1e-12 floor while the
+        # fields stayed healthy and Newton converged to 1e-10 -- and blamed
+        # BDF2's two-level history against the sqrt(t) start-up singularity.
+        # That failure is NO LONGER REPRODUCIBLE. BDF2 now runs to completion in
+        # every configuration tried: staggered, co-located, and co-located with
+        # with_capillarity=True. Which of the intervening changes fixed it is
+        # NOT established -- note in particular that it works with p and kappa
+        # present, so the auxiliary-block removal is not the explanation, and it
+        # works co-located, so the staggering is not either. Recorded as
+        # unexplained rather than given a tidy cause it has not earned.
+        #
+        # Measured, Oh_SB = 1, t* = 30, N = 400, staggered:
+        #     nsteps    1600            3200            6400
+        #     u*(30)    0.9807275968    0.9807280191    0.9807281257
+        #     successive ratio 3.96  ->  observed order 1.99
+        # against first order (ratio 2.00) for BDF1. The BDF2 value at 6400 sits
+        # 3.9e-8 from the independently obtained BDF1 dt->0 Richardson limit
+        # 0.9807280867, so a SINGLE BDF2 run is now the converged answer and the
+        # two-level Richardson extrapolation every previous result needed is no
+        # longer required.
+        #
+        # If BDF2 ever does misbehave at start-up again, do NOT shrink startstep.
+        # For stiff problems that is a documented anti-remedy: variable-step BDF2
+        # started from a first-order step is asymptotically equivalent to the
+        # trapezoidal rule and loses L-stability, so the error GROWS as the first
+        # step shrinks (Nishikawa, J. Comput. Phys. 392 (2019) 456). The sourced
+        # fixes are a self-starting L-stable second-order start (SDIRK2/TR-BDF2),
+        # a graded first-step schedule, or Rannacher damping -- or hold BDF1 on
+        # the stiff momentum term alone via partial_t(u, scheme="BDF1").
+        #
+        # Note also that nobody in this literature uses BDF at all: Eggers &
+        # Dupont, Savva & Bush and Bertozzi & Pugh all use a two-level theta
+        # scheme (theta ~ 0.55), and Ahsan et al. use a modified Crank-Nicolson.
+        # Those are self-starting and have no multistep history to corrupt; they
+        # remain the contingency if this ever regresses.
+        self.default_timestepping_scheme = "BDF2"
 
     @property
     def mu(self) -> float:
