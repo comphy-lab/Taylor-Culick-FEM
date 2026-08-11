@@ -594,12 +594,69 @@ unavailable — the exact `h_tip = 1 + t*/4` covers the first, and the velocity
 drift is the more sensitive domain check anyway. And `with_capillarity=True` is
 rejected outright in the staggered scheme, because `p = h_m` is identically zero
 for a cell-constant `h`; a staggered capillary formulation needs the `f = h²`
-curvature of their eq. (A1).
+curvature of their eq. (A1). That guard survives the `f` implementation below
+unchanged — the zero elementwise gradient is a property of the `D0` space, not
+of the choice of variable.
 
-**Remaining, in order:** switch to `f = h²` (their p. 236 — `h_x` is genuinely
-infinite at the tip, which is why `p` and `κ` are unrepresentable); then revisit
-`with_capillarity`, which is independently wrong. Neither is needed for the
-results reported here, and neither should be attempted by refining.
+### `f = h²` was implemented, and it does not help — but it verifies the algebra
+
+Savva & Bush solve for `f = h²` (p. 236). That is now a selectable formulation,
+`variable="f"` against `variable="h"`, orthogonal to the staggered switch. The
+mass equation becomes `f_t = -2f^{3/2}u_m`, the viscous operator becomes the
+**linear** `4μ ∂_m(f u_m)`, the tip closure `f u_m|₀ = -1/(2μ)` is unchanged,
+and the curvature reduces in the mass coordinate to
+
+```
+κ = 16 f^{1/2} f_mm / (16 + f_m²)^{3/2}
+```
+
+with every negative power of the thickness gone. In the physical coordinate that
+expression is `8(2f f_xx − f_x²)/(16f + f_x²)^{3/2}`, which is **exactly** the
+first term of their eq. (A 1); their second term is the azimuthal curvature of
+the axisymmetric sheet and has no planar counterpart. Term-for-term agreement
+independently confirms this repository's `½`/`¼` factor convention.
+
+**It is provably the same continuous problem.** At `Oh_SB = 1`, `t* = 30`,
+`N = 400`, `M = 120`, Richardson-extrapolated in `dt`:
+
+| variable | spaces | `nsteps=6400` | `nsteps=12800` | `dt → 0` |
+|---|---|---|---|---|
+| `h` | co-located | `0.9805907141` | `0.9806592173` | `0.9807277205` |
+| `h` | staggered | `0.9805910803` | `0.9806595835` | `0.9807280867` |
+| `f` | co-located | `0.9805173458` | `0.9806225257` | `0.9807277056` |
+| `f` | staggered | `0.9805177121` | `0.9806228919` | `0.9807280717` |
+
+The two `dt → 0` limits agree to `1.5 × 10⁻⁸` in both space arrangements. Two
+independently derived nonlinear discretisations agreeing to eight digits in the
+limit is the strongest correctness evidence available for either of them, and it
+also re-confirms the `u*(30) → 0.98073` Richardson limit from a second route.
+
+**At finite `dt` it is worse, and it buys no reach.** Three measurements:
+
+- The `f`-form misses the recorded `nsteps = 6400` references by `7.5 × 10⁻⁵`
+  relative — its BDF1 error constant is `1.54×` larger, because the mass
+  equation gained an `f^{3/2}` the `h`-form does not carry. On `h_tip` against
+  the exact `1 + t*/4` the same ratio appears: `1.6 × 10⁻⁴` relative against
+  `1.1 × 10⁻⁵`, both extrapolating to `1.1 × 10⁻⁵`.
+- At `N = 1600`, `M = 900`, `t* = 400`, `nsteps = 80000`, **both staggered forms
+  run the full cap**, `u*(400) = 0.9996912647` (`f`) against `0.9997454152`
+  (`h`), the same `O(dt)` offset. Co-located, the `f`-form dies at `t* = 154`
+  where the `h`-form dies at `t* = 169` — marginally **sooner**. Consistent with
+  the velocity space being the discriminator: changing the thickness variable
+  cannot cure a mode that lives on the velocity midside nodes.
+- No cheaper either: `≈ 10.9` against `≈ 11.4` timesteps/s on the same mesh.
+  The linear viscous term is paid back by the `f^{3/2}` mass term.
+
+**So `variable="h"` stays the default.** The change of variable is not dead code
+and this default should flip the moment `with_capillarity` is revisited — the
+reason Savva & Bush solve for `f` is the curvature at the tip, and eq. (A 1) is
+the only form of it that is bounded there. The `f`-form's co-located capillary
+path is implemented and integrates; whether the bulk `κ_m` term is right on its
+own merits remains the separate open question below.
+
+**Remaining:** revisit `with_capillarity`, which is independently wrong, now
+using `variable="f"` so the curvature is representable at the tip. Not needed
+for the results reported here, and not to be attempted by refining.
 
 **A caution on slenderness.** It is tempting to read the breakdown as the
 long-wave assumption failing. The rim aspect ratio `h_tip/L_rim` crosses 1 at
