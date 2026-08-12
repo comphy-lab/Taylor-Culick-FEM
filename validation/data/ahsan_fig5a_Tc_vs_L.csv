@@ -1,0 +1,56 @@
+# Digitised from: Ahsan, T., Brandao, R., Davidovitch, B. & Stone, H. A.
+# "Retraction Dynamics of a Highly Viscous Liquid Sheet", arXiv:2507.04603, Figure 5(a) (page 15).
+#
+# Ordinate label: "time of phase change".
+#   L    = script-L, the dimensionless sheet length (abscissa, log axis)
+#   Tc   = T_c, the (dimensionless) time of the tension phase change (ordinate, log axis)
+#
+# Source form: the two panels are embedded JPEG bitmaps inside the PDF
+# (979x773 and 974x788 px, ~308 ppi).  The figure is NOT vector art -- the
+# page's content stream contains only glyph outlines and two image XObjects
+# -- so exact recovery of the plotted numbers from the drawing operators is
+# impossible.  These values are pixel measurements of the embedded bitmaps
+# at their native resolution (no re-rendering, no resampling).
+#
+# Method: axes box located from the solid black frame; log axis calibrated
+# by matching the detected decade gridlines (dotted minor + solid major)
+# against the ladder 2,3,...,9,10,20,... and least-squares fitting
+# pixel = B*log10(value) + C on both axes; marker centres obtained by an algebraic
+# least-squares circle fit to the blue ring pixels rather than a centre of
+# mass, because a centre of mass is biased for any partially missing ring
+# (in panel (a) the red analytic line cuts three rings in two and the axes
+# box clips two more at the corners; panel (b) has no occlusion, and there
+# the two estimators agree to 0.1 px, which is how the bias was quantified).
+#
+# Calibration self-check: the red dashed analytic line (T_c = L) was extracted independently from 400 pixel columns and, under this calibration, fits log10 T_c = 0.99986 log10 L + 0.00028 (exact: slope 1, intercept 0); point-by-point T_c/L has RMS deviation 0.161% and maximum 0.483%.
+#
+# Accuracy: Gridline fit residuals <= 0.41 px on 868 px/decade, i.e. <= 0.12%. Marker centring ~0.3 px (1 sigma), i.e. ~0.08%. Combined ~0.2% in both L and T_c, confirmed by the independent red-line check above.
+#
+# Note: the 20 measured abscissae agree with numpy.logspace(log10(5),
+# log10(50), 20) to 0.28% worst case (0.09% RMS), so the underlying runs
+# were almost certainly 20 log-spaced lengths from L = 5 to L = 50.  The
+# MEASURED values are stored below rather than that inferred exact grid, so
+# that this file remains a digitisation rather than a reconstruction.
+#
+# Columns: L,Tc
+L,Tc
+5.0035,4.9594
+5.6364,5.6181
+6.3728,6.3672
+7.1951,7.1876
+8.1088,8.1132
+9.1652,9.1847
+10.3506,10.3727
+11.6662,11.7181
+13.1774,13.2344
+14.8942,14.9310
+16.7848,16.8515
+18.9534,19.0128
+21.4075,21.3963
+24.1394,24.1802
+27.2630,27.2890
+30.7852,30.8007
+34.6803,34.7775
+39.2013,39.2945
+44.3317,44.3701
+50.0862,49.9108
