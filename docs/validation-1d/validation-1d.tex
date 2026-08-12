@@ -231,9 +231,12 @@ window starts $T_{\min} = 50$ to $125$. There is no drift toward unity. We take
   \label{eq:threehalves}
 \end{equation}
 %
-consistent with exactly $3/2$, with unity excluded. The same fits give
-$a_3 = 0.000 \pm 0.001$: the correction is $O(T^{-2})$ rather than $O(T^{-1})$,
-so $(1+T)$ is the exact grouping and $U_{-3} = 3$.
+i.e.\ $3/2$ to within the quoted uncertainty, with unity excluded. We report
+this as a measurement rather than as an exact value; \S\ref{sec:ic} shows it is
+a property of the initial condition. The same fits give
+$a_3 = 0.000 \pm 0.001$: there is no $(1+T)^{-3}$ term, so $(1+T)$ is the exact
+grouping, $U_{-3} = -2U_{-2} = 3$, and the next correction enters at
+$O\bigl((1+T)^{-4}\bigr)$.
 
 The result is insensitive to every numerical parameter varied independently:
 mesh spacing (a factor of eight, changing $R(50)$ by $10^{-6}$), domain
@@ -251,9 +254,10 @@ $1.51$ at $T=50$.
 We therefore report
 %
 \begin{equation}
-  \frac{\mathrm{d}\Xc}{\mathrm{d}T} \sim 1 - \frac{3}{2}\frac{1}{(1+T)^{2}},
+  \frac{\mathrm{d}\Xc}{\mathrm{d}T}
+    = 1 - \frac{3}{2}\frac{1}{(1+T)^{2}} + O\bigl((1+T)^{-4}\bigr),
   \qquad
-  \Xc \sim T - 1 + \frac{3}{2}\frac{1}{1+T} .
+  \Xc = T - 1 + \frac{3}{2}\frac{1}{1+T} + O(T^{-2}).
   \label{eq:recommended}
 \end{equation}
 %
@@ -289,6 +293,7 @@ disagreeing at precisely the order in question indicates that the order is
 beyond the approximation's reach.
 
 \subsection{Dependence on the initial condition}
+\label{sec:ic}
 
 The coefficient is a property of the initial condition and not a universal
 constant of the model. Replacing the canonical rupture condition
