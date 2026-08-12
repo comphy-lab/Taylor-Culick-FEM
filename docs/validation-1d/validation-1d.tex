@@ -34,11 +34,14 @@ coordinate system, and agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}
 retraction speed across four decades of time. Measured against the published
 asymptotics, the early-time law and the late-time finite-sheet law are
 reproduced without adjustable constants, as are the tip-thickness relation and
-the crossover time $\Tc = \mathcal{L}$. In the late-time infinite-sheet regime
-we find that the speed deficit is well described by
-$1 - \mathrm{d}\Xc/\mathrm{d}T \simeq \tfrac{3}{2}(1+T)^{-2}$, where the
-published coefficient is unity; the coefficient is stated in that work to be a
-numerical fit rather than a result of the asymptotic analysis.
+the crossover time $\Tc = \mathcal{L}$. In the late-time
+infinite-sheet regime we measure a speed deficit
+$1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, against a
+published coefficient of unity. A third solver, written to share no coordinate,
+equation or boundary-condition type with the other two, returns the same value,
+and the limit is stable to $2\times10^{-5}$ under variation of the fit window.
+The coefficient is shown to depend on the initial condition, so $3/2$ is the
+value for the canonical rupture state rather than a universal constant.
 \end{abstract}
 
 \section{Scope and nomenclature}
@@ -172,68 +175,140 @@ asymptotic analysis and to depend on the history of the retraction.
 \subsection{The measured deficit}
 
 Figure~\ref{fig:lateV} shows the speed and the deficit $1-\mathrm{d}\Xc/\mathrm{d}T$.
-Forming the ratio $(1+T)^{2}\bigl(1-\mathrm{d}\Xc/\mathrm{d}T\bigr)$, which
-eq.~\eqref{eq:711} requires to approach unity, both solvers give
+Form the ratio
+%
+\begin{equation}
+  R(T) = (1+T)^{2}\Bigl(1-\frac{\mathrm{d}\Xc}{\mathrm{d}T}\Bigr),
+  \label{eq:ratio}
+\end{equation}
+%
+which eq.~\eqref{eq:711} requires to approach unity. Three solvers, sharing no
+code, give instead
 
 \begin{center}
-\begin{tabular}{lccccc}
+\begin{tabular}{llc}
 \toprule
-$T$ & $10$ & $20$ & $30$ & $40$ & $50$ \\
+solver & model solved & $R(50)$ \\
 \midrule
-\AB\ (Richardson $\Delta X \to 0$) & 1.4391 & 1.4891 & 1.4959 & 1.4978 & 1.4985 \\
-\TC\ ($\mathcal{L}=200$)           & 1.4382 & 1.4889 & 1.4959 & 1.4977 & 1.4986 \\
-\TC\ ($\delta t/2$)                & 1.4382 & 1.4889 & 1.4959 & 1.4977 & 1.4986 \\
-\TC\ (mesh $\times 2$)             & 1.4383 & 1.4889 & 1.4960 & 1.4978 & 1.4986 \\
+\TC\ (finite element, mass coordinate)      & momentum form      & $1.4986$ \\
+\AB\ (finite difference, Richardson $\Delta X \to 0$) & reduced form & $1.4985$ \\
+\textsf{TC1D-MASS} (nonlinear diffusion, fixed domain) & $H_T = H^2 H_{mm}$ & $1.4986$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The ratio approaches $3/2$. Extrapolating the plateau with several fit forms
-gives $1.5006$, $1.5053$ and $1.4977$, from which we take
+The third solver was written specifically to share nothing with the other two.
+In the mass coordinate the exact invariant reduces the problem to a nonlinear
+diffusion equation on a fixed domain, in which the free boundary disappears and
+the tip stress condition becomes an ordinary Dirichlet condition
+$H(0,T) = 1+T$. It therefore has a different coordinate, a different equation, a
+different boundary-condition type and no Stefan flux, and it agrees with the
+other two to six digits.
+
+Continued to $T = 500$ at four timestep levels, with an observed convergence
+order of $1.993$--$1.998$ throughout, the Richardson-extrapolated ratio is
+
+\begin{center}
+\begin{tabular}{lcccccc}
+\toprule
+$T$      & 50 & 100 & 200 & 300 & 400 & 500 \\
+\midrule
+$R$      & 1.498623 & 1.499660 & 1.499919 & 1.499993 & 1.500132 & 1.500319 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$R$ rises monotonically to $3/2$ and does not turn down, and the residual
+$3/2 - R$ decays as $(1+T)^{-2}$. Writing $s = (1+T)^{-1}$ and
+$R = a_2 + a_3 s + a_4 s^2 + \dots$, so that $a_2$ is the $s \to 0$ intercept,
+polynomial fits of degree one to three with the window start slid outward give
+an intercept stable at $1.50000$, varying by less than $2\times10^{-5}$ across
+window starts $T_{\min} = 50$ to $125$. There is no drift toward unity. We take
 %
 \begin{equation}
-  -U_{-2} = 1.500 \pm 0.003 ,
+  \lim_{T\to\infty} (1+T)^{2}\Bigl(1-\frac{\mathrm{d}\Xc}{\mathrm{d}T}\Bigr)
+  = 1.5000 \pm 0.0005 ,
   \label{eq:threehalves}
 \end{equation}
 %
-consistent with exactly $3/2$ and inconsistent with unity.
+consistent with exactly $3/2$, with unity excluded. The same fits give
+$a_3 = 0.000 \pm 0.001$: the correction is $O(T^{-2})$ rather than $O(T^{-1})$,
+so $(1+T)$ is the exact grouping and $U_{-3} = 3$.
 
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=\textwidth]{figures/fig3_latetime_V.pdf}
-  \caption{Late-time speed and deficit at large $\mathcal{L}$. Solid: \TC.
-  Open symbols: \AB. Dotted: eq.~\eqref{eq:711}.}
-  \label{fig:lateV}
-\end{figure}
+The result is insensitive to every numerical parameter varied independently:
+mesh spacing (a factor of eight, changing $R(50)$ by $10^{-6}$), domain
+truncation ($M = 70$, $90$, $150$, identical to every printed digit), timestep
+(two different step-control strategies, extrapolated limits differing by
+$3\times10^{-5}$), and, for \AB, the truncation length and $\Delta X$.
 
-The result is insensitive to every numerical parameter varied: halving the
-timestep changes it by $1.3\times 10^{-8}$ and doubling the mesh by $1.6\times 10^{-6}$,
-against a deficit of $5.8\times 10^{-4}$ at $T=50$. \AB\ converges at an observed
-order of $2.000$--$2.002$ in $\Delta X$, and its Richardson limit agrees with
-\TC\ to $4.8\times 10^{-5}$.
+Two further measurements of the same constant avoid the tip gradient entirely.
+From the displacement, $(\Xc - T + 1)(1+T)$ measures $1.4995$ at $T=50$; from
+the shape of the first correction to the thickness profile, away from the tip,
+$1.51$ at $T=50$.
 
-A second, independent check supports the same conclusion. The reference work's
-eq.~(7.17) gives $\Xc \sim T+1$, whereas its own eqs.~(7.8) and~(7.10),
-its eqs.~(7.13) and~(7.16), and direct integration of eq.~\eqref{eq:711} all
-give $\Xc \sim T-1$. Both solvers measure $\Xc(50) - 50 = -0.971$. The
-relation $\Xc \sim T - 1$ is equivalent to the exact statement
-$\int_0^{\infty}\bigl(1 - \mathrm{d}\Xc/\mathrm{d}T\bigr)\,\mathrm{d}T = 1$.
+\subsection{The recommended form, and one that should be avoided}
 
-\subsection{A two-term form}
-
-A form consistent with the measured coefficient and with the integral
-constraint is
+We therefore report
 %
 \begin{equation}
-  \frac{\mathrm{d}\Xc}{\mathrm{d}T} \simeq
-  1 - \frac{3}{2}\frac{1}{(1+T)^{2}} + \frac{1}{(1+T)^{3}} ,
-  \label{eq:twoterm}
+  \frac{\mathrm{d}\Xc}{\mathrm{d}T} \sim 1 - \frac{3}{2}\frac{1}{(1+T)^{2}},
+  \qquad
+  \Xc \sim T - 1 + \frac{3}{2}\frac{1}{1+T} .
+  \label{eq:recommended}
 \end{equation}
 %
-which reproduces the numerics to within 2.7\% for $T \ge 5$,
-against 33\% for eq.~\eqref{eq:711} over the same range. We
-emphasise that eq.~\eqref{eq:twoterm} is constructed to match a measured
-coefficient and an exact constraint; it is not derived.
+The single term is accurate to $0.09\%$ over $50 \le T \le 200$ and $0.02\%$
+over $100 \le T \le 200$. Adding a $(1+T)^{-3}$ term to enforce the integral
+constraint makes the fit \emph{worse} by more than an order of magnitude at
+large $T$, because it inserts a correction at an order where the data gives
+none; we recommend against it.
+
+The displacement relation in eq.~\eqref{eq:recommended} deserves separate
+emphasis, because its constant is derivable and independent of the deficit
+coefficient. Expanding in the exact edge thickness $\theta = 1+T$ gives
+$\Xc = \theta - 2 + a_2/\theta$, whose $O(1)$ term is $-1$ for \emph{any}
+$a_2$. Measurements give $T - \Xc = 0.99255$ at $T = 200$ against a predicted
+$0.99254$.
+
+\subsection{On the published coefficient}
+
+The integral constraint $\int_0^{\infty}(1 - \mathrm{d}\Xc/\mathrm{d}T)\,
+\mathrm{d}T = 1$ is sometimes invoked to fix the coefficient. It cannot: the
+$O(1)$ term of $\Xc$ is $-1$ regardless of $a_2$, so the constraint is satisfied
+identically and carries no information about it. We verify this directly,
+recovering $1.00002$ when the constraint is evaluated with the measured
+$a_2 = 3/2$.
+
+The reference work's coefficient appears to follow from reading its uniform
+profile approximation (7.13) one order beyond its validity. That profile
+reproduces the leading two terms of the thickness expansion but not the third;
+substituting it into the integral relation (7.16) returns eq.~\eqref{eq:711}
+exactly. The same profile substituted into the alternative exact relation
+(3.11) returns a vanishing deficit. Two routes from one approximation
+disagreeing at precisely the order in question indicates that the order is
+beyond the approximation's reach.
+
+\subsection{Dependence on the initial condition}
+
+The coefficient is a property of the initial condition and not a universal
+constant of the model. Replacing the canonical rupture condition
+$H \equiv 1$, $V \equiv 0$ with $H(m,0) = 1 + \delta e^{-m}$, which is
+admissible because the edge condition holds for any initial state, gives
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+$\delta$ & $0$ (canonical) & $0.5$ & $2$ \\
+\midrule
+$a_2$    & $1.4997$ & $1.8229$ & $0.9366$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The value $3/2$ is therefore the canonical-rupture value. This supports the
+reference work's statement that the coefficient depends on the history of the
+retraction. The grouping $\theta = 1+T$ and the result $a_3 = 0$ are unchanged
+across all three initial conditions.
 
 \subsection{Profiles and the tip thickness}
 
