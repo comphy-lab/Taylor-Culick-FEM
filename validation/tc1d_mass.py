@@ -70,6 +70,12 @@ def edge_curvature(H, dm):
 def residual_and_jac(H, Hold, Hold2, dt, dt_prev, dm, T_new, first, H0_edge=1.0):
     """BDF2 (or BDF1 on the first step) residual of H_T = H^2 H_mm."""
     n = H.size
+    # edge_slope and edge_curvature use one-sided stencils reaching H[4]
+    # and H[5]; a coarse dm or small M can produce fewer nodes than that
+    # and the failure would surface as an obscure IndexError mid-run.
+    if n < 6:
+        raise ValueError(f"need at least 6 nodes for the edge stencils, "
+                         f"got n={n}; reduce --dm or raise --M")
     Hmm = np.zeros(n)
     Hmm[1:-1] = (H[:-2] - 2 * H[1:-1] + H[2:]) / dm ** 2
     F = np.zeros(n)
@@ -121,6 +127,12 @@ def run(Tend, dm, M=None, dT0=1e-6, cfl=2e-3, dTmax=0.05, nout=2000,
     dt_prev = dT0
     first = True
     Tout = np.geomspace(1e-3, Tend, nout)
+    # The geometric output schedule starts at 1e-3; if Tend is at or below
+    # that, no output time is ever reached, rows stays empty, and the
+    # summary indexes an empty array. Fail with the reason instead.
+    if Tend <= 1e-3:
+        raise ValueError(f"--Tend must exceed the first output time 1e-3, "
+                         f"got {Tend}")
     rows = []
     io = 0
     t0 = time.time()

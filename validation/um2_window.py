@@ -51,13 +51,13 @@ def poly_intercept(T, V, Tmin, Tmax, deg):
     return float(c[-1])
 
 
-def window_table(T, V, Tmaxes, degs, label, Tmax_global=None):
+def window_table(T, V, Tmins, degs, label, Tmax_global=None):
     Tmax_global = Tmax_global if Tmax_global is not None else T.max()
     print(f"\n### {label}   (data to T = {T.max():.1f})")
     print("intercept a_2 of R(s) = a_2 + a_3 s + ... fitted on [Tmin, Tmax]")
     hdr = "  Tmin  Tmax " + "".join(f"   deg{d}    " for d in degs)
     print(hdr)
-    for Tmin in Tmaxes:
+    for Tmin in Tmins:
         row = f"{Tmin:6.1f} {Tmax_global:5.1f} "
         for d in degs:
             v = poly_intercept(T, V, Tmin, Tmax_global, d)
