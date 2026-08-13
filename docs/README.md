@@ -34,7 +34,7 @@ on it, not an interface between two resolved fluids.
 Taylor (1959) and Culick (1960) predicted the terminal retraction velocity by
 balancing the capillary pull against the rate of momentum gain of the rim,
 
-```
+```text
 2σ = ρ h0 V_TC²          ⇒     V_TC = sqrt( 2σ / (ρ h0) ).
 ```
 
@@ -76,7 +76,7 @@ surface tension `σ`, so that `ρ = σ = h0 = 1` and the half-thickness is `0.5`
 **Sanjay et al. (JFM 2022)** scale velocity on the Taylor–Culick velocity
 itself and pressure on `2γ/h0`:
 
-```
+```text
 v_γ = sqrt( 2γ_sf / (ρ_f h0) ) = V_TC ,   τ_γ = sqrt( ρ_f h0³ / (2γ_sf) ) ,
 Oh_f = η_f / sqrt( ρ_f (2γ_af) h0 ) .
 ```
@@ -84,7 +84,7 @@ Oh_f = η_f / sqrt( ρ_f (2γ_af) h0 ) .
 **Savva & Bush (JFM 2009)** use the same velocity scale and the same Ohnesorge
 definition, but a **viscous** clock:
 
-```
+```text
 u_c = sqrt( 2γ / (ρ H) ) = V_TC ,   Oh_SB = μ / sqrt( 2 H ρ γ ) ,
 τ_vis = μ H / (2γ) ,   t* = t / τ_vis .
 ```
@@ -94,7 +94,7 @@ with `H` the full thickness, so `H ≡ h0`.
 **The map.** Sanjay et al. and Savva & Bush share an identical Ohnesorge
 convention. This code differs from both by `√2`:
 
-```
+```text
 Oh_SB  =  Oh_f  =  Oh_code / √2            Oh_code = √2 · Oh_SB
 ```
 
@@ -116,7 +116,7 @@ across all three conventions and tends to 1.
 
 Incompressible Navier–Stokes in the liquid only,
 
-```
+```text
 ρ ( ∂v/∂t + v·∇v ) = -∇p + ∇·( 2 μ D ) ,      ∇·v = 0 ,
 ```
 
@@ -173,7 +173,7 @@ comparable and the dynamics are richest.
 
 In production the window is sized per case as
 
-```
+```text
 L = 1.25 · max( 3·sqrt(4 ν t) ,  1.6 × measured disturbance front ,  2.5 × rim radius )
 ```
 
@@ -474,7 +474,7 @@ that looked obvious from the solver log:
 | `8.79 × 10⁻⁵` | 3200 | 900 | 95.3 | 97 |
 | `2.20 × 10⁻⁵` | 6400 | 900 | 45.4 | 53 |
 
-```
+```text
 t*_fail  =  5655 · dm₁^0.435            (Oh_SB = 1)
 ```
 
@@ -615,7 +615,7 @@ mass equation becomes `f_t = -2f^{3/2}u_m`, the viscous operator becomes the
 **linear** `4μ ∂_m(f u_m)`, the tip closure `f u_m|₀ = -1/(2μ)` is unchanged,
 and the curvature reduces in the mass coordinate to
 
-```
+```text
 κ = 16 f^{1/2} f_mm / (16 + f_m²)^{3/2}
 ```
 
@@ -701,7 +701,7 @@ The `t*⁻²` decay of the 1D deficit is not an artefact. Ahsan, Brandão,
 Davidovitch & Stone (arXiv:2507.04603) derive exactly it for a highly viscous
 planar sheet, their eq. (7.11):
 
-```
+```text
 dXc/dT  ~  1 - 1/(1+T)²          deficit ~ T⁻², prefactor independent of Oh
 ```
 
@@ -754,9 +754,12 @@ crossover in the 2D solver would confirm the two-window picture directly; not
 seeing it would break it. That is the single most informative case this campaign
 could still run, and it is out of the current `Oh_SB ≤ 1` scope of §3.3.
 
-That case has since been run. It does not show the predicted stretch: the
-steepest slope reached at `Oh_paper = 10` is `-1.22`, not `-2`. §6.8 reports the
-measurement and what it implies about how large `Oh` must be.
+That case has since been run, and the outcome is more specific than the
+prediction. There is no `T⁻²` *stretch* at `Oh_paper = 10` — no plateau forms at
+all — but the 2D slope does follow the reduced model closely at early `T`, to
+within 0.01 out to `T ≈ 0.5`, before departing. The window turns out to widen as
+`√Oh_p` rather than as `Oh_p`, so `Oh_paper = 10` is an order of magnitude short
+of what a resolvable stretch would need. §6.8 reports the measurement.
 
 Nothing in Ahsan et al. offers a `t⁻¹ᐟ²` law, a viscous-boundary-layer argument,
 or the constant `1/(2√π)`. Their only `T^{1/2}` is the *early-time growth* of the
@@ -791,7 +794,7 @@ reference is worse than no comparison, because it looks like evidence.
 **Our solver agrees with theirs.** Against the refined `L = ∞` reference, over
 `T ∈ (10⁻³, 50]`, 599 points, four decades of time:
 
-```
+```text
 max |Δu*| = 7.1e-5      RMS 4.2e-5      max relative 5.5e-4
 ```
 
@@ -860,7 +863,7 @@ reachable horizon was.
 Six runs, tip cell `dm₁ = M/N²` spanning a 64× range, three domain lengths, step
 counts from `8×10³` to `1.2×10⁵`:
 
-```
+```text
 t*_fail = 5655 · dm₁^0.435
 ```
 
@@ -945,7 +948,7 @@ arbitrary `L`; the semi-infinite limit `L ≫ T ≫ 1`; and the crossovers at fi
 large `L` with `1 < T < L` — therefore carries a background assumption that is
 rarely written down:
 
-```
+```text
 L ≪ Oh_p
 ```
 
@@ -964,49 +967,100 @@ makes the assumption, so it can be asked directly.
 Fitting a prefactor is the wrong instrument here, for reasons §7 sets out. The
 robust quantity is the local logarithmic slope
 
-```
+```text
 n(T) = d ln(1 - u*) / d ln T
 ```
 
-which is `-2` in the long-wave regime and `-1/2` in the two-dimensional one. It
-is invariant under rescaling of the deficit, so it is independent of the
-coefficient the reduced theory leaves undetermined, and it needs no fitting
-window. `postProcess/oh_window.py` computes it.
+which tends to `-2` in the long-wave regime and to `-1/2` in the
+two-dimensional one. It is invariant under rescaling of the deficit, so it is
+independent of the coefficient the reduced theory leaves undetermined, and it
+needs no fitting window. `postProcess/oh_window.py` computes it.
+
+**The benchmark is not `-2`, and using `-2` will mislead you.** For a deficit
+`A/(1+T)²` with constant `A`, the local slope is
+
+```text
+n(T) = -2T/(1+T)
+```
+
+exactly, which is `-1.33` at `T = 2` and `-1.60` at `T = 4`. The `-2` is only
+the `T → ∞` limit. A 2D case must therefore be compared with the reduced model
+*at the same `T`*, not with its asymptote; comparing against `-2` makes every
+finite-time record look like a failure. The converged reduced-model curve is
+distributed with this repository as `validation/reference/*.txt`.
+
+That reference is itself now converged and cross-checked. Three independently
+formulated solvers — `TC1D-MASS`, `TC1D-FEM` and the `ABDS-CN` transcription,
+each Richardson-extrapolated in its own limiting parameter — agree to
+`1.8×10⁻⁶` in `u*` for `T ≥ 1` and to `8×10⁻⁹` for `T ≥ 32`. Their measured
+slope runs `-0.809` at `T = 1`, `-1.372` at `4`, `-1.650` at `8`, `-1.847` at
+`16`, `-1.934` at `32` and `-1.980` at `100`, matching `-2T/(1+T)` to three
+decimals by `T = 32`. The exponent is `-2`; what one measures below `T ≈ 100`
+is the `+1` offset, not a different power.
+
+The same computation settles the coefficient. `(1 - u*)(1+T)²` converges from
+below to `1.4805` at `T = 16`, `1.49650` at `32`, `1.49917` at `64` and
+`1.49984` at `140`, i.e.
+
+```text
+A = 3/2
+```
+
+which reproduces from three codes the `-U₋₂ = 1.5000 ± 0.0005` obtained
+independently in the validation document, and is not the coefficient `1` of
+Ahsan et al. eq. (7.11) — consistent with their own statement that `U₋₂`
+remains undetermined.
 
 ### What the sweep shows
 
-Only cases with `Oh_p ≫ 1` are evidence at all: below that the window
-`1 ≪ T ≪ Oh_p` is empty, and any steep slope measured there is early-time
-transient rather than long-wave behaviour. Of this campaign, three cases qualify
-or come close:
+Only cases with `Oh_p` not small are evidence at all: when the window is empty,
+any steep slope measured is early-time transient rather than long-wave
+behaviour. Of this campaign, three cases qualify or come close:
 
-| `Oh_SB` | `Oh_p` | steepest `n` | at `T` | `T` reached |
-|---|---|---|---|---|
-| 0.61945 | 1.24 | `-0.782` | 2.48 | 980 |
-| 1.0 | 2.00 | `-0.875` | 3.05 | 512 |
-| 5.0 | 10.0 | `-1.218` | 5.37 | 37.5 |
+Compared at matched `T` against the converged reduced model, `Oh_p = 10` tracks
+it closely at first and then leaves it:
 
-At `Oh_p = 10` the sheet gets about 60% of the way from `-1/2` to `-2` and no
-further. The turn is worth locating precisely, because two different times are
-easy to confuse. The slope reaches its steepest value at `T ≈ 5.4` and is
-already recovering by `T ≈ 8` — that is *within* the nominal window `T ≪ 10`,
-so the long-wave behaviour is decaying while the theory still expects it to
-hold. It does not pass back through `-0.75` until `T ≈ 18`, which is beyond the
-horizon and unremarkable. A factor 5 in `Oh_p` bought 0.34 in slope.
+| `T` | `n` (reduced) | `n` (2D, `Oh_p = 10`) | gap |
+|---|---|---|---|
+| 0.10 | `-0.232` | `-0.231` | 0.001 |
+| 0.30 | `-0.436` | `-0.434` | 0.002 |
+| 0.80 | `-0.728` | `-0.712` | 0.017 |
+| 1.20 | `-0.877` | `-0.845` | 0.032 |
+| 2.00 | `-1.079` | `-1.014` | 0.066 |
+| 3.00 | `-1.249` | `-1.131` | 0.118 |
+| 5.00 | `-1.465` | `-1.215` | 0.250 |
+| 8.00 | `-1.650` | `-1.161` | 0.489 |
+| 16.0 | `-1.848` | `-0.811` | 1.037 |
 
-The full history at `Oh_p = 10` makes the shape plain:
+So the long-wave description is not failing at `Oh_p = 10` — it is *quantitatively
+correct* to better than 0.01 in slope out to `T ≈ 0.5`, and to better than 0.05
+out to `T ≈ 1.6`. What it does not do is survive to `T ~ Oh_p`. The departure is
+progressive, and taking the gap exceeding 0.10 as the operational boundary gives
 
-| `T` | `1 - u*` | `n` |
+| `Oh_p` | `T_dep` | `T_dep/Oh_p` |
 |---|---|---|
-| 0.61 | `3.26e-1` | `-0.63` |
-| 1.01 | `2.28e-1` | `-0.79` |
-| 2.03 | `1.21e-1` | `-1.02` |
-| 4.07 | `5.59e-2` | `-1.19` |
-| 8.14 | `2.42e-2` | `-1.16` |
-| 16.30 | `1.20e-2` | `-0.81` |
-| 28.41 | `8.41e-3` | `-0.50` |
+| 0.767 | 0.83 | 1.08 |
+| 1.24 | 0.87 | 0.71 |
+| 2.00 | 1.05 | 0.52 |
+| 10.0 | 2.69 | 0.27 |
 
-The long-wave plateau simply never forms.
+which fits
+
+```text
+T_dep ≈ 0.84 · Oh_p^0.48
+```
+
+over a factor 13 in `Oh_p`. Substituting the `ABDS-CN` reference for the
+`TC1D-MASS` one reproduces this fit to all three digits shown, so the result
+does not depend on which reduced solver supplies the baseline.
+**The window widens as `√Oh_p`, not as `Oh_p`.**
+That is the substantive result of this section, and it is not what the stated
+validity bound `T ≪ Oh_p` would lead one to expect. The four cases whose records
+begin early enough to measure `T_dep` are the only ones used; the rest start too
+late in `T` for the comparison to be made. An independent criterion — the last
+time the slope is steeper than `-0.75` — gives exponent 0.69 on three points, so
+the measurement is somewhere between `Oh_p^{1/2}` and `Oh_p^{2/3}` and is
+clearly sub-linear.
 
 The late-time return to `-1/2` deserves a separate remark, because the exponent
 and the coefficient behave differently. The exponent does come back: `-0.50` at
@@ -1031,16 +1085,18 @@ but it is not a small or marginal departure, and §7 accordingly confines the
 
 ### Reading
 
-The natural interpretation is not that the reduced model is wrong but that one
-decade of nominal window is not enough to develop a power law in it. The
-crossover regions at `T ~ 1` and `T ~ Oh_p` overlap when `Oh_p = 10`, leaving no
-interval where the exponent is stationary. On that reading, resolving a genuine
-`-2` plateau needs the window to span at least two decades, i.e. `Oh_p ≳ 10²`
-(`Oh_SB ≳ 50`) — and the measured trend of `n_max` with `Oh_p`, being slow, is
-consistent with that.
+The reduced model is not wrong; its range is narrower than advertised. Because
+`T_dep` grows only as `√Oh_p` while the asymptotic regime it describes needs
+`T ≫ 1`, the useful window `1 ≪ T ≲ 0.84·√Oh_p` opens slowly. At `Oh_p = 10` it
+is barely present — `T_dep = 2.7` is not comfortably greater than 1 — which is
+precisely why the `-2` behaviour is visible in the early slope agreement but no
+plateau ever forms.
 
-This is an extrapolation from three points and is offered as such. The case that
-would settle it is `Oh_SB = 50`, which is not yet run. Note that the expensive
+Extrapolating the fit, a decade of long-wave validity (`T_dep = 10`) requires
+`Oh_p ≈ 170`, i.e. `Oh_SB ≈ 85`. That is a four-point extrapolation over one
+decade of `Oh` and should be treated as an order of magnitude, not a target
+value; but it does say the answer is `Oh_p ~ 10²`, not `~ 10`. The case that
+would test it is `Oh_SB = 50`, which is not yet run. Note that the expensive
 cases in this campaign were the *low*-`Oh` ones, which require very large `t*`;
 high `Oh` reaches its window at modest `T`, so the decisive case is likely to be
 affordable.
@@ -1069,7 +1125,7 @@ convergence study rather than inheriting §6.7's.
 - **The long-time limit.** `v(t → ∞) = V_TC` at every `Oh`, approached
   diffusively as
 
-  ```
+```text
   1 - u*(t*)  =  (1 / 2√π) · √(Oh_SB / t*)
   ```
 
@@ -1150,11 +1206,12 @@ exact, would compound all three. The viscous end of the problem is instead
 tracked through the reduced-model form `1 - u* ~ A/(1+T)²` and reported as a
 local slope rather than a prefactor, which is what §6.8 does.
 
-- **What `Oh` is large enough for long-wave asymptotics in 2D**, which §6.8
-  poses and does not settle. At `Oh_p = 10` the measured slope reaches `-1.22`
-  against the `-2` of the reduced model. The estimate that `Oh_p ≳ 10²` is
-  needed rests on three points and one decade of `Oh`; `Oh_SB = 50` would
-  decide it.
+- **What `Oh` is large enough for long-wave asymptotics in 2D.** §6.8 measures
+  the window as `T_dep ≈ 0.84·Oh_p^0.48` — widening as `√Oh_p`, not `Oh_p` —
+  which is a result. What is *not* settled is where that fit ends: it rests on
+  four cases over one decade of `Oh`, and the inference that a decade of
+  validity needs `Oh_p ≈ 170` is an extrapolation beyond all of them.
+  `Oh_SB = 50` would test it.
 - How far the 1D model reaches once its auxiliary block is removed. The
   `h_tip ≈ 62–337` breakdown is now understood as a discretisation defect and
   fixed (§6.4); the new asymptotic reach has not yet been measured. A second,

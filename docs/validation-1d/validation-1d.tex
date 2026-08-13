@@ -533,14 +533,22 @@ reduced model describes a sheet at any particular Ohnesorge number, and no such
 claim is made. Establishing that requires a solver which never performs the
 reduction.
 
-The question is therefore well posed and is left open here: for a semi-infinite
-sheet, how large must $Oh_{p}$ be before a genuine two-dimensional flow spends a
-resolvable part of its history in the regime these sections describe? It cannot
-be answered from within the reduced model, which has already discarded the
-parameter the answer depends on. Preliminary direct simulations at
-$Oh_{p} \le 10$ do not yet reach the asymptotic exponent of \S\ref{sec:late},
-which suggests the required viscosity is substantially larger than the range in
-which the long-wave model is usually invoked.
+The question is therefore well posed: for a semi-infinite sheet, how large must
+$Oh_{p}$ be before a genuine two-dimensional flow spends a resolvable part of
+its history in the regime these sections describe? It cannot be answered from
+within the reduced model, which has already discarded the parameter the answer
+depends on.
+
+Direct simulation of the two-dimensional problem at
+$0.77 \le Oh_{p} \le 10$ indicates that the reduced description is accurate at
+early times --- the local exponent of the deficit agrees with the present
+solvers to better than $0.01$ out to $T \approx 0.5$ at $Oh_{p} = 10$ --- but
+that the time at which it departs grows only as $Oh_{p}^{1/2}$, rather than
+linearly as \eqref{eq:validity} would suggest. On that scaling a decade of
+long-wave behaviour would require $Oh_{p}$ of order $10^{2}$, well above the
+range in which the long-wave model is usually invoked. Those measurements are
+reported separately; they are noted here only to mark the boundary of what the
+present validation establishes.
 
 \appendix
 
