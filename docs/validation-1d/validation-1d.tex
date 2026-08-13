@@ -304,8 +304,13 @@ $R$      & 1.498623 & 1.499660 & 1.499919 & 1.499993 & 1.500132 & 1.500319 \\
 \end{tabular}
 \end{center}
 
-$R$ rises monotonically to $3/2$ and does not turn down, and the residual
-$3/2 - R$ decays as $(1+T)^{-2}$. Writing $s = (1+T)^{-1}$ and
+$R$ rises monotonically towards $3/2$ and does not turn down. Up to
+$T \approx 300$ the residual $3/2 - R$ is positive and decays as $(1+T)^{-2}$;
+beyond that the tabulated values overshoot by a few parts in $10^{4}$, which is
+the size of the timestep extrapolation there rather than a feature of the limit
+(the finest computed value at $T = 500$ reads $1.624$ before extrapolation).
+We therefore quote the limit from the fit below rather than from the largest
+$T$ reached. Writing $s = (1+T)^{-1}$ and
 $R = a_2 + a_3 s + a_4 s^2 + \dots$, so that $a_2$ is the $s \to 0$ intercept,
 polynomial fits of degree one to three with the window start slid outward give
 an intercept stable at $1.50000$, varying by less than $2\times10^{-5}$ across
@@ -474,8 +479,8 @@ values digitised from the published figure.
   \centering
   \includegraphics[width=\textwidth]{figures/fig4_Tc_vs_L.pdf}
   \caption{Crossover time $\Tc$ and duration $\Delta \Tc$ against
-  $\mathcal{L}$. Solid: \TC. Open symbols: \AB. Circles: values digitised from
-  the published figure.}
+  $\mathcal{L}$. Solid: \TC. Open circles: \AB. Open squares: values
+  digitised from the published figure.}
   \label{fig:tc}
 \end{figure}
 

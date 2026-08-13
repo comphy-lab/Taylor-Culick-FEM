@@ -175,7 +175,16 @@ def main() -> None:
                     continue
                 vals = [(k, at_T(s, c["R"], Tq)) for k, s, c in members]
                 coarse, fine = vals[-2][1], vals[-1][1]
-                lim = fine + (fine - coarse) / 3.0
+                # Second-order Richardson: the familiar /3 assumes a factor-two
+                # refinement between the last two members. A ladder built from,
+                # say, 400 and 1600 would extrapolate silently wrong, so take the
+                # ratio from the data and refuse a ladder that is not usable.
+                r = float(vals[-1][0]) / float(vals[-2][0])
+                if not 1.05 < r < 100.0:
+                    raise ValueError(
+                        f"refinement ratio {r:.3g} between the last two members "
+                        f"is not a usable Richardson ladder")
+                lim = fine + (fine - coarse) / (r ** 2 - 1.0)
                 ref = R_REFERENCE.get(Tq, float("nan"))
                 ladder = " ".join(f"{k:g}:{v:.6f}" for k, v in vals)
                 print(f"  T={Tq:5g}  vary {knob:6s} (other fixed at {fixed:g})  "

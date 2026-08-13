@@ -47,6 +47,10 @@ from pathlib import Path
 
 import numpy as np
 
+# np.trapezoid is NumPy >= 2.0; np.trapz is the pre-2.0 spelling and is removed
+# in 2.x. Bind once so this runs on either without a version pin.
+_trapz = getattr(np, "trapezoid", None) or np.trapz
+
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 OUT = ROOT / "analysis"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -536,7 +540,7 @@ if x is not None:
     # give C = 1 exactly. Any global form for the deficit must integrate to 1;
     # a bare (3/2)(1+T)^-2 integrates to 3/2 and therefore cannot be used down
     # to T = 0 even though it is the correct large-T tail.
-    C = float(np.trapezoid(dfc, T)) + 1.5 / (1 + T[-1]) - 0.5 / (1 + T[-1]) ** 2
+    C = float(_trapz(dfc, T)) + 1.5 / (1 + T[-1]) - 0.5 / (1 + T[-1]) ** 2
     print(f"\n  C = int_0^inf (1-V) dT = {C:.5f}   [Xc -> T - C; (7.8)+(7.10) "
           f"give C = 1 exactly]")
     print(f"  measured Xc(T={T[-1]:g}) - T = {x['Xc'][-1] - T[-1]:+.5f}; "
