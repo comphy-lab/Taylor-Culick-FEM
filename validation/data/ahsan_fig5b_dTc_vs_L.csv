@@ -1,0 +1,56 @@
+# Digitised from: Ahsan, T., Brandao, R., Davidovitch, B. & Stone, H. A.
+# "Retraction Dynamics of a Highly Viscous Liquid Sheet", arXiv:2507.04603, Figure 5(b) (page 15).
+#
+# Ordinate label: "duration of phase change". Linear ordinate; no theory curve is drawn in this panel.
+#   L    = script-L, the dimensionless sheet length (abscissa, log axis)
+#   dTc  = Delta T_c, the (dimensionless) duration of the tension phase change (ordinate, LINEAR axis)
+#
+# Source form: the two panels are embedded JPEG bitmaps inside the PDF
+# (979x773 and 974x788 px, ~308 ppi).  The figure is NOT vector art -- the
+# page's content stream contains only glyph outlines and two image XObjects
+# -- so exact recovery of the plotted numbers from the drawing operators is
+# impossible.  These values are pixel measurements of the embedded bitmaps
+# at their native resolution (no re-rendering, no resampling).
+#
+# Method: axes box located from the solid black frame; log axis calibrated
+# by matching the detected decade gridlines (dotted minor + solid major)
+# against the ladder 2,3,...,9,10,20,... and least-squares fitting
+# pixel = B*log10(value) + C for the abscissa, and pixel = m*value + c fitted to the six solid major gridlines for the linear ordinate; marker centres obtained by an algebraic
+# least-squares circle fit to the blue ring pixels rather than a centre of
+# mass, because a centre of mass is biased for any partially missing ring
+# (in panel (a) the red analytic line cuts three rings in two and the axes
+# box clips two more at the corners; panel (b) has no occlusion, and there
+# the two estimators agree to 0.1 px, which is how the bias was quantified).
+#
+# Calibration self-check: the six solid major gridlines were fitted alone and then used to PREDICT the frame edges, giving 2.40000 at the bottom (printed label 2.4) and 3.09898 at the top (printed label 3.1), i.e. the linear ordinate calibration is reproduced to about 0.1 px without using the frame; the abscissa calibration additionally agrees with panel (a)'s, which is verified against T_c = L, to 0.102% worst case.
+#
+# Accuracy: Abscissa gridline fit residual <= 0.36 px on 868 px/decade (<= 0.12% in L). Ordinate gridline fit residual <= 0.011 px on 980 px per unit, i.e. ~1e-5 -- negligible. The dT_c error is therefore dominated by marker centring, ~0.3 px (1 sigma) = 0.0003. Quote +/-0.001 to be safe.
+#
+# Note: the 20 measured abscissae agree with numpy.logspace(log10(5),
+# log10(50), 20) to 0.28% worst case (0.09% RMS), so the underlying runs
+# were almost certainly 20 log-spaced lengths from L = 5 to L = 50.  The
+# MEASURED values are stored below rather than that inferred exact grid, so
+# that this file remains a digitisation rather than a reconstruction.
+#
+# Columns: L,dTc
+L,dTc
+5.0050,2.4612
+5.6379,2.5224
+6.3684,2.5795
+7.1955,2.6327
+8.1102,2.6818
+9.1641,2.7265
+10.3560,2.7672
+11.6587,2.8040
+13.1763,2.8387
+14.8856,2.8693
+16.7677,2.8971
+18.9507,2.9222
+21.4179,2.9449
+24.1221,2.9644
+27.2600,2.9826
+30.7965,2.9979
+34.6933,3.0123
+39.2026,3.0245
+44.2965,3.0334
+50.0753,3.0417

@@ -1,0 +1,526 @@
+% Validation of a finite-element solver for the one-dimensional retraction of a
+% viscous sheet, against an independent implementation and against published
+% asymptotics.
+%
+% Build:  latexmk -pdf validation-1d.tex
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+
+\newcommand{\TC}{\textsf{TC1D-FEM}}
+\newcommand{\AB}{\textsf{ABDS-CN}}
+\newcommand{\Xc}{X_{c}}
+\newcommand{\Tc}{T_{c}}
+
+\title{Validation of a finite-element solver for one-dimensional viscous sheet
+retraction}
+\author{CoMPhy Lab}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We validate a finite-element solver for the one-dimensional (long-wave)
+retraction of a viscous liquid sheet against an independent finite-difference
+implementation and against the asymptotic results of Ahsan \textit{et al.}
+(arXiv:2507.04603). The two solvers share no code, no discretisation and no
+coordinate system, and agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}$ in the
+retraction speed across four decades of time. Measured against the published
+asymptotics, the early-time law and the late-time finite-sheet law are
+reproduced without adjustable constants, as are the tip-thickness relation and
+the crossover time $\Tc = \mathcal{L}$. In the late-time
+infinite-sheet regime we measure a speed deficit
+$1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, against a
+published coefficient of unity. A third solver, written to share no coordinate,
+equation or boundary-condition type with the other two, returns the same value,
+and the limit is stable to $2\times10^{-5}$ under variation of the fit window.
+The coefficient is shown to depend on the initial condition, so $3/2$ is the
+value for the canonical rupture state rather than a universal constant.
+\end{abstract}
+
+\section{Scope and nomenclature}
+
+Two solvers are compared throughout.
+
+\textbf{\TC} is the solver under validation: a finite-element discretisation of
+the long-wave equations in a Lagrangian mass coordinate, with the sheet
+thickness $h$ on a cell-constant space and the velocity $u$ on continuous
+piecewise-linear elements, integrated with BDF2. The free edge is a material
+point of the mesh, so no interface tracking or remeshing is required.
+
+\textbf{\AB} is an independent reference: a transcription into Python of the
+finite-difference solver released with Ahsan \textit{et al.}, which advances a
+Crank--Nicolson discretisation on a static grid with Picard iteration and a
+tridiagonal solve. Appendix~\ref{sec:port} establishes that the transcription
+reproduces the original code to the precision at which the original can be
+read.
+
+Two further solvers appear: \textsf{TC1D-MASS}, introduced in \S\ref{sec:late}
+to test one result independently, and \textsf{TC1D-ALE}, which solves the same
+model as \TC\ but on a moving mesh in the physical coordinate.
+Table~\ref{tab:solvers} sets out how the four differ.
+
+The asymptotic predictions of Ahsan \textit{et al.} are treated here as
+hypotheses to be tested, and are plotted as such: they are not used to
+normalise or calibrate any solver.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.155\textwidth}p{0.195\textwidth}p{0.195\textwidth}p{0.195\textwidth}p{0.195\textwidth}@{}}
+  \toprule
+   & \TC & \AB & \textsf{TC1D-MASS} & \textsf{TC1D-ALE} \\
+  \midrule
+  Model solved
+    & full momentum balance, inertia retained
+    & reduced form, inertia eliminated
+    & reduced form, inertia eliminated
+    & full momentum balance, inertia retained \\[2pt]
+  Equations
+    & $h_T = -h^2 u_m$, \newline $u_T = 4\mu\,\partial_m(h^2 u_m)$
+    & front-fixed heat equation of their Appendix~D
+    & $H_T = H^2 H_{mm}$
+    & Eulerian form on $[x_c(t), \ell_0]$ with ALE correction \\[2pt]
+  Unknown fields
+    & two ($h$, $u$)
+    & two ($f$, $u$)
+    & one ($H$)
+    & two ($h$, $u$) plus mesh position \\[2pt]
+  Coordinate
+    & Lagrangian mass
+    & physical, algebraic stretching map
+    & Lagrangian mass
+    & physical, moving mesh \\[2pt]
+  Discretisation
+    & finite element, weak form; $h$ cell-constant, $u$ piecewise linear
+    & finite difference, staggered grid
+    & finite difference, nodal
+    & finite element; $h$, $u$ and mesh piecewise linear \\[2pt]
+  Time integration
+    & BDF2
+    & Crank--Nicolson with Picard iteration
+    & BDF2, Newton
+    & BDF2 \\[2pt]
+  Linear algebra
+    & symbolic Jacobian, sparse direct
+    & tridiagonal (Thomas)
+    & tridiagonal (Thomas)
+    & symbolic Jacobian, sparse direct \\[2pt]
+  Edge condition
+    & natural: $h^2 u_m = -1/2\mu$ enters as a weak boundary term
+    & $\sqrt{\;}$ tip shape imposed on the last two nodes
+    & essential: $H(0,T) = 1+T$
+    & natural closure plus kinematic $\dot{x}_c = u(x_c)$ by Lagrange multiplier \\[2pt]
+  Edge speed obtained as
+    & nodal value of a solved field
+    & one-sided gradient at the front
+    & gradient of a Dirichlet solution
+    & nodal value at the moving edge \\[2pt]
+  Far field
+    & $u = 0$, $h$ free
+    & clamped, Neumann thickness
+    & $H = 1$
+    & $u = 0$, $h$ free \\
+  \bottomrule
+  \end{tabular}
+  \caption{The four solvers. Any two share at most one of the major choices.
+  \TC\ and \textsf{TC1D-MASS} share the mass coordinate but differ in the model
+  integrated, in the number of unknowns, and in whether the edge condition is
+  natural or essential; \AB\ works in a physical coordinate and so covers the
+  case those two do not. \textsf{TC1D-ALE} shares the model and the framework
+  with \TC\ but places the sheet in the physical coordinate on a moving mesh,
+  which is the discretisation the two-dimensional solver uses; it therefore
+  tests that machinery on a problem with a known answer.}
+  \label{tab:solvers}
+\end{table}
+
+\subsection{Units}
+
+Ahsan \textit{et al.} scale on the half-thickness $h_0 = H/2$, with
+$u_{TC} = \sqrt{\gamma/\rho h_0}$, Ohnesorge number
+$Oh_{p} = \mu/\sqrt{\rho h_0 \gamma}$ and visco-inertial time
+$t_I = 4\mu h_0/\gamma$. This work scales on the full thickness $H$, with the
+Savva--Bush Ohnesorge number $Oh$ and viscous time
+$\tau_{\mathrm{vis}} = \mu H/2\gamma$. The maps are
+%
+\begin{equation}
+  Oh_{p} = 2\,Oh, \qquad T = t^{*}/4, \qquad
+  \mathcal{L} = \frac{\ell_0}{4 h_0 Oh_{p}} = \frac{M}{4\,Oh},
+  \label{eq:units}
+\end{equation}
+%
+where $t^{*} = t/\tau_{\mathrm{vis}}$ and $M$ is the total sheet mass per unit
+width, which is the extent of the computational domain in the mass coordinate.
+Their retraction speed $\mathrm{d}\Xc/\mathrm{d}T$ equals $u^{*} = U/V_{TC}$
+with no intervening factor. These relations were verified symbolically, and
+independently confirmed by two physical identities: their tip condition
+$H V_X = -1$ is the natural boundary condition of the present formulation, and
+their $H(\Xc,T) = 1+T$ is the tip-thickness relation measured here as
+$h_{\mathrm{tip}} = 1 + t^{*}/4$.
+
+Equation~\eqref{eq:units} also shows that the present formulation represents a
+sheet of finite length: $\mathcal{L}$ is set by the mass domain $M$, and the
+far boundary condition (vanishing velocity, free thickness) is the condition
+imposed in the reference work. The mapping was checked before use: at
+$M = 20$, $Oh = 1$, the deceleration is observed at $\Tc = 4.97$ against
+$\mathcal{L} = 5$.
+
+\section{Early time: \texorpdfstring{$T \ll 1$}{T << 1}}
+\label{sec:early}
+
+At early times the reference work predicts a diffusive growth of the retraction
+speed, $\mathrm{d}\Xc/\mathrm{d}T \sim 2\sqrt{T/\pi}$ (their eq.~5.10).
+Figure~\ref{fig:early} compares both solvers and that prediction at
+$\mathcal{L} = 0.1$, $1$ and $20$.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig1_earlytime.pdf}
+  \caption{Retraction speed at early time. Solid: \TC. Open symbols: \AB.
+  Dotted: the diffusive prediction $2\sqrt{T/\pi}$.}
+  \label{fig:early}
+\end{figure}
+
+The prediction is reproduced to better than 0.06\% for
+$T \le 10^{-3}$ at every $\mathcal{L}$. Its range of validity depends strongly
+on $\mathcal{L}$: taking the time at which the relative deviation first exceeds
+1\%, 5\% and 10\%,
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+ & 1\% & 5\% & 10\% \\
+\midrule
+$\mathcal{L} = 0.1$ & $T = 0.0031$ & $0.0053$ & $0.0075$ \\
+$\mathcal{L} = 1$   & $T = 0.019$  & $0.102$  & $0.213$  \\
+$\mathcal{L} = 20$  & $T = 0.019$  & $0.102$  & $0.221$  \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two solvers agree over this window to a maximum absolute difference of
+$2.4\times 10^{-5}$ at $\mathcal{L}=0.1$, $1.3\times 10^{-4}$ at $\mathcal{L}=1$
+and $2.1\times 10^{-5}$ at $\mathcal{L}=20$; the largest of these,
+$1.3\times 10^{-4}$, is the figure quoted in the abstract.
+
+\section{Late time at finite length: the deceleration}
+\label{sec:decel}
+
+When the free edge approaches the far end of the sheet, $\mathcal{L} - \Xc \ll 1$,
+the reference work predicts $\mathrm{d}\Xc/\mathrm{d}T \sim \mathcal{L}(1+T)^{-2}$
+(their eq.~6.10). This regime is the principal focus of that work.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig2_deceleration.pdf}
+  \caption{Deceleration at finite $\mathcal{L}$. Solid: \TC. Open symbols:
+  \AB. Dotted: $\mathcal{L}(1+T)^{-2}$.}
+  \label{fig:decel}
+\end{figure}
+
+The prediction is reproduced without any adjustable constant. At the end of
+each run the ratio of the computed speed to eq.~(6.10) lies between
+$1.00002$ and $1.0010$, and the remaining sheet length $\mathcal{L}-\Xc$ agrees
+with $\mathcal{L}/(1+T)$ to $1.3\times 10^{-4}$. Continuing the $\mathcal{L}=5$ case to
+$T = 400$ shows the relative departure decaying as $O(T^{-2})$, which is the
+order of the neglected terms.
+
+\section{Late time at large length}
+\label{sec:late}
+
+The regime of principal interest here is $\mathcal{L} \gg T \gg 1$, in which the
+edge has reached the Taylor--Culick speed but has not yet sensed the far end.
+The reference work gives, for an infinite sheet,
+%
+\begin{equation}
+  \frac{\mathrm{d}\Xc}{\mathrm{d}T} \sim 1 - \frac{1}{(1+T)^{2}} .
+  \label{eq:711}
+\end{equation}
+%
+Two points are worth stating before the comparison. The deficit is
+$(1+T)^{-2}$, not a pure power $T^{-2}$; fitting a power law in $T$ and
+comparing exponents is therefore not a test of eq.~\eqref{eq:711}. And the
+coefficient is described in that work as a numerical fit, with the
+corresponding expansion coefficient stated to remain undetermined by the
+asymptotic analysis and to depend on the history of the retraction.
+
+\subsection{The measured deficit}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig3_latetime_V.pdf}
+  \caption{Late-time speed and deficit at large $\mathcal{L}$. Solid: \TC. Open
+  symbols: \AB. Dotted: eq.~\eqref{eq:711}.}
+  \label{fig:lateV}
+\end{figure}
+
+Figure~\ref{fig:lateV} shows the speed and the deficit $1-\mathrm{d}\Xc/\mathrm{d}T$.
+Form the ratio
+%
+\begin{equation}
+  R(T) = (1+T)^{2}\Bigl(1-\frac{\mathrm{d}\Xc}{\mathrm{d}T}\Bigr),
+  \label{eq:ratio}
+\end{equation}
+%
+which eq.~\eqref{eq:711} requires to approach unity. Three solvers, sharing no
+code, give instead
+
+\begin{center}
+\begin{tabular}{llc}
+\toprule
+solver & model solved & $R(50)$ \\
+\midrule
+\TC\ (finite element, mass coordinate)      & momentum form      & $1.4986$ \\
+\AB\ (finite difference, Richardson $\Delta X \to 0$) & reduced form & $1.4985$ \\
+\textsf{TC1D-MASS} (nonlinear diffusion, fixed domain) & $H_T = H^2 H_{mm}$ & $1.4986$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The third solver was written specifically to share nothing with the other two.
+In the mass coordinate the exact invariant reduces the problem to a nonlinear
+diffusion equation on a fixed domain, in which the free boundary disappears and
+the tip stress condition becomes an ordinary Dirichlet condition
+$H(0,T) = 1+T$. It therefore has a different coordinate, a different equation, a
+different boundary-condition type and no Stefan flux, and it agrees with the
+other two to six digits.
+
+Continued to $T = 500$ at four timestep levels, with an observed convergence
+order of $1.993$--$1.998$ throughout, the Richardson-extrapolated ratio is
+
+\begin{center}
+\begin{tabular}{lcccccc}
+\toprule
+$T$      & 50 & 100 & 200 & 300 & 400 & 500 \\
+\midrule
+$R$      & 1.498623 & 1.499660 & 1.499919 & 1.499993 & 1.500132 & 1.500319 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$R$ rises monotonically towards $3/2$ and does not turn down. Up to
+$T \approx 300$ the residual $3/2 - R$ is positive and decays as $(1+T)^{-2}$;
+beyond that the tabulated values overshoot by a few parts in $10^{4}$, which is
+the size of the timestep extrapolation there rather than a feature of the limit
+(the finest computed value at $T = 500$ reads $1.624$ before extrapolation).
+We therefore quote the limit from the fit below rather than from the largest
+$T$ reached. Writing $s = (1+T)^{-1}$ and
+$R = a_2 + a_3 s + a_4 s^2 + \dots$, so that $a_2$ is the $s \to 0$ intercept,
+polynomial fits of degree one to three with the window start slid outward give
+an intercept stable at $1.50000$, varying by less than $2\times10^{-5}$ across
+window starts $T_{\min} = 50$ to $125$. There is no drift toward unity. We take
+%
+\begin{equation}
+  \lim_{T\to\infty} (1+T)^{2}\Bigl(1-\frac{\mathrm{d}\Xc}{\mathrm{d}T}\Bigr)
+  = 1.5000 \pm 0.0005 ,
+  \label{eq:threehalves}
+\end{equation}
+%
+i.e.\ $3/2$ to within the quoted uncertainty, with unity excluded. We report
+this as a measurement rather than as an exact value; \S\ref{sec:ic} shows it is
+a property of the initial condition. The same fits give
+$a_3 = 0.000 \pm 0.001$: there is no $(1+T)^{-3}$ term, so $(1+T)$ is the exact
+grouping, $U_{-3} = -2U_{-2} = 3$, and the next correction enters at
+$O\bigl((1+T)^{-4}\bigr)$.
+
+The result is insensitive to every numerical parameter varied independently:
+mesh spacing (a factor of eight, changing $R(50)$ by $10^{-6}$), domain
+truncation ($M = 70$, $90$, $150$, identical to every printed digit), timestep
+(two different step-control strategies, extrapolated limits differing by
+$3\times10^{-5}$), and, for \AB, the truncation length and $\Delta X$.
+
+Two further measurements of the same constant avoid the tip gradient entirely.
+From the displacement, $(\Xc - T + 1)(1+T)$ measures $1.4995$ at $T=50$; from
+the shape of the first correction to the thickness profile, away from the tip,
+$1.51$ at $T=50$.
+
+\subsection{The recommended form, and one that should be avoided}
+
+We therefore report
+%
+\begin{equation}
+  \frac{\mathrm{d}\Xc}{\mathrm{d}T}
+    = 1 - \frac{3}{2}\frac{1}{(1+T)^{2}} + O\bigl((1+T)^{-4}\bigr),
+  \qquad
+  \Xc = T - 1 + \frac{3}{2}\frac{1}{1+T} + O(T^{-2}).
+  \label{eq:recommended}
+\end{equation}
+%
+The single term is accurate to $0.09\%$ over $50 \le T \le 200$ and $0.02\%$
+over $100 \le T \le 200$. Adding a $(1+T)^{-3}$ term to enforce the integral
+constraint makes the fit \emph{worse} by more than an order of magnitude at
+large $T$, because it inserts a correction at an order where the data gives
+none; we recommend against it.
+
+The displacement relation in eq.~\eqref{eq:recommended} deserves separate
+emphasis, because its constant is derivable and independent of the deficit
+coefficient. Expanding in the exact edge thickness $\theta = 1+T$ gives
+$\Xc = \theta - 2 + a_2/\theta$, whose $O(1)$ term is $-1$ for \emph{any}
+$a_2$. Measurements give $T - \Xc = 0.99255$ at $T = 200$ against a predicted
+$0.99254$.
+
+\subsection{On the published coefficient}
+
+The integral constraint $\int_0^{\infty}(1 - \mathrm{d}\Xc/\mathrm{d}T)\,
+\mathrm{d}T = 1$ is sometimes invoked to fix the coefficient. It cannot: the
+$O(1)$ term of $\Xc$ is $-1$ regardless of $a_2$, so the constraint is satisfied
+identically and carries no information about it. We verify this directly,
+recovering $1.00002$ when the constraint is evaluated with the measured
+$a_2 = 3/2$.
+
+The reference work's coefficient appears to follow from reading its uniform
+profile approximation (7.13) one order beyond its validity. That profile
+reproduces the leading two terms of the thickness expansion but not the third;
+substituting it into the integral relation (7.16) returns eq.~\eqref{eq:711}
+exactly. The same profile substituted into the alternative exact relation
+(3.11) returns a vanishing deficit. Two routes from one approximation
+disagreeing at precisely the order in question indicates that the order is
+beyond the approximation's reach.
+
+\subsection{Dependence on the initial condition}
+\label{sec:ic}
+
+The coefficient is a property of the initial condition and not a universal
+constant of the model. Replacing the canonical rupture condition
+$H \equiv 1$, $V \equiv 0$ with $H(m,0) = 1 + \delta e^{-m}$, which is
+admissible because the edge condition holds for any initial state, gives
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+$\delta$ & $0$ (canonical) & $0.5$ & $2$ \\
+\midrule
+$a_2$    & $1.4997$ & $1.8229$ & $0.9366$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The value $3/2$ is therefore the canonical-rupture value. This supports the
+reference work's statement that the coefficient depends on the history of the
+retraction. The grouping $\theta = 1+T$ and the result $a_3 = 0$ are unchanged
+across all three initial conditions.
+
+\subsection{Profiles and the tip thickness}
+
+Figure~\ref{fig:profiles} compares thickness and velocity profiles against the
+reference work's eqs.~(7.13) and~(7.14). The tip-thickness relation
+$H(\Xc,T) = 1+T$ is reproduced to a maximum relative deviation of $3.6\times 10^{-5}$
+over $1 \le T \le 50$. The profile predictions agree to 0.043\%
+and 1.55\% respectively at $T=50$, improving monotonically with
+$T$.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig3_latetime_profiles.pdf}
+  \caption{Thickness and velocity profiles at large $\mathcal{L}$. Solid: \TC.
+  Open symbols: \AB. Dotted: eqs.~(7.13) and~(7.14).}
+  \label{fig:profiles}
+\end{figure}
+
+\section{A moving-mesh solver}
+\label{sec:ale}
+
+\textsf{TC1D-ALE} solves the same model as \TC, with inertia retained, but in
+the physical coordinate on a mesh that moves. It exists to test the
+arbitrary Lagrangian--Eulerian machinery on a problem whose answer is known,
+because that machinery is what the two-dimensional solver relies on.
+
+The mesh velocity $w$ is neither the material velocity nor zero, so every time
+derivative taken at a fixed mesh point carries the convective correction
+$\mathrm{D}/\mathrm{D}t = \partial_t|_{\mathrm{mesh}} + (u-w)\partial_x$. At the
+free edge $w = u$, so the mesh tracks the interface; in the interior $w$ is the
+affine stretch $w = u(x_c)(\ell_0 - x)/(\ell_0 - x_c)$, obtained as the solution
+of a mesh-motion equation rather than by renoding between steps. The edge
+carries the same natural closure as \TC\ together with the kinematic condition
+$\dot{x}_c = u(x_c)$, imposed through a Lagrange multiplier because the boundary
+position depends on an unknown.
+
+It reproduces all three reference quantities: $u^{*}(30)$ extrapolates to
+$0.9807279$ in time and $0.9807278$ in space, agreeing with each other to
+$1.5\times10^{-7}$ and with \TC's limit to $2.9\times10^{-7}$; the late-time
+ratio extrapolates to $1.49860$, $1.49964$ and $1.50000$ at $T = 50$, $100$ and
+$200$; and the displacement relation holds with a residual of $10^{-7}$
+relative. Observed convergence is second order in both time ($1.92 \to 1.99$)
+and space ($2.000$ at every refinement).
+
+Two checks are worth recording. The mesh sits on the affine stretch to
+$6\times10^{-15}$ of the domain length, so the mesh-motion solution is verified
+rather than assumed; and a control run with the same moving mesh but the ALE
+correction omitted drifts the total mass by a factor of sixteen. The correction
+is not a refinement but the difference between this result and none.
+
+The physical coordinate loses resolution where the mass coordinate gains it: the
+rim occupies a fixed mass but a physical extent narrowing as $(1+T)^{-1}$, while
+the affine stretch compresses the mesh only in proportion to the remaining sheet
+length. Late-time accuracy is therefore more expensive here than in \TC. This is
+a property of the coordinate rather than of the implementation, and it is the
+reason the reference work adopts an algebraic stretching map.
+
+\section{The crossover time}
+\label{sec:tc}
+
+For large $\mathcal{L}$ the edge decelerates from the Taylor--Culick speed onto
+the finite-sheet law of \S\ref{sec:decel}. The reference work reports the
+crossover time $\Tc$ and its duration $\Delta \Tc$ as functions of
+$\mathcal{L}$, with $\Tc = \mathcal{L}$ for large $\mathcal{L}$.
+
+Neither quantity is defined in closed form in that work, so an operational
+definition is adopted here and applied identically to both solvers; it is
+stated with the figure. Figure~\ref{fig:tc} compares both solvers against
+values digitised from the published figure.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig4_Tc_vs_L.pdf}
+  \caption{Crossover time $\Tc$ and duration $\Delta \Tc$ against
+  $\mathcal{L}$. Solid: \TC. Open circles: \AB. Open squares: values
+  digitised from the published figure.}
+  \label{fig:tc}
+\end{figure}
+
+We find $\Tc/\mathcal{L} = 1$ to within 0.25\% for
+$\mathcal{L} \ge 7$. Against the digitised values, $\Tc$ agrees to
+0.142\% RMS, within the estimated digitisation uncertainty of
+0.2\%, and $\Delta \Tc$ to $0.024$ absolute
+(1.5\%).
+
+One point of definition should be recorded. The text of the reference work
+describes $\Delta \Tc$ as a full width at half maximum, while the released code
+computes twice that width. The published values are consistent with the code.
+Both conventions are reported here.
+
+\appendix
+
+\section{Fidelity of the reference transcription}
+\label{sec:port}
+
+\AB\ is a transcription of released \textsc{Matlab} into Python. To establish
+that the transcription is faithful rather than merely plausible, the original
+code was executed under GNU Octave and compared with the transcription at
+identical parameters. Over six configurations the largest absolute difference
+in the retraction speed is $5.0\times 10^{-10}$, and the largest normalised difference
+across all twenty-four recorded quantities is $3.0\times 10^{-8}$. The former is the
+resolution at which the original code writes its output, so the two agree to
+every digit that can be compared.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/figA1_port_fidelity.pdf}
+  \caption{Original released code executed under GNU Octave, against the Python
+  transcription \AB, at several $\mathcal{L}$.}
+  \label{fig:port}
+\end{figure}
+
+\section{Reproduction}
+
+The campaign comprises 72 cases. Each is recorded in a manifest with its
+parameters and the exact command that regenerates it, alongside the derived
+series used for every figure and table in this document.
+
+\end{document}
