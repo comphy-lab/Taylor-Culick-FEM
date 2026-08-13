@@ -143,7 +143,12 @@ def candidate_forms(T, V):
             if m.sum() == 0:
                 row += "      -"
                 continue
-            e = np.max(np.abs(forms[n](T[m]) - D[m]) / D[m])
+            # |D| in the denominator: the deficit D = 1 - V goes negative
+            # wherever a run overshoots V = 1 (which the coarser ABDS-CN
+            # grids do beyond T ~ 100), and dividing by a signed D makes the
+            # reported relative error negative and its maximum meaningless.
+            e = np.max(np.abs(forms[n](T[m]) - D[m])
+                       / np.maximum(np.abs(D[m]), 1e-300))
             row += f" {100 * e:6.2f}%"
         print(row)
     # integrals of the candidate forms over 0..inf
