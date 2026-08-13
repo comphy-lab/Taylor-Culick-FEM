@@ -61,12 +61,22 @@ def load_control(case_dir: str) -> tuple[np.ndarray, np.ndarray]:
         ustar.append(block[:, 3])
     if not tstar:
         raise FileNotFoundError(f"no usable control record under {case_dir}")
-    t = np.concatenate(tstar)
-    u = np.concatenate(ustar)
-    order = np.argsort(t)
-    t, u = t[order], u[order]
-    keep = np.concatenate([[True], np.diff(t) > 0])
-    return t[keep], u[keep]
+    return dedupe_monotone(np.concatenate(tstar), np.concatenate(ustar))
+
+
+def dedupe_monotone(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Sort by ``x`` and drop repeated abscissae, keeping the first of each.
+
+    Needed because the frame times written by a fixed-cadence solver can repeat
+    once the timestep falls below the output interval — ``abds_cn_ustar.txt``
+    carries 178 such repeats. ``np.gradient`` divides by the spacing, so a
+    duplicate turns the slope into ``inf`` and quietly poisons everything
+    downstream rather than raising.
+    """
+    order = np.argsort(x, kind="stable")
+    x, y = x[order], y[order]
+    keep = np.concatenate([[True], np.diff(x) > 0])
+    return x[keep], y[keep]
 
 
 def local_slope(T: np.ndarray, deficit: np.ndarray, window: int = 5) -> np.ndarray:
@@ -108,6 +118,8 @@ def main() -> None:
     ap.add_argument("--sweep", required=True, help="root holding the Oh_SB_* case directories")
     ap.add_argument("--reference", help="two-column T, u* record from the L=inf reduced solver")
     ap.add_argument("--t-min", type=float, default=0.5, help="ignore T below this")
+    ap.add_argument("--gap", type=float, default=0.10,
+                    help="slope difference from the reference that counts as departure")
     args = ap.parse_args()
 
     cases = sorted(glob.glob(os.path.join(args.sweep, "Oh_SB_*")))
@@ -133,11 +145,41 @@ def main() -> None:
 
     if args.reference:
         ref = np.loadtxt(args.reference)
-        p = profile(ref[:, 0] * TSTAR_PER_T, ref[:, 1], args.t_min)
-        print(f"\nreduced model, L = inf: steepest n = {p['slope_steepest']:.3f} "
-              f"at T = {p['T_steepest']:.2f}, record to T = {p['T_max']:.1f}")
-        print("This is the value a 2D case must approach for the long-wave")
-        print("description to be doing any work at that Oh.")
+        ref_T, ref_u = dedupe_monotone(ref[:, 0], ref[:, 1])
+        rp = profile(ref_T * TSTAR_PER_T, ref_u, t_min=0.03)
+        print(f"\nreduced model, L = inf: record to T = {rp['T_max']:.1f}, "
+              f"n = {rp['slope_steepest']:.3f} at its right edge")
+        print("Note n -> -2 only as T -> inf; for a deficit A/(1+T)^2 the local")
+        print("slope is -2T/(1+T) exactly, so a 2D case must be compared with")
+        print("this curve at matched T rather than against -2.\n")
+
+        print(f"{'Oh_SB':>9} {'Oh_p':>7} {'T_start':>8} {'T_dep':>7} {'T_dep/Oh_p':>11}")
+        fit_x, fit_y = [], []
+        for oh, p in sorted(rows):
+            # A case whose record begins after the departure cannot measure it;
+            # reporting the first sample instead would fabricate a boundary.
+            if p["T"][0] > 0.25:
+                print(f"{oh:9.5f} {2 * oh:7.3f} {p['T'][0]:8.3f}  record starts too late")
+                continue
+            grid = np.geomspace(0.25, min(p["T"][-1], rp["T"][-1]), 3000)
+            gap = np.abs(np.interp(grid, p["T"], p["slope"])
+                         - np.interp(grid, rp["T"], rp["slope"]))
+            past = np.where(gap > args.gap)[0]
+            if not len(past):
+                print(f"{oh:9.5f} {2 * oh:7.3f} {p['T'][0]:8.3f}  never departs")
+                continue
+            t_dep = grid[past[0]]
+            print(f"{oh:9.5f} {2 * oh:7.3f} {p['T'][0]:8.3f} {t_dep:7.2f} "
+                  f"{t_dep / (2 * oh):11.3f}")
+            fit_x.append(2 * oh)
+            fit_y.append(t_dep)
+
+        if len(fit_x) >= 2:
+            slope, intercept = np.polyfit(np.log(fit_x), np.log(fit_y), 1)
+            print(f"\n  T_dep = {np.exp(intercept):.3f} * Oh_p^{slope:.2f} "
+                  f"over {len(fit_x)} cases")
+            print(f"  a decade of long-wave validity (T_dep = 10) needs "
+                  f"Oh_p = {np.exp((np.log(10) - intercept) / slope):.0f}")
 
 
 if __name__ == "__main__":
