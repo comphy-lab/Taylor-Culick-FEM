@@ -164,7 +164,12 @@ def run(Tend, dm, M=None, dT0=1e-6, cfl=2e-3, dTmax=0.05, nout=2000,
                 cfl=cfl, dTmax=dTmax, delta=delta, lam=lam,
                 nstep=nstep, wall_s=time.time() - t0,
                 V_final=float(tab[-1, 1]),
-                bc_curvature_check=float(np.max(np.abs(tab[20:, 3] - 1.0))),
+                # tab[:20] is the start-up transient, where the edge curvature has not
+        # settled. np.max over an empty slice raises, so a short diagnostic
+        # run (nout <= 20) reports the check as unavailable rather than
+        # crashing.
+        bc_curvature_check=(float(np.max(np.abs(tab[20:, 3] - 1.0)))
+                            if len(tab) > 20 else None),
                 far_field_interior=float(np.max(np.abs(tab[:, 4]))))
     if out is not None:
         out = Path(out)

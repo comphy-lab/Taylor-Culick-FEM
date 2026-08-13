@@ -571,8 +571,14 @@ for code, pref in (("TC1D-FEM", "tcfem"), ("ABDS-CN", "abds")):
 t = S.get("section4", {}).get("TC1D-FEM")
 b = S.get("section4", {}).get("ABDS-CN")
 if t and b:
-    dt_ = np.abs(np.array(t["Tc"]) - np.array(b["Tc"]))
-    dd_ = np.abs(np.array(t["dTc_code"]) - np.array(b["dTc_code"]))
+    # Align on the L values both codes actually produced before subtracting:
+    # a sweep that drops a case in one code would otherwise broadcast-error
+    # or, worse, silently pair mismatched L.
+    _Lt = np.asarray(t["L"], float); _Lb = np.asarray(b["L"], float)
+    _c = np.intersect1d(_Lt, _Lb)
+    _it = np.searchsorted(_Lt, _c); _ib = np.searchsorted(_Lb, _c)
+    dt_ = np.abs(np.asarray(t["Tc"])[_it] - np.asarray(b["Tc"])[_ib])
+    dd_ = np.abs(np.asarray(t["dTc_code"])[_it] - np.asarray(b["dTc_code"])[_ib])
     print(f"\n  code-code: max |dTc| = {dt_.max():.4f}, "
           f"max |d(Delta Tc)| = {dd_.max():.4f}")
     r = np.array(t["Tc_over_L"])
