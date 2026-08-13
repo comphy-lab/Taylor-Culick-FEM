@@ -274,7 +274,7 @@ def make_figure(args, summary) -> None:
                fontsize=6.5, va="top")
     for a in ax:
         a.grid(True, which="both", alpha=0.15, lw=0.5)
-    out = args.out / "fig3_1d_vs_2d.png"
+    out = args.out / "fig5_1d_vs_2d.png"
     fig.savefig(out)
     print(f"wrote {out}")
 

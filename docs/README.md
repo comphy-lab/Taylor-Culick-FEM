@@ -677,7 +677,7 @@ film tip… nevertheless, such models perform surprisingly well"*. A defensible
 pre-registered horizon is instead `t* = 100`, about 3× beyond their published
 range and well past `u* = 0.99`.
 
-![Figure 3](figures/fig3_1d_vs_2d.png)
+![Figure 5: 1D long-wave model against the 2D FEM](figures/fig5_1d_vs_2d.png)
 
 *Figure 3. Solid: 2D co-moving FEM. Dashed: 1D long-wave model extrapolated to
 `dt → 0`; dotted where the Richardson correction exceeds the deficit and the
@@ -730,9 +730,11 @@ they expect classical rim formation — a regime they decline to analyse
 of validity is therefore `1 ≪ T ≪ Oh`.
 
 Now note where our `2D` law puts its own crossover. `1 - u* = (1/2√π)√(Oh_SB/t*)`
-becomes `O(1)` at `t* ~ Oh_SB`, i.e. at `T ~ Oh` — **the same crossover time they
-identify from the opposite side.** The consistent reading is that the two laws
-describe two windows of the same problem:
+becomes `O(1)` at `t* ~ Oh_SB`, i.e. at `T ~ Oh` — apparently the same crossover
+time they identify from the opposite side. That coincidence is suggestive, and
+it motivated the measurement of §6.8; it is *not* confirmed there, and the
+reader should treat the following table as a division of the problem into two
+windows rather than as a demonstration that the two boundaries coincide:
 
 | window | law | source |
 |---|---|---|
@@ -751,6 +753,10 @@ stretch over roughly `4 ≪ t* ≪ 40` before crossing to `t*⁻¹ᐟ²`. Seeing
 crossover in the 2D solver would confirm the two-window picture directly; not
 seeing it would break it. That is the single most informative case this campaign
 could still run, and it is out of the current `Oh_SB ≤ 1` scope of §3.3.
+
+That case has since been run. It does not show the predicted stretch: the
+steepest slope reached at `Oh_paper = 10` is `-1.22`, not `-2`. §6.8 reports the
+measurement and what it implies about how large `Oh` must be.
 
 Nothing in Ahsan et al. offers a `t⁻¹ᐟ²` law, a viscous-boundary-layer argument,
 or the constant `1/(2√π)`. Their only `T^{1/2}` is the *early-time growth* of the
@@ -929,6 +935,126 @@ less than that.
 
 ---
 
+## 6.8 How large must `Oh` be for a 2D sheet to behave like the long-wave model?
+
+The reduced model removes `Oh` from the problem by measuring time on the
+visco-inertial scale. That is a legitimate step only while the thin-film
+description holds, and Ahsan et al. bound its validity by `T = O(Oh_p)`. Every
+regime their analysis treats — `T ≪ 1`; the terminal approach `L − X_c ≪ 1` at
+arbitrary `L`; the semi-infinite limit `L ≫ T ≫ 1`; and the crossovers at finite
+large `L` with `1 < T < L` — therefore carries a background assumption that is
+rarely written down:
+
+```
+L ≪ Oh_p
+```
+
+so that the whole accessible range `T ≲ L` stays inside the thin-film window. In
+the units of §2, with `L = M/(4·Oh)` and `Oh_p = 2·Oh`, this reads `M ≪ 8·Oh²`.
+
+For a **semi-infinite** sheet `L → ∞`, and no finite `Oh` satisfies that
+condition globally. What survives is a horizon: the long-wave description is
+usable only for `T ≪ Oh_p`. This is the point at which the reduced model can no
+longer answer its own question. It cannot tell you what `Oh` is large enough for
+its assumptions, because it has already discarded `Oh`. A 2D simulation never
+makes the assumption, so it can be asked directly.
+
+### The diagnostic
+
+Fitting a prefactor is the wrong instrument here, for reasons §7 sets out. The
+robust quantity is the local logarithmic slope
+
+```
+n(T) = d ln(1 - u*) / d ln T
+```
+
+which is `-2` in the long-wave regime and `-1/2` in the two-dimensional one. It
+is invariant under rescaling of the deficit, so it is independent of the
+coefficient the reduced theory leaves undetermined, and it needs no fitting
+window. `postProcess/oh_window.py` computes it.
+
+### What the sweep shows
+
+Only cases with `Oh_p ≫ 1` are evidence at all: below that the window
+`1 ≪ T ≪ Oh_p` is empty, and any steep slope measured there is early-time
+transient rather than long-wave behaviour. Of this campaign, three cases qualify
+or come close:
+
+| `Oh_SB` | `Oh_p` | steepest `n` | at `T` | `T` reached |
+|---|---|---|---|---|
+| 0.61945 | 1.24 | `-0.782` | 2.48 | 980 |
+| 1.0 | 2.00 | `-0.875` | 3.05 | 512 |
+| 5.0 | 10.0 | `-1.218` | 5.37 | 37.5 |
+
+At `Oh_p = 10` the sheet gets about 60% of the way from `-1/2` to `-2` and no
+further. The turn is worth locating precisely, because two different times are
+easy to confuse. The slope reaches its steepest value at `T ≈ 5.4` and is
+already recovering by `T ≈ 8` — that is *within* the nominal window `T ≪ 10`,
+so the long-wave behaviour is decaying while the theory still expects it to
+hold. It does not pass back through `-0.75` until `T ≈ 18`, which is beyond the
+horizon and unremarkable. A factor 5 in `Oh_p` bought 0.34 in slope.
+
+The full history at `Oh_p = 10` makes the shape plain:
+
+| `T` | `1 - u*` | `n` |
+|---|---|---|
+| 0.61 | `3.26e-1` | `-0.63` |
+| 1.01 | `2.28e-1` | `-0.79` |
+| 2.03 | `1.21e-1` | `-1.02` |
+| 4.07 | `5.59e-2` | `-1.19` |
+| 8.14 | `2.42e-2` | `-1.16` |
+| 16.30 | `1.20e-2` | `-0.81` |
+| 28.41 | `8.41e-3` | `-0.50` |
+
+The long-wave plateau simply never forms.
+
+The late-time return to `-1/2` deserves a separate remark, because the exponent
+and the coefficient behave differently. The exponent does come back: `-0.50` at
+`T = 28`, `-0.45` at `T = 33`. The coefficient does not. Measuring
+`C√Oh = (1 - u*)·√(t*/Oh)` over the last half of the record gives
+
+| `t*` | `C√Oh` |
+|---|---|
+| 62.3 | 0.0441 |
+| 90.2 | 0.0406 |
+| 124.6 | 0.0402 |
+| 150.0 | 0.0406 |
+
+which is stable to about 1% and sits a **factor of seven below** the `0.28209`
+that five cases in `0.14724 ≤ Oh_SB ≤ 1` reproduce to within 1%. Taken with the
+44% excess at `Oh_SB = 0.035` at the other end, the coefficient is not universal
+across the sweep: it is constant over a middle band and departs, in opposite
+directions, above and below it. The record here reaches only `T = 37.5`, so this
+is a statement about the range simulated rather than about the true asymptote —
+but it is not a small or marginal departure, and §7 accordingly confines the
+`1/(2√π)` claim to the band where it was measured.
+
+### Reading
+
+The natural interpretation is not that the reduced model is wrong but that one
+decade of nominal window is not enough to develop a power law in it. The
+crossover regions at `T ~ 1` and `T ~ Oh_p` overlap when `Oh_p = 10`, leaving no
+interval where the exponent is stationary. On that reading, resolving a genuine
+`-2` plateau needs the window to span at least two decades, i.e. `Oh_p ≳ 10²`
+(`Oh_SB ≳ 50`) — and the measured trend of `n_max` with `Oh_p`, being slow, is
+consistent with that.
+
+This is an extrapolation from three points and is offered as such. The case that
+would settle it is `Oh_SB = 50`, which is not yet run. Note that the expensive
+cases in this campaign were the *low*-`Oh` ones, which require very large `t*`;
+high `Oh` reaches its window at modest `T`, so the decisive case is likely to be
+affordable.
+
+One further caution, aimed at anyone tempted to compare slopes between solvers.
+The `10⁻⁴`-level agreement between implementations reported in §6.7 is agreement
+in `u*`. It does **not** transfer to `1 - u*`, which is a small difference of
+order-one quantities and so carries a relative error larger by a factor
+`1/(1-u*)`. At `T = 8` that factor is about 50. Any comparison at the level of
+the deficit, and still more at the level of its slope, requires its own
+convergence study rather than inheriting §6.7's.
+
+---
+
 ## 7. What is and is not established
 
 **Established.**
@@ -955,6 +1081,20 @@ less than that.
   reached, not *what* is reached. This supersedes the earlier reading of the
   exponent as non-constant across the sweep; that was measured on records too
   short at both ends of the `Oh` range, not a real drift.
+
+  **The coefficient is established over that band and not beyond it.** Outside
+  `0.14724 ≤ Oh_SB ≤ 1` it departs in both directions: `+44%` at
+  `Oh_SB = 0.035`, and a factor of seven *low* at `Oh_SB = 5`, where the
+  exponent nonetheless returns to `-1/2` (§6.8). The exponent is the robust
+  feature; the coefficient is not universal on the evidence available.
+
+  A note on what "the sweep" means here. The production campaign is the eight
+  cases `0.035 ≤ Oh_SB ≤ 1` of §3.3. `Oh_SB = 5` is a later single-case
+  diagnostic run added to test the two-window picture of §6.5, not a ninth
+  member of that campaign, and it was configured for that purpose — it reaches
+  `T = 37.5` where the production cases reach `T` of several hundred. Statements
+  about the campaign refer to the eight; statements about `Oh_SB = 5` are
+  flagged as such.
 - **The 1D long-wave model is universal in `t*` and the 2D solution is not**
   (§6.4), so the two cannot agree across `Oh` in principle. The 1D deficit falls
   as `t*⁻²` against the true `t*⁻¹ᐟ²`.
@@ -969,6 +1109,15 @@ less than that.
   | 0.09121 | 37832 | `-0.4848` | 0.2969 | `+5.3%` |
   | 0.0565  | 67412 | `-0.4522` | 0.3439 | `+21.9%` |
   | 0.035   | 49542 | `-0.4293` | 0.4072 | `+44.3%` |
+
+  A fourth candidate reading has since been added, and it is the most mundane:
+  at `Oh_SB = 0.035` **the deficit is not monotone**, so no decaying power law
+  can describe it. Across the sweep that case alone fails monotonicity — 50
+  separate increases in `1 - u*`, the largest a 10.5% rise at `T ≈ 7.5` — while
+  `Oh_SB = 0.0565` through `5` are monotone throughout. The oscillation is rim
+  dynamics at the inertial end of the range and is physical; it is simply not
+  something `C·t*^(-1/2)` can represent. That does not explain `0.0565` or
+  `0.09121`, which are monotone and still drift.
 
   The earlier reading was that these were simply pre-asymptotic and would
   approach `1/(2√π)` given enough time. **Extending two of them contradicts
@@ -986,12 +1135,35 @@ less than that.
   below that is unresolved.
 - Whether `1/(2√π)` is exact. Five cases agreeing to within 1% is suggestive of
   a closed form, not proof of one; no derivation is offered here.
+
+**A deliberate limit on scope.** The fitted form
+`1 - u* = C·√(Oh_SB/t*)` is reported above as an observation over the range
+where it holds, and it is not pursued further. Three properties make it a poor
+instrument to push: the fitted `C` depends on the fitting window and moved
+*away* from `1/(2√π)` as two of the low-`Oh` records were extended; the fitted
+`C` and the fitted exponent are not independent, so a quoted `C` is partly a
+statement about protocol (`compare_1d_2d.py` keeps `fit_law` and
+`collapse_const` separate for exactly this reason, and they do not agree once
+the exponent drifts); and at the lowest `Oh` the quantity being fitted is not
+monotone. Extending the sweep downward in `Oh`, or arguing the constant to be
+exact, would compound all three. The viscous end of the problem is instead
+tracked through the reduced-model form `1 - u* ~ A/(1+T)²` and reported as a
+local slope rather than a prefactor, which is what §6.8 does.
+
+- **What `Oh` is large enough for long-wave asymptotics in 2D**, which §6.8
+  poses and does not settle. At `Oh_p = 10` the measured slope reaches `-1.22`
+  against the `-2` of the reduced model. The estimate that `Oh_p ≳ 10²` is
+  needed rests on three points and one decade of `Oh`; `Oh_SB = 50` would
+  decide it.
 - How far the 1D model reaches once its auxiliary block is removed. The
   `h_tip ≈ 62–337` breakdown is now understood as a discretisation defect and
   fixed (§6.4); the new asymptotic reach has not yet been measured. A second,
   untouched defect remains: `h` carries a vertex/midside checkerboard on `C2`
   elements that grows to 65% relative amplitude at `Oh_SB = 0.035`.
-- Anything at `Oh_SB > 1`, which is deliberately out of scope (§3.3).
+- Anything at `Oh_SB > 1`, which is out of scope for the production campaign
+  (§3.3). The single diagnostic case at `Oh_SB = 5` is the one exception and is
+  reported only where §6.8 needs it; one short run is not a sweep, and nothing
+  above `Oh_SB = 1` should be read as converged in `Oh`.
 
 ---
 
