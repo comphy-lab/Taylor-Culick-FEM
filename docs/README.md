@@ -991,8 +991,12 @@ distributed with this repository as `validation/reference/*.txt`.
 
 That reference is itself now converged and cross-checked. Three independently
 formulated solvers — `TC1D-MASS`, `TC1D-FEM` and the `ABDS-CN` transcription,
-each Richardson-extrapolated in its own limiting parameter — agree to
-`1.8×10⁻⁶` in `u*` for `T ≥ 1` and to `8×10⁻⁹` for `T ≥ 32`. Their measured
+each Richardson-extrapolated in its own limiting parameter — agree, worst pair
+over all three, to `3.1×10⁻⁶` in `u*` for `T ≥ 1` and `7.3×10⁻⁸` for `T ≥ 32`.
+(These are tighter than the `7.1×10⁻⁵` of §6.7 because that figure spans four
+decades of time including `T < 0.1`, where the impulsive-start singularity
+dominates and the finite-element record is weakest; the two are consistent, not
+competing.) Their measured
 slope runs `-0.809` at `T = 1`, `-1.372` at `4`, `-1.650` at `8`, `-1.847` at
 `16`, `-1.934` at `32` and `-1.980` at `100`, matching `-2T/(1+T)` to three
 decimals by `T = 32`. The exponent is `-2`; what one measures below `T ≈ 100`
@@ -1050,9 +1054,9 @@ which fits
 T_dep ≈ 0.84 · Oh_p^0.48
 ```
 
-over a factor 13 in `Oh_p`. Substituting the `ABDS-CN` reference for the
-`TC1D-MASS` one reproduces this fit to all three digits shown, so the result
-does not depend on which reduced solver supplies the baseline.
+over a factor 13 in `Oh_p`. All three reduced references give this fit to every
+digit shown, so the result does not depend on which reduced solver supplies the
+baseline.
 **The window widens as `√Oh_p`, not as `Oh_p`.**
 That is the substantive result of this section, and it is not what the stated
 validity bound `T ≪ Oh_p` would lead one to expect. The four cases whose records
