@@ -961,13 +961,29 @@ less than that.
 
 **Not established.**
 
-- The onset of the asymptotic regime. The three lowest `Oh` are still outside
-  it: `C√Oh = 0.2945`, `0.3340`, `0.4072` at `Oh_SB = 0.09121`, `0.0565`,
-  `0.035`, i.e. `+4%`, `+18%`, `+44%`, with exponents `-0.487`, `-0.457`,
-  `-0.429`. The trend is monotone in `Oh` and consistent with an onset time that
-  grows as `Oh` falls, but the scaling of that onset is **not** measured, and
-  reaching it at `Oh_SB = 0.035` needs one to two decades more `t*` than the
-  hardware delivered.
+- **What happens at low `Oh`, and this is now an open problem rather than an
+  unfinished measurement.** The three lowest `Oh` sit outside the law:
+
+  | `Oh_SB` | `t*` reached | exponent | `C√Oh` | deviation |
+  |---|---|---|---|---|
+  | 0.09121 | 37832 | `-0.4848` | 0.2969 | `+5.3%` |
+  | 0.0565  | 67412 | `-0.4522` | 0.3439 | `+21.9%` |
+  | 0.035   | 49542 | `-0.4293` | 0.4072 | `+44.3%` |
+
+  The earlier reading was that these were simply pre-asymptotic and would
+  approach `1/(2√π)` given enough time. **Extending two of them contradicts
+  that.** `Oh_SB = 0.09121` ran from `t* = 20150` to its target `37832` and moved
+  from `+4.4%` to `+5.3%`; `0.0565` ran from `36385` to `67412` and moved from
+  `+18.4%` to `+21.9%`. The measured exponents moved away from `-1/2` over the
+  same interval, not toward it.
+
+  So the low-`Oh` cases are not converging onto the law from below on the
+  timescales reached. Three readings remain open: an onset that grows faster
+  than the runs do, so the approach has not begun; a genuinely different
+  low-`Oh` behaviour; or contamination of the long-time record in these cases
+  specifically. Nothing in the present data distinguishes them, and the honest
+  statement is that the law is established for `Oh_SB ≥ 0.14724` and its status
+  below that is unresolved.
 - Whether `1/(2√π)` is exact. Five cases agreeing to within 1% is suggestive of
   a closed form, not proof of one; no derivation is offered here.
 - How far the 1D model reaches once its auxiliary block is removed. The
