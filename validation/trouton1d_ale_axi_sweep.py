@@ -125,16 +125,23 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         t_end = tstar_end * p.tau_vis
 
         if l0 is None:
-            # Small-hole exponential estimate (S&B 3.30); the exponent is
-            # capped only to keep the ESTIMATE itself from overflowing for
-            # pathologically large tstar_end, not because the run is
-            # expected to reach that regime.
+            # Small-hole exponential estimate (S&B 3.30). The exponential law
+            # is an EARLY-TIME statement: it holds only while the edge speed
+            # R/(2 tau_vis) is below V_TC, i.e. until R reaches the crossover
+            # radius sqrt(2)*mu; past that the edge cannot outrun V_TC. Taking
+            # the raw exponential at large tstar_end therefore requests an
+            # astronomically long domain (r0*e^{t*/2} ~ 1e21 at t* = 100) and
+            # the resulting mesh coordinates blow the first Newton solve up to
+            # O(1e34) residuals -- which is how this bound was discovered.
             disp_exp = r0 * (math.exp(min(tstar_end, 700.0) / 2.0) - 1.0)
+            # Exponential-phase displacement can never exceed reaching the
+            # crossover radius; after that, growth is bounded by V_TC.
+            disp_exp_bound = max(0.0, math.sqrt(2.0) * p.mu - r0)
             # Planar-limit linear estimate: dR/dt -> V_TC, i.e. displacement
             # V_TC * t = mu * t*/sqrt(2) (dimension-consistent with planar's
             # own xc_end = l_I * tstar_end/4 = Oh_SB * tstar_end).
             disp_lin = p.mu * tstar_end / math.sqrt(2.0)
-            disp_est = max(disp_exp, disp_lin)
+            disp_est = max(disp_lin, min(disp_exp, disp_exp_bound + disp_lin))
             l0 = disp_est + max(0.2 * disp_est, 30.0 * max(1.0, p.mu))
         p.l0 = l0
         p.set_output_directory(str(outdir))
