@@ -1,6 +1,6 @@
 % Validation of a finite-element solver for the one-dimensional retraction of a
-% viscous sheet, against an independent implementation and against published
-% asymptotics.
+% viscous sheet, against an independent implementation and against the
+% asymptotics of Ahsan et al.
 %
 % Build: see README.md
 \documentclass[11pt,a4paper]{article}
@@ -32,14 +32,14 @@ retraction of a viscous liquid sheet against an independent finite-difference
 implementation and against the asymptotic results of Ahsan \textit{et al.}
 \cite{ahsan2025}. The two solvers share no code, no discretisation and no
 coordinate system, and agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}$ in the
-retraction speed across four decades of time. Measured against the published
-asymptotics, the early-time law and the late-time finite-sheet law are
-reproduced without adjustable constants, as are the tip-thickness relation and
-the crossover time $\Tc = \mathcal{L}$. The coefficient is shown to depend on
-the initial condition, so $3/2$ is the value for the canonical rupture state
-rather than a universal constant. In the late-time infinite-sheet regime the
-published structure is $1 - \mathrm{d}\Xc/\mathrm{d}T \sim (1+T)^{-2}$, with
-the prefactor left undetermined. For the canonical rupture state three
+retraction speed across four decades of time. Measured against the asymptotics of Ahsan \textit{et al.}, the early-time law
+and the late-time finite-sheet law are reproduced without adjustable constants,
+as are the tip-thickness relation and the crossover time $\Tc = \mathcal{L}$.
+The coefficient is shown to depend on the initial condition, so $3/2$ is the
+value for the canonical rupture state rather than a universal constant. In the
+late-time infinite-sheet regime Ahsan \textit{et al.}\ give the structure
+$1 - \mathrm{d}\Xc/\mathrm{d}T \sim (1+T)^{-2}$, with the prefactor left
+undetermined. For the canonical rupture state three
 independent solvers give
 $1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, stable to
 $2\times10^{-5}$ under variation of the fit window.
@@ -53,7 +53,8 @@ model down before the solvers that integrate it. The physical problem is a
 planar Newtonian sheet of density $\rho$, viscosity $\mu$ and surface tension
 $\gamma$, initially at rest, of uniform half-thickness $h_{0}$ and length
 $l_{0}$, which ruptures at one end at $t = 0$ and retracts. Following the
-convention of the reference work, $h(x,t)$ denotes the \emph{half}-thickness,
+convention of Ahsan \textit{et al.} \cite{ahsan2025}, $h(x,t)$ denotes the
+\emph{half}-thickness,
 so the liquid occupies $-h < y < h$; \S\ref{sec:units} maps this onto the
 full-thickness convention used by the solver under validation.
 
@@ -85,9 +86,9 @@ this geometry is $4$.
 The retraction is driven at the free edge. A circular tip cannot be imposed
 there, because $h \propto (x_{c}-x)^{1/2}$ gives a slope that diverges as
 $x \to x_{c}$ and so violates the approximation that produced
-\eqref{eq:mass}--\eqref{eq:mom}. Instead the reference work splits the domain
+\eqref{eq:mass}--\eqref{eq:mom}. Instead Ahsan \textit{et al.} \cite{ahsan2025} split the domain
 into a long thin-film region and a small tip region of extent $\mathcal{O}(h)$
-in which the full two-dimensional Stokes problem is solved, and matches the two
+in which the full two-dimensional Stokes problem is solved, and match the two
 \cite{ahsan2025,hinch1991}. The matching returns an effective boundary
 condition for the thin-film region,
 %
@@ -105,7 +106,7 @@ matters for \S\ref{sec:validity} and is treated in Appendix~A of
 
 Two consequences follow at large Ohnesorge number
 $\Ohp = \mu/\sqrt{\rho h_{0}\gamma}$, which is built on the half-thickness and
-is the reference work's Ohnesorge number; \S\ref{sec:units} relates it to the
+is the Ohnesorge number of Ahsan \textit{et al.} \cite{ahsan2025}; \S\ref{sec:units} relates it to the
 full-thickness $Oh$ used elsewhere here, $\Ohp = 2\,Oh$. First, \eqref{eq:edge} fixes the
 scale of the flow: with $h^{*}$, $v^{*}$ and $l^{*}$ the characteristic
 thickness, velocity and axial length, $4\mu h^{*} v^{*}/l^{*} \sim \gamma$.
@@ -233,7 +234,7 @@ thickness $h$ on a cell-constant space and the velocity $u$ on continuous
 piecewise-linear elements, integrated with BDF2. The free edge is a material
 point of the mesh, so no interface tracking or remeshing is required.
 
-\textbf{\AB} is an independent reference: a transcription into Python of the
+\textbf{\AB} is an independent implementation: a transcription into Python of the
 finite-difference solver released with Ahsan \textit{et al.} \cite{ahsan2025},
 which advances a
 Crank--Nicolson discretisation on a static grid with Picard iteration and a
@@ -264,7 +265,7 @@ normalise or calibrate any solver.
     & \eqref{eq:nd} directly, inertia explicit \\[2pt]
   Equations
     & $h_T = -h^2 u_m$, \newline $u_T = 4\mu\,\partial_m(h^2 u_m)$
-    & front-fixed heat equation of their Appendix~D
+    & front-fixed heat equation of Appendix~D of Ahsan \textit{et al.} \cite{ahsan2025}
     & $H_T = H^2 H_{mm}$
     & Eulerian form on $[x_c(t), \ell_0]$ with ALE correction \\[2pt]
   Unknown fields
@@ -329,8 +330,8 @@ normalise or calibrate any solver.
 Ahsan \textit{et al.} \cite{ahsan2025} scale on the half-thickness $h_0 = H/2$, with
 $u_{TC} = \sqrt{\gamma/\rho h_0}$, Ohnesorge number
 $Oh_{p} = \mu/\sqrt{\rho h_0 \gamma}$ and visco-inertial time
-$t_I = 4\mu h_0/\gamma$. This work scales on the full thickness $H$, with the
-Savva--Bush \cite{savva2009} Ohnesorge number $Oh$ and viscous time
+$t_I = 4\mu h_0/\gamma$. The present formulation scales on the full thickness $H$, with the
+Savva and Bush \cite{savva2009} Ohnesorge number $Oh$ and viscous time
 $\tau_{\mathrm{vis}} = \mu H/2\gamma$. The maps are
 %
 \begin{equation}
@@ -341,7 +342,7 @@ $\tau_{\mathrm{vis}} = \mu H/2\gamma$. The maps are
 %
 where $t^{*} = t/\tau_{\mathrm{vis}}$ and $M$ is the total sheet mass per unit
 width, which is the extent of the computational domain in the mass coordinate.
-Their retraction speed $\mathrm{d}\Xc/\mathrm{d}T$ equals $u^{*} = U/V_{TC}$
+The retraction speed of Ahsan \textit{et al.} \cite{ahsan2025}, $\mathrm{d}\Xc/\mathrm{d}T$, equals $u^{*} = U/V_{TC}$
 with no intervening factor. These relations were verified symbolically, and
 independently confirmed by two physical identities: their tip condition
 $H V_X = -1$ is the natural boundary condition of the present formulation, and
@@ -351,15 +352,15 @@ $h_{\mathrm{tip}} = 1 + t^{*}/4$.
 Equation~\eqref{eq:units} also shows that the present formulation represents a
 sheet of finite length: $\mathcal{L}$ is set by the mass domain $M$, and the
 far boundary condition (vanishing velocity, free thickness) is the condition
-imposed in the reference work. The mapping was checked before use: at
+imposed by Ahsan \textit{et al.} \cite{ahsan2025}. The mapping was checked before use: at
 $M = 20$, $Oh = 1$, the deceleration is observed at $\Tc = 4.97$ against
 $\mathcal{L} = 5$.
 
 \section{Early time: \texorpdfstring{$T \ll 1$}{T << 1}}
 \label{sec:early}
 
-At early times the reference work predicts a diffusive growth of the retraction
-speed, $\mathrm{d}\Xc/\mathrm{d}T \sim 2\sqrt{T/\pi}$ (their eq.~5.10).
+At early times Ahsan \textit{et al.} \cite{ahsan2025} predict a diffusive growth of the retraction
+speed, $\mathrm{d}\Xc/\mathrm{d}T \sim 2\sqrt{T/\pi}$ (eq.~5.10).
 Figure~\ref{fig:early} compares both solvers and that prediction at
 $\mathcal{L} = 0.1$, $1$ and $20$.
 
@@ -397,8 +398,8 @@ $1.3\times 10^{-4}$, is the figure quoted in the abstract.
 \label{sec:decel}
 
 When the free edge approaches the far end of the sheet, $\mathcal{L} - \Xc \ll 1$,
-the reference work predicts $\mathrm{d}\Xc/\mathrm{d}T \sim \mathcal{L}(1+T)^{-2}$
-(their eq.~6.10). This regime is the principal focus of that work.
+Ahsan \textit{et al.} \cite{ahsan2025} predict $\mathrm{d}\Xc/\mathrm{d}T \sim \mathcal{L}(1+T)^{-2}$
+(eq.~6.10). This regime is the principal focus of that paper.
 
 \begin{figure}[htbp]
   \centering
@@ -409,7 +410,7 @@ the reference work predicts $\mathrm{d}\Xc/\mathrm{d}T \sim \mathcal{L}(1+T)^{-2
 \end{figure}
 
 The prediction is reproduced without any adjustable constant. At the end of
-each run the ratio of the computed speed to eq.~(6.10) lies between
+each run the ratio of the computed speed to eq.~(6.10) of Ahsan \textit{et al.} \cite{ahsan2025} lies between
 $1.00002$ and $1.0010$, and the remaining sheet length $\mathcal{L}-\Xc$ agrees
 with $\mathcal{L}/(1+T)$ to $1.3\times 10^{-4}$. Continuing the $\mathcal{L}=5$ case to
 $T = 400$ shows the relative departure decaying as $O(T^{-2})$, which is the
@@ -420,7 +421,7 @@ order of the neglected terms.
 
 The regime of principal interest here is $\mathcal{L} \gg T \gg 1$, in which the
 edge has reached the Taylor--Culick speed but has not yet sensed the far end.
-The reference work gives, for an infinite sheet,
+Ahsan \textit{et al.} \cite{ahsan2025} give, for an infinite sheet,
 %
 \begin{equation}
   \frac{\mathrm{d}\Xc}{\mathrm{d}T} \sim 1 - \frac{1}{(1+T)^{2}} .
@@ -430,7 +431,7 @@ The reference work gives, for an infinite sheet,
 Two points are worth stating before the comparison. The deficit is
 $(1+T)^{-2}$, not a pure power $T^{-2}$; fitting a power law in $T$ and
 comparing exponents is therefore not a test of eq.~\eqref{eq:711}. And the
-coefficient is described in that work as a numerical fit, with the
+coefficient is described by Ahsan \textit{et al.} \cite{ahsan2025} as a numerical fit, with the
 corresponding expansion coefficient stated to remain undetermined by the
 asymptotic analysis and to depend on the history of the retraction.
 
@@ -560,12 +561,12 @@ $a_2 = 3/2$.
 
 Equation~\eqref{eq:711} is written with $\sim$, and the corresponding expansion
 coefficient is left undetermined. Substituting the uniform-profile
-approximation (7.13) into the integral relation (7.16) does return a prefactor
-of unity, but that profile reproduces only the leading two terms of the
-thickness expansion; the same profile in the alternative exact relation (3.11)
-returns a vanishing deficit. The two routes disagree at the order that would
-fix $a_2$, so that order is beyond the approximation. The $\sim$ is the right
-statement of what the analysis gives.
+approximation (7.13) of Ahsan \textit{et al.} \cite{ahsan2025} into the integral relation (7.16)
+does return a prefactor of unity, but that profile reproduces only the leading
+two terms of the thickness expansion; the same profile in the alternative exact
+relation (3.11) returns a vanishing deficit. The two routes disagree at the
+order that would fix $a_2$, so that order is beyond the approximation. The
+$\sim$ is the right statement of what the analysis gives.
 
 \subsection{Dependence on the initial condition}
 \label{sec:ic}
@@ -586,14 +587,14 @@ $a_2$    & $1.4997$ & $1.8229$ & $0.9366$ \\
 \end{center}
 
 The value $3/2$ is therefore the canonical-rupture value. This supports the
-reference work's statement that the coefficient depends on the history of the
+statement of Ahsan \textit{et al.} \cite{ahsan2025} that the coefficient depends on the history of the
 retraction. The grouping $\theta = 1+T$ and the result $a_3 = 0$ are unchanged
 across all three initial conditions.
 
 \subsection{Profiles and the tip thickness}
 
-Figure~\ref{fig:profiles} compares thickness and velocity profiles against the
-reference work's eqs.~(7.13) and~(7.14). The tip-thickness relation
+Figure~\ref{fig:profiles} compares thickness and velocity profiles against
+eqs.~(7.13) and~(7.14) of Ahsan \textit{et al.} \cite{ahsan2025}. The tip-thickness relation
 $H(\Xc,T) = 1+T$ is reproduced to a maximum relative deviation of $3.6\times 10^{-5}$
 over $1 \le T \le 50$. The profile predictions agree to 0.043\%
 and 1.55\% respectively at $T=50$, improving monotonically with
@@ -603,7 +604,7 @@ $T$.
   \centering
   \includegraphics[width=\textwidth]{figures/fig3_latetime_profiles.pdf}
   \caption{Thickness and velocity profiles at large $\mathcal{L}$. Solid: \TC.
-  Open symbols: \AB. Dotted: eqs.~(7.13) and~(7.14).}
+  Open symbols: \AB. Dotted: eqs.~(7.13) and~(7.14) of Ahsan \textit{et al.} \cite{ahsan2025}}
   \label{fig:profiles}
 \end{figure}
 
@@ -625,7 +626,7 @@ carries the same natural closure as \TC\ together with the kinematic condition
 $\dot{x}_c = u(x_c)$, imposed through a Lagrange multiplier because the boundary
 position depends on an unknown.
 
-It reproduces all three reference quantities: $u^{*}(30)$ extrapolates to
+It reproduces all three comparison quantities: $u^{*}(30)$ extrapolates to
 $0.9807279$ in time and $0.9807278$ in space, agreeing with each other to
 $1.5\times10^{-7}$ and with \TC's limit to $2.9\times10^{-7}$; the late-time
 ratio extrapolates to $1.49860$, $1.49964$ and $1.50000$ at $T = 50$, $100$ and
@@ -644,27 +645,27 @@ rim occupies a fixed mass but a physical extent narrowing as $(1+T)^{-1}$, while
 the affine stretch compresses the mesh only in proportion to the remaining sheet
 length. Late-time accuracy is therefore more expensive here than in \TC. This is
 a property of the coordinate rather than of the implementation, and it is the
-reason the reference work adopts an algebraic stretching map.
+reason Ahsan \textit{et al.} \cite{ahsan2025} adopt an algebraic stretching map.
 
 \section{The crossover time}
 \label{sec:tc}
 
 For large $\mathcal{L}$ the edge decelerates from the Taylor--Culick speed onto
-the finite-sheet law of \S\ref{sec:decel}. The reference work reports the
+the finite-sheet law of \S\ref{sec:decel}. Ahsan \textit{et al.} \cite{ahsan2025} report the
 crossover time $\Tc$ and its duration $\Delta \Tc$ as functions of
 $\mathcal{L}$, with $\Tc = \mathcal{L}$ for large $\mathcal{L}$.
 
-Neither quantity is defined in closed form in that work, so an operational
+Neither quantity is defined in closed form in that paper, so an operational
 definition is adopted here and applied identically to both solvers; it is
 stated with the figure. Figure~\ref{fig:tc} compares both solvers against
-values digitised from the published figure.
+values digitised from Ahsan \textit{et al.} \cite{ahsan2025}
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig4_Tc_vs_L.pdf}
   \caption{Crossover time $\Tc$ and duration $\Delta \Tc$ against
   $\mathcal{L}$. Solid: \TC. Open circles: \AB. Open squares: values
-  digitised from the published figure.}
+  digitised from Ahsan \textit{et al.} \cite{ahsan2025}.}
   \label{fig:tc}
 \end{figure}
 
@@ -674,9 +675,9 @@ $\mathcal{L} \ge 7$. Against the digitised values, $\Tc$ agrees to
 0.2\%, and $\Delta \Tc$ to $0.024$ absolute
 (1.5\%).
 
-One point of definition should be recorded. The text of the reference work
+One point of definition should be recorded. The text of Ahsan \textit{et al.} \cite{ahsan2025}
 describes $\Delta \Tc$ as a full width at half maximum, while the released code
-computes twice that width. The published values are consistent with the code.
+computes twice that width. The values in the paper are consistent with the code.
 Both conventions are reported here.
 
 \section{The range of validity assumed throughout}
@@ -695,7 +696,7 @@ the units \eqref{eq:scales}, which is what makes the curves of the preceding
 sections universal and lets a single solution serve every viscosity. It does
 not follow that the results hold at every viscosity. The reduction remains
 faithful to the underlying flow only while the thin-film description does, and
-the reference work bounds that by $T = O(Oh_{p})$, beyond which it identifies a
+Ahsan \textit{et al.} \cite{ahsan2025} bound that by $T = O(Oh_{p})$, beyond which they identify a
 two-dimensional inertial regime governed by the full Navier--Stokes equations.
 The edge condition \eqref{eq:edge} carries a restriction of the same kind, since
 its derivation requires the elapsed time not to be asymptotically large
@@ -749,7 +750,7 @@ justifies the visco-inertial scaling \eqref{eq:scales}. The systematic versions
 of the first derivation are due to Erneux and Davis \cite{erneux1993} and
 Howell \cite{howell1996}, following Trouton \cite{trouton1906}; the treatment
 here is condensed to the terms that matter for the retraction problem. The
-matched-asymptotic treatment of the tip region is that of the reference work
+matched-asymptotic treatment of the tip region is that of Ahsan \textit{et al.}
 \cite{ahsan2025}.
 
 \subsection{The two-dimensional problem}
@@ -967,7 +968,7 @@ property of this configuration rather than a general feature of viscous sheet
 retraction, and it is worth stating plainly because the opposite assumption is
 easy to carry over from the axisymmetric literature.
 
-\section{Fidelity of the reference transcription}
+\section{Fidelity of the Ahsan \textit{et al.} \cite{ahsan2025} code transcription}
 \label{sec:port}
 
 \AB\ is a transcription of released \textsc{Matlab} into Python. To establish
