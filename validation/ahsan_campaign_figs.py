@@ -70,6 +70,51 @@ CYC = ["#0072B2", "#009E73", "#CC79A7", "#D55E00", "#56B4E9", "#E69F00"]
 DROPPED = []
 
 
+def load_xy(path):
+    """Return the ``(T, V)`` columns of a TC1D-MASS or TC1D-ALE series.
+
+    Accepts both shapes these solvers produce, so a regenerated file drops in
+    without a conversion step:
+
+    * ``tc1d_mass.py`` writes ``<tag>_series.csv``, comma-separated with an
+      uncommented ``T,V,deficit,...`` header line;
+    * the curated two-column ``T V`` files under ``analysis/extra_solvers``
+      and ``validation/reference`` use whitespace with ``#`` comments.
+
+    Both are on each solver's own geometric output schedule, which is not the
+    schedule of the campaign CSVs. They are plotted on their own abscissae and
+    never interpolated onto a shared grid: linear interpolation across the
+    deceleration knee at T ~ L manufactures up to 7e-3 of apparent
+    disagreement between curves that in fact agree to 5e-5.
+    """
+    p = Path(path)
+    if not p.exists():
+        DROPPED.append(f"missing {p.name}")
+        return None, None
+    head = ""
+    with p.open() as fh:
+        for line in fh:
+            if line.strip() and not line.lstrip().startswith("#"):
+                head = line
+                break
+    comma = "," in head
+    try:
+        d = np.loadtxt(p, delimiter="," if comma else None,
+                       skiprows=1 if (comma and not head[0].isdigit()
+                                      and head[0] not in "+-.") else 0)
+    except ValueError as exc:
+        DROPPED.append(f"unparsable {p.name}: {exc}")
+        return None, None
+    if d.ndim != 2 or d.shape[0] < 2 or d.shape[1] < 2:
+        DROPPED.append(f"unusable {p.name}")
+        return None, None
+    return d[:, 0], d[:, 1]
+
+
+# TC1D-MASS and TC1D-ALE series for the finite-L and semi-infinite figures.
+EXTRA = ROOT / "analysis" / "extra_solvers"
+
+
 def axstyle(ax, square=True):
     for s in ax.spines.values():
         s.set_linewidth(LW)
@@ -211,7 +256,10 @@ for i, L in enumerate((1.0, 5.0, 20.0, 40.0)):
     c = CYC[i]
     lab = rf"$\mathcal{{L}}={L:g}$"
     x, y = poslog(a["T"], a["V_TC1D_FEM"], f"fig2 V TC1D-FEM L={L:g}")
-    axs[0].plot(x, y, "-", color=c, lw=MLW, label=f"TC1D-FEM, {lab}", zorder=3)
+    # Colour encodes L and is keyed once, in panel (b); panel (a) keys the
+    # line styles. Labelling both in (a) made a six-entry legend wide enough to
+    # cover the curves it was describing.
+    axs[0].plot(x, y, "-", color=c, lw=MLW, zorder=3)
     k = max(1, len(a["T"]) // 20)
     x, y = poslog(a["T"][::k], a["V_ABDS_CN"][::k], f"fig2 V ABDS-CN L={L:g}")
     axs[0].plot(x, y, "o", mfc="none", mec=c, mew=MLW * 0.7, ms=13 * S,
@@ -222,22 +270,54 @@ for i, L in enumerate((1.0, 5.0, 20.0, 40.0)):
                     label=lab)
     axs[1].semilogx(a["T"][::k], a["ratio_ABDS_CN"][::k], "o", mfc="none",
                     mec=c, mew=MLW * 0.7, ms=13 * S, ls="none")
-axs[0].plot([], [], ":", color=C_TH, lw=MLW * 1.2,
-            label=r"Eq.~(6.10), $\mathcal{L}/(1+T)^2$")
+    # TC1D-MASS and TC1D-ALE. All four agree to <= 5.5e-5 in V, so on these
+    # axes they are one curve; sparse markers at staggered phase show the
+    # agreement without laying four indistinguishable lines on top of it.
+    for fname, mk, off in ((f"massfin_L{L:g}.txt", "s", 7),
+                           (f"ale_L{L:g}.txt", "^", 13)):
+        tx, ty = load_xy(EXTRA / fname)
+        if tx is None:
+            continue
+        # Clip to the campaign record: these solvers start their geometric
+        # output earlier, and letting them set the axis limits would stretch
+        # the panel over a decade that carries no comparison.
+        mm = (tx >= np.min(a["T"])) & (tx <= np.max(a["T"]))
+        tx, ty = tx[mm], ty[mm]
+        if tx.size < 3:
+            continue
+        step = max(1, len(tx) // 14)
+        sl = slice(off % step, None, step)
+        xx, yy = poslog(tx[sl], ty[sl], f"fig2 {fname}")
+        axs[0].plot(xx, yy, mk, mfc="none", mec=c, mew=MLW * 0.7,
+                    ms=11 * S, ls="none", zorder=5)
+        ratio = ty / (L * (1.0 + tx) ** -2)
+        axs[1].semilogx(tx[sl], ratio[sl], mk, mfc="none", mec=c,
+                        mew=MLW * 0.7, ms=11 * S, ls="none", zorder=5)
+axs[0].plot([], [], "-", color="k", lw=MLW, label="TC1D-FEM")
 axs[0].plot([], [], "o", mfc="none", mec="k", mew=MLW * 0.7, ms=13 * S,
             ls="none", label="ABDS-CN")
+axs[0].plot([], [], "s", mfc="none", mec="k", mew=MLW * 0.7, ms=11 * S,
+            ls="none", label="TC1D-MASS")
+axs[0].plot([], [], "^", mfc="none", mec="k", mew=MLW * 0.7, ms=11 * S,
+            ls="none", label="TC1D-ALE")
+axs[0].plot([], [], ":", color=C_TH, lw=MLW * 1.2,
+            label=r"Eq.~(6.10)")
 axs[0].set_xscale("log")
 axs[0].set_yscale("log")
 axs[0].set_xlabel(r"$T$", fontsize=LAB2, labelpad=LABPAD)
 axs[0].set_ylabel(r"$\mathrm{d}X_c/\mathrm{d}T$", fontsize=LAB2, labelpad=LABPAD)
-axs[0].legend(fontsize=LEG2, loc="lower left", frameon=False,
-              handlelength=1.8, labelspacing=0.35)
+axs[0].legend(fontsize=LEG2 * 0.85, loc="lower left", frameon=False,
+              handlelength=1.5, labelspacing=0.25, handletextpad=0.5,
+              borderaxespad=0.4)
 axs[1].axhline(1.0, color=C_TH, ls=":", lw=MLW * 1.2)
 axs[1].set_ylim(0.9, 2.2)
 axs[1].set_xlabel(r"$T$", fontsize=LAB2, labelpad=LABPAD)
 axs[1].set_ylabel(r"$(\mathrm{d}X_c/\mathrm{d}T)\,/\,[\mathcal{L}(1+T)^{-2}]$",
                   fontsize=LAB2, labelpad=LABPAD * 1.2)
-axs[1].legend(fontsize=LEG2, loc="upper right", frameon=False,
+# Upper left, single column: every curve in (b) rises steeply at T >~ 1, so the
+# empty region is the narrow strip at small T. Two columns is wide enough to
+# push the second one back into the risers.
+axs[1].legend(fontsize=LEG2, loc="upper left", frameon=False,
               handlelength=1.8, labelspacing=0.35)
 for ax in axs:
     axstyle(ax)
@@ -277,6 +357,25 @@ if a is not None and tcf is not None:
         axs[0].plot(x, y, "o", mfc="none", mec=C_AB, mew=MLW * 0.7, ms=14 * S,
                     ls="none", zorder=5,
                     label=r"ABDS-CN, $\Delta X=0.0025$")
+    # TC1D-MASS (semi-infinite reference curve) and TC1D-ALE at L = 200. Both
+    # sit on the TC1D-FEM line to 3.4e-6, so they are drawn as sparse markers.
+    for src, mk, off, nm in (
+            (Path(__file__).resolve().parent / "reference" / "tc1d_mass_ustar.txt",
+             "s", 5, "TC1D-MASS"),
+            (EXTRA / "ale_L200.txt", "^", 11, "TC1D-ALE")):
+        tx, ty = load_xy(src)
+        if tx is None:
+            continue
+        mm = (tx >= 1.0) & (tx <= T[m].max())
+        txm, tym = tx[mm], ty[mm]
+        step = max(1, len(txm) // 18)
+        sl = slice(off % step, None, step)
+        x, y = poslog(txm[sl], 1.0 - tym[sl], f"fig3a deficit {nm}")
+        axs[0].plot(x, y, mk, mfc="none", mec="#009E73", mew=MLW * 0.7,
+                    ms=12 * S, ls="none", zorder=6, label=nm)
+        axs[1].semilogx(txm[sl], (1 + txm[sl]) ** 2 * (1 - tym[sl]), mk,
+                        mfc="none", mec="#009E73", mew=MLW * 0.7, ms=12 * S,
+                        ls="none", zorder=6, label=nm)
     Tg = np.geomspace(1.0, 55, 200)
     axs[0].plot(Tg, 1.0 / (1 + Tg) ** 2, ":", color=C_TH, lw=MLW * 1.4,
                 zorder=2, label=r"Eq.~(7.11), $(1+T)^{-2}$")

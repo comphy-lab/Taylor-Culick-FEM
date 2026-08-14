@@ -67,8 +67,20 @@ def edge_curvature(H, dm):
             + 61 * H[4] - 10 * H[5]) / (12 * dm ** 2)
 
 
-def residual_and_jac(H, Hold, Hold2, dt, dt_prev, dm, T_new, first, H0_edge=1.0):
-    """BDF2 (or BDF1 on the first step) residual of H_T = H^2 H_mm."""
+def residual_and_jac(H, Hold, Hold2, dt, dt_prev, dm, T_new, first, H0_edge=1.0,
+                     finite=False):
+    """BDF2 (or BDF1 on the first step) residual of H_T = H^2 H_mm.
+
+    ``finite`` selects the fixed-end condition of a sheet of finite length in
+    place of the semi-infinite far field.  The reference problem imposes
+    ``V = 0`` and ``dH/dX = 0`` there (their 2.19a,b); since ``V = -dH/dm`` and
+    ``dH/dX = H dH/dm`` with ``H > 0``, both reduce to the single Neumann
+    condition ``dH/dm = 0`` at ``m = M``.  It is applied through a mirrored
+    ghost node, ``H[n] = H[n-2]``, which keeps the operator second order and the
+    Jacobian tridiagonal; a one-sided first-derivative stencil would do neither.
+    The mass domain is then the whole sheet, ``M = L``, because ``dm = H dX``
+    and ``H = 1`` on ``0 < X < L`` at ``T = 0``.
+    """
     n = H.size
     # edge_slope and edge_curvature use one-sided stencils reaching H[4]
     # and H[5]; a coarse dm or small M can produce fewer nodes than that
@@ -90,7 +102,6 @@ def residual_and_jac(H, Hold, Hold2, dt, dt_prev, dm, T_new, first, H0_edge=1.0)
     F[1:-1] = (a0 * H[1:-1] + a1 * Hold[1:-1] + a2 * Hold2[1:-1]
                - H[1:-1] ** 2 * Hmm[1:-1])
     F[0] = H[0] - (H0_edge + T_new)
-    F[-1] = H[-1] - 1.0
 
     ab = np.zeros((3, n))                      # banded (l=1, u=1)
     ab[1, 1:-1] = a0 - 2 * H[1:-1] * Hmm[1:-1] + 2 * H[1:-1] ** 2 / dm ** 2
@@ -98,13 +109,23 @@ def residual_and_jac(H, Hold, Hold2, dt, dt_prev, dm, T_new, first, H0_edge=1.0)
     ab[2, :-2] = -H[1:-1] ** 2 / dm ** 2       # subdiagonal
     ab[1, 0] = 1.0
     ab[0, 1] = 0.0
-    ab[1, -1] = 1.0
-    ab[2, -2] = 0.0
+
+    if finite:
+        # Ghost node H[n] = H[n-2] gives Hmm[-1] = 2 (H[-2] - H[-1]) / dm^2.
+        Hmm_end = 2.0 * (H[-2] - H[-1]) / dm ** 2
+        F[-1] = (a0 * H[-1] + a1 * Hold[-1] + a2 * Hold2[-1]
+                 - H[-1] ** 2 * Hmm_end)
+        ab[1, -1] = (a0 - 2 * H[-1] * Hmm_end + 2 * H[-1] ** 2 / dm ** 2)
+        ab[2, -2] = -2.0 * H[-1] ** 2 / dm ** 2
+    else:
+        F[-1] = H[-1] - 1.0
+        ab[1, -1] = 1.0
+        ab[2, -2] = 0.0
     return F, ab
 
 
 def run(Tend, dm, M=None, dT0=1e-6, cfl=2e-3, dTmax=0.05, nout=2000,
-        tol=1e-12, out=None, tag="mass", delta=0.0, lam=1.0):
+        tol=1e-12, out=None, tag="mass", delta=0.0, lam=1.0, finite=False):
     """delta, lam: an alternative initial condition H(m,0) = 1 + delta e^{-m/lam},
     a sheet that already carries a thickened edge at the instant of rupture.
 
@@ -116,6 +137,15 @@ def run(Tend, dm, M=None, dT0=1e-6, cfl=2e-3, dTmax=0.05, nout=2000,
     move, 3/2 is a universal constant of the model rather than of this initial
     condition.
     """
+    if finite:
+        # For a finite sheet M is the physical length L, not a truncation
+        # distance. The semi-infinite default below is chosen to keep the front
+        # away from the far boundary and would silently model a sheet of length
+        # Tend + 40 instead -- a wrong answer that looks entirely plausible.
+        if M is None:
+            raise ValueError("--finite requires an explicit --M: the mass "
+                             "domain IS the sheet length L, so it cannot be "
+                             "defaulted from Tend")
     M = M if M is not None else Tend + 40.0
     n = int(round(M / dm)) + 1
     m = np.linspace(0.0, M, n)
@@ -148,7 +178,7 @@ def run(Tend, dm, M=None, dT0=1e-6, cfl=2e-3, dTmax=0.05, nout=2000,
         T_new = T + dt
         for _ in range(30):
             F, ab = residual_and_jac(Hn, Hold, Hold2, dt, dt_prev, dm,
-                                     T_new, first, 1.0 + delta)
+                                     T_new, first, 1.0 + delta, finite)
             d = solve_banded((1, 1), ab, F)
             Hn -= d
             if np.max(np.abs(d)) < tol * max(1.0, np.max(np.abs(Hn))):
@@ -173,6 +203,7 @@ def run(Tend, dm, M=None, dT0=1e-6, cfl=2e-3, dTmax=0.05, nout=2000,
             io += 1
     tab = np.array(rows)
     meta = dict(code="TC1D-MASS", tag=tag, Tend=Tend, dm=dm, M=M, n=n,
+                finite=finite,
                 cfl=cfl, dTmax=dTmax, delta=delta, lam=lam,
                 nstep=nstep, wall_s=time.time() - t0,
                 V_final=float(tab[-1, 1]),
@@ -211,6 +242,9 @@ if __name__ == "__main__":
     ap.add_argument("--tag", type=str, default="mass")
     ap.add_argument("--delta", type=float, default=0.0)
     ap.add_argument("--lam", type=float, default=1.0)
+    ap.add_argument("--finite", action="store_true",
+                    help="fixed-end sheet of length L = M (Neumann dH/dm = 0) "
+                         "instead of the semi-infinite far field")
     a = ap.parse_args()
     run(a.Tend, a.dm, a.M, cfl=a.cfl, dTmax=a.dTmax, nout=a.nout,
-        out=a.out, tag=a.tag, delta=a.delta, lam=a.lam)
+        out=a.out, tag=a.tag, delta=a.delta, lam=a.lam, finite=a.finite)
