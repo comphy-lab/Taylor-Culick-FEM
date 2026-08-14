@@ -320,6 +320,48 @@ normalise or calibrate any solver.
   \label{tab:solvers}
 \end{table}
 
+\subsection{How closely the four agree}
+\label{sec:agreement}
+
+Because all four integrate the same model, disagreement between them is
+numerical error and nothing else. Taking \TC\ as the reference and comparing by
+spline, so that the comparison itself contributes nothing, the worst relative
+difference in $\mathrm{d}\Xc/\mathrm{d}T$ over the whole record is
+
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+$\mathcal{L}$ & \textsf{TC1D-MASS} & \textsf{TC1D-ALE} & ALE vs MASS & \AB \\
+\midrule
+1   & $7.7\times10^{-7}$ & $4.4\times10^{-6}$ & $4.5\times10^{-6}$ & $3.9\times10^{-3}$ \\
+5   & $4.7\times10^{-6}$ & $1.0\times10^{-5}$ & $5.7\times10^{-6}$ & $3.0\times10^{-4}$ \\
+20  & $2.6\times10^{-5}$ & $3.5\times10^{-5}$ & $8.8\times10^{-6}$ & $2.5\times10^{-4}$ \\
+40  & $3.7\times10^{-5}$ & $5.5\times10^{-5}$ & $1.9\times10^{-5}$ & $4.5\times10^{-3}$ \\
+200 & $3.4\times10^{-6}$ & $3.3\times10^{-6}$ & $7.9\times10^{-7}$ & $4.6\times10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three of the four agree to $5.5\times10^{-5}$ everywhere. \AB\ is the outlier,
+and only near the deceleration knee at $T \approx \mathcal{L}$, where its
+largest departures occur. The mechanism is its static grid: the physical
+spacing is $\mathcal{L}/N$, so the $\mathcal{O}(\sqrt{T})$ edge layer is
+progressively under-resolved as $\mathcal{L}$ grows at fixed $N$. The three
+solvers that track the edge --- two on a mass coordinate, one on a moving mesh
+--- bracket each other to $5.5\times10^{-5}$ through the same knee. This does
+not change the conclusion of \S\ref{sec:late}; it sharpens it, because the
+coefficient measured there now rests on three codes that are mutually converged
+rather than on one code and a reference.
+
+One practical note for anyone reproducing these numbers. The solvers write on
+different geometric output schedules, so comparing them requires interpolation.
+Linear interpolation across the knee manufactures up to $7\times10^{-3}$ of
+apparent disagreement --- two orders of magnitude larger than the real
+differences tabulated above --- between curves that in fact agree to
+$5\times10^{-5}$. The figures therefore plot each solver on its own abscissa,
+and the table above is computed by spline.
+
 \subsection{Units}
 \label{sec:units}
 
@@ -405,8 +447,13 @@ Ahsan \textit{et al.} \cite{ahsan2025} predict $\mathrm{d}\Xc/\mathrm{d}T \sim \
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig2_deceleration.pdf}
-  \caption{Deceleration at finite $\mathcal{L}$. Solid: \TC. Open symbols:
-  \AB. Dotted: $\mathcal{L}(1+T)^{-2}$.}
+  \caption{Deceleration at finite $\mathcal{L}$, all four solvers. Colour
+  encodes $\mathcal{L}$ and is keyed in (b); line style encodes the solver and
+  is keyed in (a). Solid: \TC. Circles: \AB. Squares: \textsf{TC1D-MASS}
+  with the fixed-end condition of \S\ref{sec:stokes}. Triangles:
+  \textsf{TC1D-ALE}. Dotted: $\mathcal{L}(1+T)^{-2}$. Markers are drawn
+  sparsely and at staggered phase because the four curves are indistinguishable
+  at this scale; the differences are quantified in \S\ref{sec:agreement}.}
   \label{fig:decel}
 \end{figure}
 
@@ -441,8 +488,13 @@ asymptotic analysis and to depend on the history of the retraction.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig3_latetime_V.pdf}
-  \caption{Late-time speed and deficit at large $\mathcal{L}$. Solid: \TC. Open
-  symbols: \AB. Dotted: eq.~\eqref{eq:711}.}
+  \caption{Late-time speed and deficit at large $\mathcal{L}$. Solid: \TC.
+  Circles: \AB\ at its resolved grid. Squares: \textsf{TC1D-MASS}.
+  Triangles: \textsf{TC1D-ALE} at $\mathcal{L} = 200$. Dotted:
+  eq.~\eqref{eq:711}. In (b) the three solvers that resolve the edge layer
+  approach $3/2$ together, while the \AB\ curves fall away in order of their
+  grid spacing; the coefficient of unity is what that spacing produces, not
+  what the model does.}
   \label{fig:lateV}
 \end{figure}
 
@@ -878,13 +930,25 @@ free edge is a material point, they take the form quoted in
 Table~\ref{tab:solvers},
 %
 \begin{equation}
-  \left.\frac{\partial h}{\partial T}\right|_{m} = -h^{2}\frac{\partial u}{\partial m},
+  \left.\frac{\partial h}{\partial t}\right|_{m} = -h^{2}\frac{\partial u}{\partial m},
   \qquad
-  \frac{\partial u}{\partial T}
+  \rho \left.\frac{\partial u}{\partial t}\right|_{m}
     = 4\mu \frac{\partial}{\partial m}\left( h^{2} \frac{\partial u}{\partial m}\right),
+  \label{eq:masscoord}
 \end{equation}
 %
-with \eqref{eq:edge} entering as a natural boundary term.
+in dimensional time, with \eqref{eq:edge} entering as a natural boundary term.
+(In the units of \eqref{eq:nondim} the coefficients are unity; the solvers work
+in code units with $\rho = \gamma = 1$.)
+
+One bookkeeping point, because it is a standing trap in this repository. The
+partial differential equations in \eqref{eq:masscoord} are invariant under the
+swap between half- and full-thickness conventions, but the \emph{edge constant}
+is not. In the half-thickness variables of this appendix \eqref{eq:edge} reads
+$h^{2}\partial_{m}u = -\gamma/4\mu$, whereas Table~\ref{tab:solvers}, which
+follows the solver's full-thickness convention $h_{f} = 2h$ and hence
+$m_{f} = 2m$, records $h_{f}^{2}\partial_{m_{f}}u = -\gamma/2\mu$. Both are the
+same physical condition. Only one of them is right for a given code.
 
 \subsection{Reduction with vanishing inertia, and why it fails here}
 \label{sec:stokes}
@@ -959,11 +1023,11 @@ inertia supplies.
 The failure is specific to the planar geometry. As noted in \cite{ahsan2025},
 in the axisymmetric problem of an expanding hole the viscous operator becomes
 $\partial_{r}\!\left(h r^{-1} \partial_{r}(r v_{r})\right)$, for which a purely
-viscous solution \emph{is} compatible with the initial and boundary conditions.
-The necessity of retaining inertia at large $\mathrm{Oh}$ is therefore a
-property of this configuration rather than a general feature of viscous sheet
-retraction, and it is worth stating plainly because the opposite assumption is
-easy to carry over from the axisymmetric literature.
+viscous solution \emph{is} compatible with the initial and boundary conditions,
+and is so regardless of the value of $l_{0}/h_{0}$. The necessity of retaining
+inertia at large $\Ohp$ is therefore a property of this configuration --- of
+its reduced dimensionality --- rather than a general feature of viscous sheet
+retraction.
 
 \section{Fidelity of the Ahsan \textit{et al.} \cite{ahsan2025} code transcription}
 \label{sec:port}
