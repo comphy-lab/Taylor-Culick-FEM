@@ -1016,18 +1016,19 @@ slope runs `-0.809` at `T = 1`, `-1.372` at `4`, `-1.650` at `8`, `-1.847` at
 decimals by `T = 32`. The exponent is `-2`; what one measures below `T ≈ 100`
 is the `+1` offset, not a different power.
 
-The same computation settles the coefficient. `(1 - u*)(1+T)²` converges from
-below to `1.4805` at `T = 16`, `1.49650` at `32`, `1.49917` at `64` and
-`1.49984` at `140`, i.e.
+The same computation measures the coefficient for the canonical rupture state.
+`(1 - u*)(1+T)²` converges from below to `1.4805` at `T = 16`, `1.49650` at
+`32`, `1.49917` at `64` and `1.49984` at `140`, i.e.
 
 ```text
 A = 3/2
 ```
 
 which reproduces from three codes the `-U₋₂ = 1.5000 ± 0.0005` obtained
-independently in the validation document, and is not the coefficient `1` of
-Ahsan et al. eq. (7.11) — consistent with their own statement that `U₋₂`
-remains undetermined.
+independently in the validation document. Ahsan et al. wrote (7.11) with `∼`
+and stated that `U₋₂` remains undetermined; `3/2` is that measured
+canonical-rupture value, not a correction of an asserted prefactor of `1`.
+The robust published content of (7.11) is the `(1+T)⁻²` structure.
 
 ### What the sweep shows
 

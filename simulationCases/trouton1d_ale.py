@@ -198,8 +198,8 @@ and read with ``validation/trouton1d_ale_report.py``.
 
        lim_{T->inf} (1+T)^2 (1 - dXc/dT) = 1.5000 +/- 0.0005,
 
-   the same as the other three solvers, with unity excluded by three orders of
-   magnitude.
+   the same as the other three solvers. Ahsan et al. wrote the late-time
+   deficit with ~, not equality; 3/2 is the canonical-rupture measurement.
 
 4. THE DISPLACEMENT LAW, which this solver tests more directly than any of the
    others because x_c is a degree of freedom rather than a time integral of the

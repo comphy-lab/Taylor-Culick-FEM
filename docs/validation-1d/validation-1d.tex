@@ -35,14 +35,14 @@ coordinate system, and agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}
 retraction speed across four decades of time. Measured against the published
 asymptotics, the early-time law and the late-time finite-sheet law are
 reproduced without adjustable constants, as are the tip-thickness relation and
-the crossover time $\Tc = \mathcal{L}$. In the late-time
-infinite-sheet regime we measure a speed deficit
-$1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, against a
-published coefficient of unity. A third solver, written to share no coordinate,
-equation or boundary-condition type with the other two, returns the same value,
-and the limit is stable to $2\times10^{-5}$ under variation of the fit window.
-The coefficient is shown to depend on the initial condition, so $3/2$ is the
-value for the canonical rupture state rather than a universal constant.
+the crossover time $\Tc = \mathcal{L}$. The coefficient is shown to depend on
+the initial condition, so $3/2$ is the value for the canonical rupture state
+rather than a universal constant. In the late-time infinite-sheet regime the
+published structure is $1 - \mathrm{d}\Xc/\mathrm{d}T \sim (1+T)^{-2}$, with
+the prefactor left undetermined. For the canonical rupture state three
+independent solvers give
+$1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, stable to
+$2\times10^{-5}$ under variation of the fit window.
 \end{abstract}
 
 \section{The model, and where the Ohnesorge number goes}
@@ -445,15 +445,15 @@ asymptotic analysis and to depend on the history of the retraction.
 \end{figure}
 
 Figure~\ref{fig:lateV} shows the speed and the deficit $1-\mathrm{d}\Xc/\mathrm{d}T$.
-Form the ratio
+The ratio
 %
 \begin{equation}
   R(T) = (1+T)^{2}\Bigl(1-\frac{\mathrm{d}\Xc}{\mathrm{d}T}\Bigr),
   \label{eq:ratio}
 \end{equation}
 %
-which eq.~\eqref{eq:711} requires to approach unity. Three solvers, sharing no
-code, give instead
+has an intercept that the $\sim$ in \eqref{eq:711} does not fix. Three solvers,
+sharing no code, give
 
 \begin{center}
 \begin{tabular}{llc}
@@ -498,7 +498,7 @@ $T$ reached. Writing $s = (1+T)^{-1}$ and
 $R = a_2 + a_3 s + a_4 s^2 + \dots$, so that $a_2$ is the $s \to 0$ intercept,
 polynomial fits of degree one to three with the window start slid outward give
 an intercept stable at $1.50000$, varying by less than $2\times10^{-5}$ across
-window starts $T_{\min} = 50$ to $125$. There is no drift toward unity. We take
+window starts $T_{\min} = 50$ to $125$. We take
 %
 \begin{equation}
   \lim_{T\to\infty} (1+T)^{2}\Bigl(1-\frac{\mathrm{d}\Xc}{\mathrm{d}T}\Bigr)
@@ -506,9 +506,9 @@ window starts $T_{\min} = 50$ to $125$. There is no drift toward unity. We take
   \label{eq:threehalves}
 \end{equation}
 %
-i.e.\ $3/2$ to within the quoted uncertainty, with unity excluded. We report
-this as a measurement rather than as an exact value; \S\ref{sec:ic} shows it is
-a property of the initial condition. The same fits give
+i.e.\ $3/2$ to within the quoted uncertainty. We report this as a measurement
+for the canonical rupture state rather than as an exact or universal value;
+\S\ref{sec:ic} shows it is a property of the initial condition. The same fits give
 $a_3 = 0.000 \pm 0.001$: there is no $(1+T)^{-3}$ term, so $(1+T)$ is the exact
 grouping, $U_{-3} = -2U_{-2} = 3$, and the next correction enters at
 $O\bigl((1+T)^{-4}\bigr)$.
@@ -549,7 +549,7 @@ $\Xc = \theta - 2 + a_2/\theta$, whose $O(1)$ term is $-1$ for \emph{any}
 $a_2$. Measurements give $T - \Xc = 0.99255$ at $T = 200$ against a predicted
 $0.99254$.
 
-\subsection{On the published coefficient}
+\subsection{The integral constraint does not fix the coefficient}
 
 The integral constraint $\int_0^{\infty}(1 - \mathrm{d}\Xc/\mathrm{d}T)\,
 \mathrm{d}T = 1$ is sometimes invoked to fix the coefficient. It cannot: the
@@ -558,14 +558,14 @@ identically and carries no information about it. We verify this directly,
 recovering $1.00002$ when the constraint is evaluated with the measured
 $a_2 = 3/2$.
 
-The reference work's coefficient appears to follow from reading its uniform
-profile approximation (7.13) one order beyond its validity. That profile
-reproduces the leading two terms of the thickness expansion but not the third;
-substituting it into the integral relation (7.16) returns eq.~\eqref{eq:711}
-exactly. The same profile substituted into the alternative exact relation
-(3.11) returns a vanishing deficit. Two routes from one approximation
-disagreeing at precisely the order in question indicates that the order is
-beyond the approximation's reach.
+Equation~\eqref{eq:711} is written with $\sim$, and the corresponding expansion
+coefficient is left undetermined. Substituting the uniform-profile
+approximation (7.13) into the integral relation (7.16) does return a prefactor
+of unity, but that profile reproduces only the leading two terms of the
+thickness expansion; the same profile in the alternative exact relation (3.11)
+returns a vanishing deficit. The two routes disagree at the order that would
+fix $a_2$, so that order is beyond the approximation. The $\sim$ is the right
+statement of what the analysis gives.
 
 \subsection{Dependence on the initial condition}
 \label{sec:ic}
