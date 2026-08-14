@@ -173,9 +173,10 @@ for i, (L, lab) in enumerate(((0.1, r"$\mathcal{L}=0.1$"),
     axs[1].semilogx(a["T"], 100 * a["rel_TC1D_FEM"], "-", color=c, lw=MLW)
     axs[1].semilogx(a["T"][::k], 100 * a["rel_ABDS_CN"][::k], "o", mfc="none",
                     mec=c, mew=MLW * 0.7, ms=13 * S, ls="none")
+# Eq.~(12) is ``eq:diffusive`` in docs/validation-1d/validation-1d.tex.
 Tt = np.geomspace(1e-4, 1.0, 200)
 axs[0].plot(Tt, 2 * np.sqrt(Tt / np.pi), ":", color=C_TH, lw=MLW * 1.2,
-            zorder=2, label=r"Eq.~(5.10), $2\sqrt{T/\pi}$")
+            zorder=2, label=r"Eq.~(12), $2\sqrt{T/\pi}$")
 axs[0].set_xscale("log")
 axs[0].set_yscale("log")
 axs[0].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
@@ -185,7 +186,7 @@ axs[0].legend(fontsize=LEG * 0.62, loc="upper left", frameon=False,
 axs[1].axhline(0.0, color=C_TH, ls=":", lw=MLW * 1.2)
 axs[1].set_ylim(-30, 5)
 axs[1].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
-axs[1].set_ylabel(r"deviation from Eq.~(5.10)  [\%]", fontsize=LAB * 0.8,
+axs[1].set_ylabel(r"deviation from Eq.~(12)  [\%]", fontsize=LAB * 0.8,
                   labelpad=LABPAD)
 for ax in axs:
     axstyle(ax)
@@ -197,7 +198,12 @@ save(fig, "fig1_earlytime")
 
 # ===========================================================================
 print("fig2_deceleration")
-fig, axs = plt.subplots(1, 2, figsize=(2 * PANEL + 2.5, PANEL))
+# Included at textwidth this ~23" figure is scaled by ~0.28, so ticks/legends
+# must be oversized here. A stacked dfrac ylabel is wider than the panel gap
+# and sits on (a)'s right spine; use a one-line ratio instead.
+fig, axs = plt.subplots(1, 2, figsize=(2 * PANEL + 5.0, PANEL),
+                        gridspec_kw={"wspace": 0.50})
+TICK2, LEG2, LAB2 = 42, 40, 40
 for i, L in enumerate((1.0, 5.0, 20.0, 40.0)):
     a = load(ROOT / "analysis" / f"sec2_L{L:g}.csv")
     if a is None:
@@ -222,19 +228,20 @@ axs[0].plot([], [], "o", mfc="none", mec="k", mew=MLW * 0.7, ms=13 * S,
             ls="none", label="ABDS-CN")
 axs[0].set_xscale("log")
 axs[0].set_yscale("log")
-axs[0].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
-axs[0].set_ylabel(r"$\mathrm{d}X_c/\mathrm{d}T$", fontsize=LAB, labelpad=LABPAD)
-axs[0].legend(fontsize=LEG * 0.6, loc="lower left", frameon=False,
-              handlelength=1.6, labelspacing=0.25)
+axs[0].set_xlabel(r"$T$", fontsize=LAB2, labelpad=LABPAD)
+axs[0].set_ylabel(r"$\mathrm{d}X_c/\mathrm{d}T$", fontsize=LAB2, labelpad=LABPAD)
+axs[0].legend(fontsize=LEG2, loc="lower left", frameon=False,
+              handlelength=1.8, labelspacing=0.35)
 axs[1].axhline(1.0, color=C_TH, ls=":", lw=MLW * 1.2)
 axs[1].set_ylim(0.9, 2.2)
-axs[1].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
-axs[1].set_ylabel(r"$\dfrac{\mathrm{d}X_c/\mathrm{d}T}"
-                  r"{\mathcal{L}/(1+T)^2}$", fontsize=LAB, labelpad=LABPAD)
-axs[1].legend(fontsize=LEG * 0.7, loc="upper right", frameon=False,
-              handlelength=1.6, labelspacing=0.25)
+axs[1].set_xlabel(r"$T$", fontsize=LAB2, labelpad=LABPAD)
+axs[1].set_ylabel(r"$(\mathrm{d}X_c/\mathrm{d}T)\,/\,[\mathcal{L}(1+T)^{-2}]$",
+                  fontsize=LAB2, labelpad=LABPAD * 1.2)
+axs[1].legend(fontsize=LEG2, loc="upper right", frameon=False,
+              handlelength=1.8, labelspacing=0.35)
 for ax in axs:
     axstyle(ax)
+    ax.tick_params(which="major", labelsize=TICK2, pad=12)
 axs[0].text(0.03, 0.965, r"(a)", transform=axs[0].transAxes, fontsize=LAB,
             va="top")
 axs[1].text(0.03, 0.965, r"(b)", transform=axs[1].transAxes, fontsize=LAB,

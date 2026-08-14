@@ -30,8 +30,7 @@ retraction}
 We validate a finite-element solver for the one-dimensional (long-wave)
 retraction of a viscous liquid sheet against an independent finite-difference
 implementation and against the asymptotic results of Ahsan \textit{et al.}
-\cite{ahsan2025}. The two solvers share no code, no discretisation and no
-coordinate system, and agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}$ in the
+\cite{ahsan2025}. The two solvers agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}$ in the
 retraction speed across four decades of time. Measured against the asymptotics of Ahsan \textit{et al.}, the early-time law
 and the late-time finite-sheet law are reproduced without adjustable constants,
 as are the tip-thickness relation and the crossover time $\Tc = \mathcal{L}$.
@@ -39,8 +38,7 @@ The coefficient is shown to depend on the initial condition, so $3/2$ is the
 value for the canonical rupture state rather than a universal constant. In the
 late-time infinite-sheet regime Ahsan \textit{et al.}\ give the structure
 $1 - \mathrm{d}\Xc/\mathrm{d}T \sim (1+T)^{-2}$, with the prefactor left
-undetermined. For the canonical rupture state three
-independent solvers give
+undetermined. For the canonical rupture state three solvers give
 $1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, stable to
 $2\times10^{-5}$ under variation of the fit window.
 \end{abstract}
@@ -213,8 +211,7 @@ coupled pair to a single linear equation for the thickness,
 with the edge condition becoming $\mathrm{D}H/\mathrm{D}T(\Xc,T) = 1$, hence
 $H(\Xc,T) = 1 + T$: the tip thickens linearly in time.
 
-It is worth being explicit about what \eqref{eq:heat} is, because the phrase
-``reduced model'' invites a misreading. The heat equation is an \emph{exact}
+Here, we note that \eqref{eq:heat} is not a``reduced model''. The heat equation is an \emph{exact}
 consequence of \eqref{eq:nd}, obtained by integrating the conservation law
 \eqref{eq:invariant}; it is not the inertialess limit of anything. Inertia has
 not been dropped --- it has been integrated out. A solver that advances
@@ -229,7 +226,7 @@ Table~\ref{tab:solvers}.
 Two solvers are compared throughout.
 
 \textbf{\TC} is the solver under validation: a finite-element discretisation of
-the long-wave equations in a Lagrangian mass coordinate, with the sheet
+the long-wave equations in a Lagrangian mass cooardinate, with the sheet
 thickness $h$ on a cell-constant space and the velocity $u$ on continuous
 piecewise-linear elements, integrated with BDF2. The free edge is a material
 point of the mesh, so no interface tracking or remeshing is required.
@@ -312,13 +309,12 @@ normalise or calibrate any solver.
   \end{tabular}
   \caption{The four solvers. All four integrate the same physical model,
   \S\ref{sec:model}; they differ in which equivalent form of it they advance and
-  in every discretisation choice, so agreement between them tests numerics
-  rather than modelling. Any two share at most one of the major choices.
+  in the discretisation.
   \TC\ and \textsf{TC1D-MASS} share the mass coordinate but differ in the
   equation integrated, in the number of unknowns, and in whether the edge
   condition is natural or essential; \AB\ works in a physical coordinate and so covers the
-  case those two do not. \textsf{TC1D-ALE} shares the model and the framework
-  with \TC\ but places the sheet in the physical coordinate on a moving mesh,
+  case those two do not. \textsf{TC1D-ALE} uses the same model and framework
+  as \TC\ but places the sheet in the physical coordinate on a moving mesh,
   which is the discretisation the two-dimensional solver uses; it therefore
   tests that machinery on a problem with a known answer.}
   \label{tab:solvers}
@@ -343,8 +339,7 @@ $\tau_{\mathrm{vis}} = \mu H/2\gamma$. The maps are
 where $t^{*} = t/\tau_{\mathrm{vis}}$ and $M$ is the total sheet mass per unit
 width, which is the extent of the computational domain in the mass coordinate.
 The retraction speed of Ahsan \textit{et al.} \cite{ahsan2025}, $\mathrm{d}\Xc/\mathrm{d}T$, equals $u^{*} = U/V_{TC}$
-with no intervening factor. These relations were verified symbolically, and
-independently confirmed by two physical identities: their tip condition
+with no intervening factor. These relations are confirmed by two physical identities: their tip condition
 $H V_X = -1$ is the natural boundary condition of the present formulation, and
 their $H(\Xc,T) = 1+T$ is the tip-thickness relation measured here as
 $h_{\mathrm{tip}} = 1 + t^{*}/4$.
@@ -360,19 +355,25 @@ $\mathcal{L} = 5$.
 \label{sec:early}
 
 At early times Ahsan \textit{et al.} \cite{ahsan2025} predict a diffusive growth of the retraction
-speed, $\mathrm{d}\Xc/\mathrm{d}T \sim 2\sqrt{T/\pi}$ (eq.~5.10).
-Figure~\ref{fig:early} compares both solvers and that prediction at
+speed,
+%
+\begin{equation}
+  \frac{\mathrm{d}\Xc}{\mathrm{d}T} \sim 2\sqrt{T/\pi},
+  \label{eq:diffusive}
+\end{equation}
+%
+Figure~\ref{fig:early} compares both solvers and \eqref{eq:diffusive} at
 $\mathcal{L} = 0.1$, $1$ and $20$.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig1_earlytime.pdf}
   \caption{Retraction speed at early time. Solid: \TC. Open symbols: \AB.
-  Dotted: the diffusive prediction $2\sqrt{T/\pi}$.}
+  Dotted: \eqref{eq:diffusive}.}
   \label{fig:early}
 \end{figure}
 
-The prediction is reproduced to better than 0.06\% for
+Equation~\eqref{eq:diffusive} is reproduced to better than 0.06\% for
 $T \le 10^{-3}$ at every $\mathcal{L}$. Its range of validity depends strongly
 on $\mathcal{L}$: taking the time at which the relative deviation first exceeds
 1\%, 5\% and 10\%,
@@ -453,8 +454,7 @@ The ratio
   \label{eq:ratio}
 \end{equation}
 %
-has an intercept that the $\sim$ in \eqref{eq:711} does not fix. Three solvers,
-sharing no code, give
+has an intercept that the $\sim$ in \eqref{eq:711} does not fix. The three solvers give
 
 \begin{center}
 \begin{tabular}{llc}
@@ -468,13 +468,10 @@ solver & model solved & $R(50)$ \\
 \end{tabular}
 \end{center}
 
-The third solver was written specifically to share nothing with the other two.
 In the mass coordinate the exact invariant reduces the problem to a nonlinear
 diffusion equation on a fixed domain, in which the free boundary disappears and
 the tip stress condition becomes an ordinary Dirichlet condition
-$H(0,T) = 1+T$. It therefore has a different coordinate, a different equation, a
-different boundary-condition type and no Stefan flux, and it agrees with the
-other two to six digits.
+$H(0,T) = 1+T$. It agrees with the other two to six digits.
 
 Continued to $T = 500$ at four timestep levels, with an observed convergence
 order of $1.993$--$1.998$ throughout, the Richardson-extrapolated ratio is
