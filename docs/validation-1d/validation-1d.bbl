@@ -1,0 +1,36 @@
+\begin{thebibliography}{1}
+
+\bibitem{ahsan2025}
+T.~Ahsan, R.~Brand{\~a}o, B.~Davidovitch, and H.~A. Stone.
+\newblock Retraction of a viscous liquid sheet.
+\newblock {\em arXiv:2507.04603}, 2025.
+\newblock Released code:
+  \url{https://github.com/taosifahsan/Thin-Film-Simulations}.
+
+\bibitem{trouton1906}
+F.~T. Trouton.
+\newblock On the coefficient of viscous traction and its relation to that of
+  viscosity.
+\newblock {\em Proc. R. Soc. Lond. A}, 77:426, 1906.
+
+\bibitem{erneux1993}
+T.~Erneux and S.~H. Davis.
+\newblock Nonlinear rupture of free films.
+\newblock {\em Phys. Fluids A}, 5:1117, 1993.
+
+\bibitem{howell1996}
+P.~D. Howell.
+\newblock Models for thin viscous sheets.
+\newblock {\em Eur. J. Appl. Math.}, 7:321, 1996.
+
+\bibitem{hinch1991}
+E.~J. Hinch.
+\newblock {\em Perturbation Methods}.
+\newblock Cambridge University Press, Cambridge, 1991.
+
+\bibitem{savva2009}
+N.~Savva and J.~W.~M. Bush.
+\newblock Viscous sheet retraction.
+\newblock {\em J. Fluid Mech.}, 626:211, 2009.
+
+\end{thebibliography}
