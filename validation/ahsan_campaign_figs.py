@@ -4,9 +4,18 @@ r"""Publication figures for the 1D validation document.
 STYLE. Project publication-plots standard: serif/Computer Modern with usetex,
 PDF as the deliverable and a PNG alongside for inspection. The reference sizing
 is quoted for a ~12x12 inch panel (labels 40, ticks 30, legend 30, spines 3,
-major ticks 12, minor 6, labelpad 15, tick pad 10); ``PANEL`` below sets the
-actual panel size and every one of those numbers is scaled by
-``PANEL/12`` so the ratios are preserved rather than re-guessed per figure.
+major ticks 12, minor 6, labelpad 15, tick pad 10). Geometry -- spines, tick
+lengths, pads, line widths -- is scaled by ``PANEL/12`` so the proportions of
+that reference are preserved.
+
+TEXT SIZES ARE NOT, and this is deliberate. These figures are drawn 20.5in or
+23in wide and then included at ``\textwidth`` (6.54in), so the page scales them
+by ~0.32 or ~0.28. Preserving the reference ratios put labels at 9.6pt and
+legends at 4.3-5.0pt against an 11pt body: proportionate on the canvas,
+illegible on the page. LAB/TICK/LEG below are therefore chosen so the text
+lands near the body size after that reduction. If you change ``PANEL`` or a
+figure's width, recheck with ``size * 6.54 / figure_width_in`` rather than
+assuming the ratios carry over.
 
 usetex IS SAFE HERE and would not be in a batch job. LaTeX spawns a subprocess
 per unique string and deadlocks under multiprocessing; this script renders six
@@ -54,11 +63,19 @@ matplotlib.rcParams["font.serif"] = ["Computer Modern Roman"]
 matplotlib.rcParams["text.usetex"] = True
 matplotlib.rcParams["text.latex.preamble"] = r"\usepackage{amsmath}"
 
-LAB = 40 * S
+# ON-PAGE SIZES, not canvas sizes. Every figure here is included at
+# \textwidth (6.54in) but drawn 20.5in or 23in wide, so it is scaled by ~0.32
+# or ~0.28 on the page and equal nominal sizes do NOT land equally. Scaling the
+# 12x12 reference by PANEL/12 preserved the ratios but put labels at 9.6pt,
+# ticks at 7.2pt and legends at 4.3-5.0pt against an 11pt body -- the legends
+# were unreadable. These absolute values put the 20.5in figures at ~10.2pt
+# labels, ~9.6pt ticks and ~8.6pt legend; figure 2 overrides them for the
+# wider canvas. Check with: size * 6.54 / figure_width_in.
+LAB = 32
 LABPAD = 15 * S
-TICK = 30 * S
+TICK = 30
 TICKPAD = 10 * S
-LEG = 30 * S
+LEG = 27
 LW = 3 * S
 MLW = 3.0 * S                   # data line width
 
@@ -434,7 +451,7 @@ if a is not None and tcf is not None:
     axs[0].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
     axs[0].set_ylabel(r"$1-\mathrm{d}X_c/\mathrm{d}T$", fontsize=LAB,
                       labelpad=LABPAD)
-    axs[0].legend(fontsize=LEG * 0.66, loc="lower left", frameon=False,
+    axs[0].legend(fontsize=LEG, loc="lower left", frameon=False,
                   handlelength=1.8, labelspacing=0.3)
 
     # panel (b): the coefficient, and how the ABDS-CN grid controls it
@@ -461,7 +478,7 @@ if a is not None and tcf is not None:
     axs[1].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
     axs[1].set_ylabel(r"$(1+T)^2\left(1-\mathrm{d}X_c/\mathrm{d}T\right)$",
                       fontsize=LAB * 0.85, labelpad=LABPAD)
-    axs[1].legend(fontsize=LEG * 0.52, loc="lower left", frameon=False,
+    axs[1].legend(fontsize=LEG, loc="lower left", frameon=False,
                   handlelength=1.8, labelspacing=0.22)
     for ax in axs:
         axstyle(ax)
@@ -495,9 +512,35 @@ for i, Tw in enumerate(want):
     # like a broken curve rather than a dotted one
     axs[0].plot(H["Xhat"][m], H["H_eq7p13"][m], ":", color=C_TH,
                 lw=MLW * 1.3, zorder=2)
+    if i == 0:
+        axs[1].plot([], [], "-", color="k", lw=MLW, label="TC1D-FEM")
+        axs[1].plot([], [], "o", mfc="none", mec="k", mew=MLW * 0.7,
+                    ms=13 * S, ls="none", label="ABDS-CN")
+        axs[1].plot([], [], "s", mfc="none", mec="k", mew=MLW * 0.7,
+                    ms=11 * S, ls="none", label="TC1D-MASS")
+        axs[1].plot([], [], "^", mfc="none", mec="k", mew=MLW * 0.7,
+                    ms=11 * S, ls="none", label="TC1D-ALE")
     axs[1].plot(V["Xhat"][mv], V["V"][mv], "-", color=c, lw=MLW, zorder=3)
     axs[1].plot(V["Xhat"][mv], V["V_eq7p14"][mv], ":", color=C_TH,
                 lw=MLW * 1.3, zorder=2)
+    # TC1D-MASS and TC1D-ALE, run to land on the exact T of the FEM profile.
+    # They agree with it to 2e-4 in H and V, so sparse staggered markers again.
+    for pref, mk, off in (("fig3profiles_massfin", "s", 4),
+                          ("fig3profiles_ale", "^", 9)):
+        g = sorted(EXTRA.glob(f"{pref}_L200_T{Tt:.6g}*.txt")) or \
+            sorted(EXTRA.glob(f"{pref}_L200_T{Tt:.4f}*.txt"))
+        if not g:
+            DROPPED.append(f"fig3 profiles: no {pref} at T={Tt:.5g}")
+            continue
+        d = np.loadtxt(g[0])
+        k = d[:, 0] <= XM
+        xx, hh, vv = d[k, 0], d[k, 1], d[k, 2]
+        step = max(1, len(xx) // 10)
+        sl = slice(off % step, None, step)
+        axs[0].plot(xx[sl], hh[sl], mk, mfc="none", mec=c, mew=MLW * 0.7,
+                    ms=11 * S, ls="none", zorder=5)
+        axs[1].plot(xx[sl], vv[sl], mk, mfc="none", mec=c, mew=MLW * 0.7,
+                    ms=11 * S, ls="none", zorder=5)
     fa, _ = nearest_profile(D3, "abds_Linf_profile", Tt)
     if fa is not None:
         A = load(fa)
@@ -508,20 +551,18 @@ for i, Tw in enumerate(want):
         axs[1].plot(A["Xhat"][ma][::kk], A["V"][ma][::kk], "o", mfc="none",
                     mec=c, mew=MLW * 0.7, ms=13 * S, ls="none", zorder=4)
 if drew:
+    # (a) keys the times and the theory; (b) keys the four solvers. Listing
+    # the solvers in both left ABDS-CN in the legend twice.
     axs[0].plot([], [], ":", color=C_TH, lw=MLW * 1.3, label=r"Eq.~(7.13)")
-    axs[0].plot([], [], "o", mfc="none", mec="k", mew=MLW * 0.7, ms=13 * S,
-                ls="none", label="ABDS-CN")
     axs[0].set_yscale("log")
     axs[0].set_xlabel(r"$\hat{X}=X-X_c$", fontsize=LAB, labelpad=LABPAD)
     axs[0].set_ylabel(r"$H$", fontsize=LAB, labelpad=LABPAD)
-    axs[0].legend(fontsize=LEG * 0.6, loc="upper right", frameon=False,
+    axs[0].legend(fontsize=LEG, loc="upper right", frameon=False,
                   handlelength=1.6, labelspacing=0.22, ncol=2)
     axs[1].plot([], [], ":", color=C_TH, lw=MLW * 1.3, label=r"Eq.~(7.14)")
-    axs[1].plot([], [], "o", mfc="none", mec="k", mew=MLW * 0.7, ms=13 * S,
-                ls="none", label="ABDS-CN")
     axs[1].set_xlabel(r"$\hat{X}=X-X_c$", fontsize=LAB, labelpad=LABPAD)
     axs[1].set_ylabel(r"$V$", fontsize=LAB, labelpad=LABPAD)
-    axs[1].legend(fontsize=LEG * 0.7, loc="upper right", frameon=False,
+    axs[1].legend(fontsize=LEG, loc="upper right", frameon=False,
                   handlelength=1.6)
     for ax in axs:
         axstyle(ax)
@@ -548,12 +589,39 @@ if t is not None:
         x, y = poslog(b["L"], b["Tc"], "fig4 Tc ABDS-CN")
         axs[0].plot(x, y, "o", mfc="none", mec=C_AB, mew=MLW * 0.7, ms=14 * S,
                     ls="none", label="ABDS-CN", zorder=4)
-    axs[1].semilogx(t["L"], t["dTc_code"], "-", color=C_TC, lw=MLW,
-                    label="TC1D-FEM", zorder=3)
+    # Verbatim dTc is read at grid points, so it is quantised in steps of
+    # 2*dT_out; with a fixed sample count over a window that grows as 3L, that
+    # quantum grows from 0.013 at L = 3 to 0.050 at L = 50 and shows as a
+    # sawtooth, including one backward step near L = 47. The sub-grid
+    # interpolated variant is drawn as the line because that structure is an
+    # artefact of the definition, not of the solver; the verbatim values are
+    # kept as the markers, since the published comparison uses them.
+    if "dTc_interp" in (t.dtype.names or ()):
+        axs[1].semilogx(t["L"], t["dTc_interp"], "-", color=C_TC, lw=MLW,
+                        label="sub-grid interpolated", zorder=3)
+        axs[1].semilogx(t["L"], t["dTc_code"], ".", color=C_TC,
+                        ms=9 * S, ls="none", label="read at grid points",
+                        zorder=3)
+    else:
+        axs[1].semilogx(t["L"], t["dTc_code"], "-", color=C_TC, lw=MLW,
+                        label="TC1D-FEM", zorder=3)
     if b is not None:
         axs[1].semilogx(b["L"], b["dTc_code"], "o", mfc="none", mec=C_AB,
-                        mew=MLW * 0.7, ms=14 * S, ls="none", label="ABDS-CN",
-                        zorder=4)
+                        mew=MLW * 0.7, ms=14 * S, ls="none", zorder=4)
+    # TC1D-MASS and TC1D-ALE reproduce the TC1D-FEM Tc at every L, so in (a)
+    # they land exactly on the line; they are shown to make the four-solver
+    # agreement visible rather than only tabulated.
+    four = load(EXTRA / "fig4_Tc_dTc_four_solvers.txt")
+    if four is not None:
+        for suf, mk, nm in (("mass", "s", "TC1D-MASS"), ("ale", "^", "TC1D-ALE")):
+            if f"Tc_{suf}" not in (four.dtype.names or ()):
+                continue
+            x, y = poslog(four["L"], four[f"Tc_{suf}"], f"fig4 Tc {nm}")
+            axs[0].plot(x, y, mk, mfc="none", mec="#009E73", mew=MLW * 0.7,
+                        ms=11 * S, ls="none", zorder=5, label=nm)
+            axs[1].semilogx(four["L"], four[f"dTc_{suf}"], mk, mfc="none",
+                            mec="#009E73", mew=MLW * 0.7, ms=11 * S,
+                            ls="none", zorder=5)
     if LIT is not None:
         da = load(LIT / "ahsan_fig5a_Tc_vs_L.csv")
         db = load(LIT / "ahsan_fig5b_dTc_vs_L.csv")
@@ -563,17 +631,16 @@ if t is not None:
                         label=r"their Fig.~5(a), digitised")
         if db is not None:
             axs[1].plot(db["L"], db["dTc"], "s", mfc="none", mec="k",
-                        mew=MLW * 0.55, ms=12 * S, ls="none", zorder=5,
-                        label=r"their Fig.~5(b), digitised")
+                        mew=MLW * 0.55, ms=12 * S, ls="none", zorder=5)
     axs[0].set_xscale("log")
     axs[0].set_yscale("log")
     axs[0].set_xlabel(r"$\mathcal{L}$", fontsize=LAB, labelpad=LABPAD)
     axs[0].set_ylabel(r"$T_c$", fontsize=LAB, labelpad=LABPAD)
-    axs[0].legend(fontsize=LEG * 0.7, loc="upper left", frameon=False,
+    axs[0].legend(fontsize=LEG, loc="upper left", frameon=False,
                   handlelength=1.6, labelspacing=0.3)
     axs[1].set_xlabel(r"$\mathcal{L}$", fontsize=LAB, labelpad=LABPAD)
     axs[1].set_ylabel(r"$\Delta T_c$", fontsize=LAB, labelpad=LABPAD)
-    axs[1].legend(fontsize=LEG * 0.7, loc="lower right", frameon=False,
+    axs[1].legend(fontsize=LEG, loc="lower right", frameon=False,
                   handlelength=1.6, labelspacing=0.3)
     for ax in axs:
         axstyle(ax)
@@ -624,7 +691,7 @@ if pfr.exists():
     ax.set_ylabel(r"normalised $|\,$ABDS-CN $-$ Octave$\,|$",
                   fontsize=LAB * 0.8, labelpad=LABPAD)
     ax.set_ylim(1e-11, 1e-6)
-    ax.legend(fontsize=LEG * 0.6, loc="upper left", frameon=False)
+    ax.legend(fontsize=LEG, loc="upper left", frameon=False)
     axstyle(ax, square=False)
     ax.tick_params(axis="x", labelsize=TICK * 0.40, pad=TICKPAD * 0.4)
     save(fig, "figA1_port_fidelity")

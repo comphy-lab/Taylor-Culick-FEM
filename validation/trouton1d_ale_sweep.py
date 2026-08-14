@@ -74,7 +74,15 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
              temporal_error: float = 1e-3, drift_tol: float = 1e-4,
              max_newton: int | None = None, gcn: bool = False,
              ale: bool = True,
-             profiles: bool = False) -> dict:
+             profiles: bool = False,
+             output_spacing: str = "geom") -> dict:
+    # Reject an unknown schedule rather than falling through to the
+    # geometric default: tc_dtc finite-differences the record with a
+    # single dT, so a typo here would hand it a geometric grid and it
+    # would return a plausible, wrong derivative without complaint.
+    if output_spacing not in ("geom", "uniform"):
+        raise ValueError(f"output_spacing must be 'geom' or 'uniform', "
+                         f"got {output_spacing!r}")
     outdir = outroot
     outdir.mkdir(parents=True, exist_ok=True)
     os.chdir(outdir)
@@ -122,7 +130,22 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
                     "affinity", "roughness", "drift_h", "drift_u",
                     "tip_cell"])
 
-        out_times = np.geomspace(t_end * 1e-4, t_end, n_outputs)
+        # Geometric by default, because the early-time laws this solver is
+        # checked against are power laws in T and a uniform grid wastes almost
+        # all of its samples on the last decade. A uniform grid is available
+        # because tc_dtc (ahsan_campaign.py) takes a single-dT finite
+        # difference of the record and therefore REQUIRES one; resampling a
+        # geometric record onto a uniform grid and then differencing it would
+        # corrupt the derivative, so the schedule has to change at source.
+        if output_spacing == "uniform":
+            out_times = np.linspace(t_end / n_outputs, t_end, n_outputs)
+        elif n_outputs == 1:
+            # geomspace(a, b, 1) returns [a], so a single geometric output
+            # would land at t_end*1e-4 -- the START of the range -- and the run
+            # would record its first instant instead of its last.
+            out_times = np.array([t_end])
+        else:
+            out_times = np.geomspace(t_end * 1e-4, t_end, n_outputs)
         prev = 0.0
         u_prev = 0.0
         xc_int = 0.0                      # trapezoidal integral of u dt
@@ -230,6 +253,10 @@ def main() -> None:
     ap.add_argument("--drift-tol", type=float, default=1e-4)
     ap.add_argument("--max-newton", type=int, default=None)
     ap.add_argument("--gcn", action="store_true")
+    ap.add_argument("--output-spacing", choices=("geom", "uniform"),
+                    default="geom",
+                    help="output-time schedule; uniform is required by "
+                         "tc_dtc, which finite-differences the record")
     ap.add_argument("--profiles", action="store_true",
                     help="also write an h/u profile per output leg")
     ap.add_argument("--no-ale", dest="ale", action="store_false",
@@ -253,7 +280,8 @@ def main() -> None:
 
     run_case(a.oh, a.tstar_end, a.nsteps, a.n_outputs, a.out.resolve(),
              a.l0, a.nelem, a.grade, a.temporal_error, a.drift_tol,
-             a.max_newton, a.gcn, a.ale, a.profiles)
+             a.max_newton, a.gcn, a.ale, a.profiles,
+             output_spacing=a.output_spacing)
 
 
 if __name__ == "__main__":

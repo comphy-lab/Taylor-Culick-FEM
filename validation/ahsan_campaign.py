@@ -209,8 +209,35 @@ def tc_dtc(T, U) -> dict:
         lo -= 1
     while hi < a.size - 1 and a[hi + 1] >= half:
         hi += 1
+    # Sub-grid variants. The definition above reads Tc and the half-maximum
+    # crossings off grid points, so dTc_code is quantised in steps of 2*dT and
+    # Tc in steps of dT. With a fixed sample count over a window that grows
+    # with L, that quantum grows with L too and shows as a sawtooth in
+    # dTc(L) -- every returned value is an exact multiple of 2*dT. These
+    # interpolated versions remove it; they are reported ALONGSIDE the verbatim
+    # ones, never in place of them, because the comparison against the
+    # published figure has to use the published definition.
+    def _cross(i_in, i_out):
+        """Linear interpolation of the T at which a crosses `half`."""
+        a_in, a_out = a[i_in], a[i_out]
+        if a_in == a_out:
+            return float(T[i_in])
+        return float(T[i_in] + (T[i_out] - T[i_in]) * (a_in - half) / (a_in - a_out))
+
+    t_lo = _cross(idx[0], idx[0] - 1) if idx[0] > 0 else float(T[idx[0]])
+    t_hi = _cross(idx[-1], idx[-1] + 1) if idx[-1] < a.size - 1 else float(T[idx[-1]])
+    # Parabola through the three highest samples for the peak location.
+    if 0 < imax < a.size - 1:
+        y0, y1, y2 = a[imax - 1], a[imax], a[imax + 1]
+        den = y0 - 2.0 * y1 + y2
+        shift = 0.5 * (y0 - y2) / den if den != 0.0 else 0.0
+        tc_interp = float(T[imax] + shift * dT)
+    else:
+        tc_interp = float(T[imax])
+
     return {"Tc": float(T[imax]), "dTc_code": 2.0 * fwhm, "fwhm": fwhm,
             "dTc_local": 2.0 * float(T[hi] - T[lo]), "peak_decel": amax,
+            "Tc_interp": tc_interp, "dTc_interp": 2.0 * (t_hi - t_lo),
             "Umax": float(np.max(U)), "T_Umax": float(T[int(np.argmax(U))])}
 
 
