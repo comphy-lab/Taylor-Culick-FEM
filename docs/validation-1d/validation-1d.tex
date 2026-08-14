@@ -28,9 +28,11 @@ retraction}
 
 \begin{abstract}
 We validate a finite-element solver for the one-dimensional (long-wave)
-retraction of a viscous liquid sheet against three independent implementations
-of the same model and against the asymptotic results of Ahsan \textit{et al.}
-\cite{ahsan2025}. Between them they use three different coordinate systems --- a Lagrangian
+retraction of a viscous liquid sheet against three further implementations of
+the same model and against the asymptotic results of Ahsan \textit{et al.}
+\cite{ahsan2025}. One of the three is independent of this work, a transcription
+of the code released with that paper; the other two are formulated here, one of
+them sharing the finite-element framework of the solver under test. Between them they use three different coordinate systems --- a Lagrangian
 mass coordinate, a front-fixed physical grid and a moving mesh --- and both
 finite-element and finite-difference discretisations. Three of them agree to
 $5.5\times10^{-5}$ in the retraction speed over the whole record; the
@@ -1122,12 +1124,6 @@ every digit that can be compared.
   transcription \AB, at several $\mathcal{L}$.}
   \label{fig:port}
 \end{figure}
-
-\section{Reproduction}
-
-The campaign comprises 72 cases. Each is recorded in a manifest with its
-parameters and the exact command that regenerates it, alongside the derived
-series used for every figure and table in this document.
 
 \bibliographystyle{unsrt}
 \bibliography{validation-1d}
