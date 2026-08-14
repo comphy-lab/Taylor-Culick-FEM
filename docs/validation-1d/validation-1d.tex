@@ -1130,7 +1130,16 @@ every digit that can be compared.
   \label{fig:port}
 \end{figure}
 
+% Tighten the inter-entry spacing so the bibliography does not spill a single
+% line onto a page of its own.
+\begingroup
+\let\oldthebibliography\thebibliography
+\renewcommand{\thebibliography}[1]{%
+  \oldthebibliography{#1}%
+  \setlength{\itemsep}{0pt plus 0.2ex}%
+  \setlength{\parskip}{0pt}}
 \bibliographystyle{unsrt}
 \bibliography{validation-1d}
+\endgroup
 
 \end{document}
