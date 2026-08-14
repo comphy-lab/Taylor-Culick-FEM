@@ -28,26 +28,32 @@ retraction}
 
 \begin{abstract}
 We validate a finite-element solver for the one-dimensional (long-wave)
-retraction of a viscous liquid sheet against an independent finite-difference
-implementation and against the asymptotic results of Ahsan \textit{et al.}
-\cite{ahsan2025}. The two solvers agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}$ in the
-retraction speed across four decades of time. Measured against the asymptotics of Ahsan \textit{et al.}, the early-time law
-and the late-time finite-sheet law are reproduced without adjustable constants,
-as are the tip-thickness relation and the crossover time $\Tc = \mathcal{L}$.
-The coefficient is shown to depend on the initial condition, so $3/2$ is the
-value for the canonical rupture state rather than a universal constant. In the
+retraction of a viscous liquid sheet against three independent implementations
+of the same model and against the asymptotic results of Ahsan \textit{et al.}
+\cite{ahsan2025}. Between them they use three different coordinate systems --- a Lagrangian
+mass coordinate, a front-fixed physical grid and a moving mesh --- and both
+finite-element and finite-difference discretisations. Three of them agree to
+$5.5\times10^{-5}$ in the retraction speed over the whole record; the
+finite-difference transcription departs by up to $4.5\times10^{-3}$, but only
+near the deceleration knee, where its static grid under-resolves the free-edge
+layer. Measured against the asymptotics, the early-time law and the late-time
+finite-sheet law are reproduced without adjustable constants, as are the
+tip-thickness relation and the large-$\mathcal{L}$ crossover time
+$\Tc \to \mathcal{L}$. In the
 late-time infinite-sheet regime Ahsan \textit{et al.}\ give the structure
-$1 - \mathrm{d}\Xc/\mathrm{d}T \sim (1+T)^{-2}$, with the prefactor left
-undetermined. For the canonical rupture state three solvers give
+$1 - \mathrm{d}\Xc/\mathrm{d}T \sim (1+T)^{-2}$ and leave the prefactor
+undetermined. We measure it. For the canonical rupture state three solvers give
 $1 - \mathrm{d}\Xc/\mathrm{d}T \to \tfrac{3}{2}(1+T)^{-2}$, stable to
-$2\times10^{-5}$ under variation of the fit window.
+$2\times10^{-5}$ under variation of the fit window. The value depends on the
+initial condition, so $3/2$ belongs to that rupture state and is not a
+universal constant of the model.
 \end{abstract}
 
 \section{The model, and where the Ohnesorge number goes}
 \label{sec:model}
 
-Everything below is a statement about one model, so it is worth setting that
-model down before the solvers that integrate it. The physical problem is a
+All four solvers integrate one model, which is set out here before them. The
+physical problem is a
 planar Newtonian sheet of density $\rho$, viscosity $\mu$ and surface tension
 $\gamma$, initially at rest, of uniform half-thickness $h_{0}$ and length
 $l_{0}$, which ruptures at one end at $t = 0$ and retracts. Following the
@@ -119,8 +125,7 @@ so capillary stress is negligible \emph{in the bulk} and survives only through
 the edge condition \eqref{eq:edge}. Surface tension still drives the whole
 problem; it simply does so from the tip rather than from the interior.
 
-Second --- and this is the point most easily got wrong --- inertia cannot be
-discarded, however viscous the liquid. Appendix~\ref{sec:stokes} shows that
+Second, inertia cannot be discarded, however viscous the liquid. Appendix~\ref{sec:stokes} shows that
 setting the left-hand side of \eqref{eq:mom} to zero and integrating against
 \eqref{eq:edge} forces a spatially uniform viscous stress, which is
 incompatible with a sheet that is initially flat and at rest. Inertia is what
@@ -348,8 +353,8 @@ and only near the deceleration knee at $T \approx \mathcal{L}$, where its
 largest departures occur. The mechanism is its static grid: the physical
 spacing is $\mathcal{L}/N$, so the $\mathcal{O}(\sqrt{T})$ edge layer is
 progressively under-resolved as $\mathcal{L}$ grows at fixed $N$. The three
-solvers that track the edge --- two on a mass coordinate, one on a moving mesh
---- bracket each other to $5.5\times10^{-5}$ through the same knee. This does
+solvers that track the edge, two on a mass coordinate and one on a moving
+mesh, bracket each other to $5.5\times10^{-5}$ through the same knee. This does
 not change the conclusion of \S\ref{sec:late}; it sharpens it, because the
 coefficient measured there now rests on three codes that are mutually converged
 rather than on one code and a reference.
@@ -381,9 +386,9 @@ $\tau_{\mathrm{vis}} = \mu H/2\gamma$. The maps are
 where $t^{*} = t/\tau_{\mathrm{vis}}$ and $M$ is the total sheet mass per unit
 width, which is the extent of the computational domain in the mass coordinate.
 The retraction speed of Ahsan \textit{et al.} \cite{ahsan2025}, $\mathrm{d}\Xc/\mathrm{d}T$, equals $u^{*} = U/V_{TC}$
-with no intervening factor. These relations are confirmed by two physical identities: their tip condition
+with no intervening factor. These relations are confirmed by two physical identities: the tip condition
 $H V_X = -1$ is the natural boundary condition of the present formulation, and
-their $H(\Xc,T) = 1+T$ is the tip-thickness relation measured here as
+$H(\Xc,T) = 1+T$ is the tip-thickness relation measured here as
 $h_{\mathrm{tip}} = 1 + t^{*}/4$.
 
 Equation~\eqref{eq:units} also shows that the present formulation represents a
@@ -480,9 +485,10 @@ Ahsan \textit{et al.} \cite{ahsan2025} give, for an infinite sheet,
   \label{eq:711}
 \end{equation}
 %
-Two points are worth stating before the comparison. The deficit is
-$(1+T)^{-2}$, not a pure power $T^{-2}$; fitting a power law in $T$ and
-comparing exponents is therefore not a test of eq.~\eqref{eq:711}. And the
+Two properties of eq.~\eqref{eq:711} govern how it can be tested. The deficit is
+$(1+T)^{-2}$, not a pure power $T^{-2}$. Fitting a power law in $T$ therefore
+tests only the leading late-time exponent, and not the unit shift or the
+prefactor, which is where the content of eq.~\eqref{eq:711} lies. The
 coefficient is described by Ahsan \textit{et al.} \cite{ahsan2025} as a numerical fit, with the
 corresponding expansion coefficient stated to remain undetermined by the
 asymptotic analysis and to depend on the history of the retraction.
@@ -496,7 +502,7 @@ asymptotic analysis and to depend on the history of the retraction.
   Circles: \AB\ at its resolved grid. Squares: \textsf{TC1D-MASS}.
   Triangles: \textsf{TC1D-ALE} at $\mathcal{L} = 200$. Dotted:
   eq.~\eqref{eq:711}. In (b) the three solvers that resolve the edge layer
-  approach $3/2$ together, while the \AB\ curves fall away in order of their
+  approach $3/2$ together, while the \AB\ curves fall away in order of
   grid spacing; the coefficient of unity is what that spacing produces, not
   what the model does.}
   \label{fig:lateV}
@@ -740,14 +746,15 @@ evaluated with the same centred difference the released code uses. Then
 so $\Tc$ is the instant of strongest deceleration and $\Delta \Tc$ is twice the
 full width of that peak at half its height. Two details of
 \eqref{eq:tcdef} are inherited deliberately rather than improved upon, because
-the object is to reproduce their figure. The first is the factor of two,
-discussed below. The second is that $T_{-}$ and $T_{+}$ are located by a
-\emph{global} scan for the first and last times at which $A \ge \tfrac{1}{2}\max A$,
+the object is to reproduce the published figure. The first is the factor of
+  two,
+discussed below. The second is that $T_{-}$ and $T_{+}$ are taken as the first
+and last \emph{sampled} times at which $A \ge \tfrac{1}{2}\max A$, found by a
+scan over the whole record rather than over the interval containing the peak,
 so any second deceleration episode elsewhere in the record would widen
 $\Delta \Tc$; the contiguous-interval variant is computed alongside and is
 identical here, confirming the peak is single.
 
-A consequence worth stating, because it is visible in the figure.
 Equation~\eqref{eq:tcdef} reads $\Tc$ and $T_{\pm}$ off output grid points with
 no sub-grid interpolation, so $\Delta \Tc$ is quantised in steps of twice the
 output spacing. The runs use a fixed number of uniform samples over a window
@@ -801,9 +808,8 @@ The four regimes examined above --- the early response of \S\ref{sec:early},
 the terminal approach $\mathcal{L} - \Xc \ll 1$ at arbitrary $\mathcal{L}$ of
 \S\ref{sec:decel}, the semi-infinite limit $\mathcal{L} \gg T \gg 1$ of
 \S\ref{sec:late}, and the crossover at finite large $\mathcal{L}$ with
-$1 < T < \mathcal{L}$ of \S\ref{sec:tc} --- all share one assumption that is
-worth stating explicitly, because it is invisible in the equations actually
-solved.
+$1 < T < \mathcal{L}$ of \S\ref{sec:tc} --- share one assumption that is absent
+from the equations actually solved.
 
 Section~\ref{sec:removeoh} showed that the Ohnesorge number is absorbed into
 the units \eqref{eq:scales}, which is what makes the curves of the preceding
@@ -814,17 +820,23 @@ Ahsan \textit{et al.} \cite{ahsan2025} bound that by $T = O(Oh_{p})$, beyond whi
 two-dimensional inertial regime governed by the full Navier--Stokes equations.
 The edge condition \eqref{eq:edge} carries a restriction of the same kind, since
 its derivation requires the elapsed time not to be asymptotically large
-relative to a viscous timescale \cite{ahsan2025}. For the analysis of a sheet of length $\mathcal{L}$
-to be uniformly valid over its whole history, one therefore needs
+relative to a viscous timescale \cite{ahsan2025}. Since the deceleration of a
+sheet of length $\mathcal{L}$ occurs at $\Tc \to \mathcal{L}$, placing that
+crossover inside the thin-film horizon requires
 %
 \begin{equation}
   \mathcal{L} \ll Oh_{p},
   \label{eq:validity}
 \end{equation}
 %
-which in the units of \eqref{eq:units} reads $M \ll 8\,Oh^{2}$. For a
-semi-infinite sheet $\mathcal{L} \to \infty$ and no finite viscosity satisfies
-\eqref{eq:validity}; what survives is the weaker horizon $T \ll Oh_{p}$.
+which in the units of \eqref{eq:units} reads $M \ll 8\,Oh^{2}$. Condition
+\eqref{eq:validity} does not make the description valid over the sheet's whole
+history: the terminal law of \S\ref{sec:decel} is a $T \to \infty$ limit of
+the reduced model and lies outside any finite horizon, so it is a statement
+about that model rather than about a real sheet at late time. What
+\eqref{eq:validity} secures is the part of the history in which the crossover
+happens. For a semi-infinite sheet $\mathcal{L} \to \infty$ and no finite
+viscosity satisfies it at all; what survives is the horizon $T \ll Oh_{p}$.
 
 This bounds what the present validation can claim, and the boundary is worth
 being precise about. The agreement documented in \S\S\ref{sec:early}--\ref{sec:tc}
@@ -858,7 +870,7 @@ present validation establishes.
 
 This appendix records the reduction used in \S\ref{sec:model}, first retaining
 inertia and then discarding it. The second case is included not because it is
-used --- it is not --- but because discarding inertia is the natural thing to
+used, but because discarding inertia is the natural thing to
 try at large Ohnesorge number, and seeing precisely how it fails is what
 justifies the visco-inertial scaling \eqref{eq:scales}. The systematic versions
 of the first derivation are due to Erneux and Davis \cite{erneux1993} and
@@ -976,13 +988,12 @@ differentiating,
 \end{equation}
 %
 so the $h_{x}h_{xx}$ terms cancel exactly and only the third derivative
-survives. This cancellation is worth carrying explicitly: keeping the depth
-integral of $\sigma_{xx}$ while forgetting that surface tension acts along an
-inclined surface leaves a spurious $\gamma h_{x}h_{xx}$ and does not reproduce
-\eqref{eq:mom}. With $2\rho h\,\mathrm{D}u_{0}/\mathrm{D}t = \partial_{x} N$
+survives. Keeping the depth integral of $\sigma_{xx}$ while omitting the
+inclination of the surface along which the tension acts leaves a spurious
+$\gamma h_{x}h_{xx}$ and does not reproduce \eqref{eq:mom}. With $2\rho h\,\mathrm{D}u_{0}/\mathrm{D}t = \partial_{x} N$
 and division by two, the result is \eqref{eq:mom} \cite{erneux1993,howell1996}.
 
-Two features deserve comment. The constant $2\gamma$ has zero gradient and so
+The constant $2\gamma$ has zero gradient and so
 exerts no bulk force; it acts only where the sheet terminates, which is why
 surface tension enters this problem through a boundary condition. And
 $\gamma h\,\partial^{3}h/\partial x^{3}$ is the only place bulk capillarity
@@ -1006,9 +1017,8 @@ in dimensional time, with \eqref{eq:edge} entering as a natural boundary term.
 (In the units of \eqref{eq:nondim} the coefficients are unity; the solvers work
 in code units with $\rho = \gamma = 1$.)
 
-One bookkeeping point, because it is a standing trap in this repository. The
-partial differential equations in \eqref{eq:masscoord} are invariant under the
-swap between half- and full-thickness conventions, but the \emph{edge constant}
+The partial differential equations in \eqref{eq:masscoord} are invariant under
+the swap between half- and full-thickness conventions; the \emph{edge constant}
 is not. In the half-thickness variables of this appendix \eqref{eq:edge} reads
 $h^{2}\partial_{m}u = -\gamma/4\mu$, whereas Table~\ref{tab:solvers}, which
 follows the solver's full-thickness convention $h_{f} = 2h$ and hence
@@ -1022,16 +1032,15 @@ Now suppose inertia is negligible, so that the two-dimensional problem is
 unsteady Stokes flow: $\partial\sigma_{ij}/\partial x_{j} = 0$ together with
 $\partial u/\partial x + \partial w/\partial y = 0$.
 
-The essential point is that this does \emph{not} make the problem steady. The
-Stokes equations are quasi-static in the sense that the momentum balance
-carries no time derivative and the velocity field at each instant is determined
-by the instantaneous geometry; but the geometry itself evolves, and it does so
-through the kinematic condition in \eqref{eq:bc}, which retains
-$\partial h/\partial t$. The time dependence therefore migrates entirely into
-the free-surface evolution. Integrating it out --- solving a sequence of steady
-Stokes problems and forgetting that the domain moves --- would discard the
-history of the retraction, which is precisely the information the late-time
-behaviour depends on.
+This does not make the problem steady. The Stokes equations are quasi-static
+in the sense that the momentum balance carries no time derivative, so the
+velocity field at each instant is fixed by the instantaneous geometry; the
+geometry itself evolves through the kinematic condition in \eqref{eq:bc},
+which retains $\partial h/\partial t$. The time dependence migrates entirely
+into the free-surface evolution, and the sheet remains history-dependent. What
+follows keeps that dependence throughout: the inconsistency demonstrated below
+arises with the domain motion fully retained, and is not a consequence of
+neglecting it.
 
 Carrying the same slender expansion through, the reduced system is
 %
@@ -1075,7 +1084,7 @@ or semi-infinite sheet the far field must remain flat and quiescent,
 $H \to 1$ and $V \to 0$; \eqref{eq:uniformthicken} instead thickens the whole
 sheet uniformly and instantaneously, no matter how distant. The purely viscous
 solution cannot satisfy the initial and far-field conditions, and the
-resolution is that inertia --- however small --- is what localises the
+resolution is that inertia, however small, is what localises the
 disturbance near the retracting edge and keeps the problem well posed
 \cite{ahsan2025}. Balancing the inertial and viscous terms of \eqref{eq:mom} is
 then not optional, and it produces the scales \eqref{eq:scales}.
@@ -1090,8 +1099,8 @@ in the axisymmetric problem of an expanding hole the viscous operator becomes
 $\partial_{r}\!\left(h r^{-1} \partial_{r}(r v_{r})\right)$, for which a purely
 viscous solution \emph{is} compatible with the initial and boundary conditions,
 and is so regardless of the value of $l_{0}/h_{0}$. The necessity of retaining
-inertia at large $\Ohp$ is therefore a property of this configuration --- of
-its reduced dimensionality --- rather than a general feature of viscous sheet
+inertia at large $\Ohp$ is therefore a property of this configuration, and of
+its reduced dimensionality, rather than a general feature of viscous sheet
 retraction.
 
 \section{Fidelity of the Ahsan \textit{et al.} \cite{ahsan2025} code transcription}

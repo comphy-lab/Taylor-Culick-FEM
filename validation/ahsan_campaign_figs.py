@@ -132,13 +132,42 @@ def load_xy(path):
 EXTRA = ROOT / "analysis" / "extra_solvers"
 
 
+class ThinnedLogFormatter(matplotlib.ticker.LogFormatterSciNotation):
+    """Label only the 2x and 5x minor decades on a log axis.
+
+    Matplotlib labels several minor decades (3x, 4x, 6x ...) when a log axis
+    spans little more than a decade. At the small default minor size they fit;
+    at a legible size they overlap into an unreadable run. Thinning the LABELS
+    rather than the ticks keeps the minor grid intact and still tells the
+    reader where they are.
+    """
+
+    def __call__(self, x, pos=None):
+        if x <= 0:
+            return ""
+        decade = x / 10.0 ** np.floor(np.log10(x))
+        if not (np.isclose(decade, 2.0, atol=0.05)
+                or np.isclose(decade, 5.0, atol=0.05)):
+            return ""
+        return super().__call__(x, pos)
+
+
 def axstyle(ax, square=True):
     for s in ax.spines.values():
         s.set_linewidth(LW)
     ax.tick_params(which="major", direction="out", width=LW, length=12 * S,
                    labelsize=TICK, pad=TICKPAD)
-    ax.tick_params(which="minor", direction="out", width=LW, length=6 * S)
+    # Minor labels carry real information on these log axes (the 3x10^0,
+    # 4x10^0 ... decade subdivisions), so they need a size of their own;
+    # without one they fall back to the rcParam default and render tiny.
+    ax.tick_params(which="minor", direction="out", width=LW, length=6 * S,
+                   labelsize=TICK * 0.80, pad=TICKPAD * 0.8)
     ax.minorticks_on()
+    for axis in (ax.xaxis, ax.yaxis):
+        if axis.axes.get_xscale() == "log" and axis is ax.xaxis:
+            axis.set_minor_formatter(ThinnedLogFormatter())
+        elif axis.axes.get_yscale() == "log" and axis is ax.yaxis:
+            axis.set_minor_formatter(ThinnedLogFormatter())
     if square:
         ax.set_box_aspect(1)
 
@@ -421,7 +450,7 @@ if a is not None and tcf is not None:
                       "fig3a deficit ABDS-CN dx=0.0025")
         axs[0].plot(x, y, "o", mfc="none", mec=C_AB, mew=MLW * 0.7, ms=14 * S,
                     ls="none", zorder=5,
-                    label=r"ABDS-CN, $\Delta X=0.0025$")
+                    label="ABDS-CN")   # grid keyed in panel (b)
     # TC1D-MASS (semi-infinite reference curve) and TC1D-ALE at L = 200. Both
     # sit on the TC1D-FEM line to 3.4e-6, so they are drawn as sparse markers.
     for src, mk, off, nm in (
@@ -440,7 +469,7 @@ if a is not None and tcf is not None:
                     ms=12 * S, ls="none", zorder=6, label=nm)
         axs[1].semilogx(txm[sl], (1 + txm[sl]) ** 2 * (1 - tym[sl]), mk,
                         mfc="none", mec="#009E73", mew=MLW * 0.7, ms=12 * S,
-                        ls="none", zorder=6, label=nm)
+                        ls="none", zorder=6)
     Tg = np.geomspace(1.0, 55, 200)
     axs[0].plot(Tg, 1.0 / (1 + Tg) ** 2, ":", color=C_TH, lw=MLW * 1.4,
                 zorder=2, label=r"Eq.~(7.11), $(1+T)^{-2}$")
@@ -456,10 +485,10 @@ if a is not None and tcf is not None:
 
     # panel (b): the coefficient, and how the ABDS-CN grid controls it
     axs[1].semilogx(T[m], (1 + T[m]) ** 2 * d[m], "-", color=C_TC, lw=MLW,
-                    zorder=5, label="TC1D-FEM")
+                    zorder=5)
     greys = ["#BBBBBB", "#999999", "#777777", "#555555"]
     for i, (dxs, lab) in enumerate(
-            (("0p02", r"$\Delta X=0.02$ (their grid)"),
+            (("0p02", r"$\Delta X=0.02$ (as released)"),
              ("0p01", r"$\Delta X=0.01$"),
              ("0p005", r"$\Delta X=0.005$"),
              ("0p0025", r"$\Delta X=0.0025$"))):
@@ -469,16 +498,22 @@ if a is not None and tcf is not None:
         mr = r["T"] >= 1.0
         axs[1].semilogx(r["T"][mr], (1 + r["T"][mr]) ** 2 * (1 - r["V"][mr]),
                         "-" if i < 3 else "--", color=C_AB, lw=MLW * 0.75,
-                        alpha=min(1.0, 0.35 + 0.2 * i), zorder=3, label="ABDS-CN, " + lab)
+                        alpha=min(1.0, 0.35 + 0.2 * i), zorder=3, label=lab)
     axs[1].axhline(1.0, color=C_TH, ls=":", lw=MLW * 1.4, zorder=2,
-                   label=r"Eq.~(7.11): $-U_{-2}=1$")
+                   )
     axs[1].axhline(1.5, color="#8B5E00", ls="--", lw=MLW * 1.1, zorder=2,
-                   label=r"$-U_{-2}=3/2$ (this work)")
+                   )
     axs[1].set_ylim(0.0, 1.8)
     axs[1].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
     axs[1].set_ylabel(r"$(1+T)^2\left(1-\mathrm{d}X_c/\mathrm{d}T\right)$",
                       fontsize=LAB * 0.85, labelpad=LABPAD)
-    axs[1].legend(fontsize=LEG, loc="lower left", frameon=False,
+    # Eight entries over a panel the curve fills. Smaller, and in the
+    # lower right, which every ABDS-CN curve has left by then.
+    # Only the grid sequence: panel (a) keys the four solvers and both
+    # theory lines, and repeating them here made an eight-entry block wide
+    # enough to sit on the curves it described.
+    axs[1].legend(fontsize=LEG * 0.8, loc="lower left", frameon=False,
+                  title="ABDS-CN grid", title_fontsize=LEG * 0.8,
                   handlelength=1.8, labelspacing=0.22)
     for ax in axs:
         axstyle(ax)
@@ -628,7 +663,7 @@ if t is not None:
         if da is not None:
             axs[0].plot(da["L"], da["Tc"], "s", mfc="none", mec="k",
                         mew=MLW * 0.55, ms=12 * S, ls="none", zorder=5,
-                        label=r"their Fig.~5(a), digitised")
+                        label="Ahsan \\textit{et al.}\n(digitised)")
         if db is not None:
             axs[1].plot(db["L"], db["dTc"], "s", mfc="none", mec="k",
                         mew=MLW * 0.55, ms=12 * S, ls="none", zorder=5)
@@ -687,7 +722,9 @@ if pfr.exists():
                      r"($\sim$9 significant digits)")
     ax.set_yscale("log")
     ax.set_xticks(xs)
-    ax.set_xticklabels(labs, rotation=90, fontsize=TICK * 0.40)
+    # 24 rotated category labels: they have to be smaller than the axis
+    # ticks to fit, but 0.40*TICK put them at ~3.8pt on the page.
+    ax.set_xticklabels(labs, rotation=90, fontsize=TICK * 0.62)
     ax.set_ylabel(r"normalised $|\,$ABDS-CN $-$ Octave$\,|$",
                   fontsize=LAB * 0.8, labelpad=LABPAD)
     ax.set_ylim(1e-11, 1e-6)
