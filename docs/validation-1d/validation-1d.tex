@@ -410,8 +410,12 @@ $\mathcal{L} = 0.1$, $1$ and $20$.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig1_earlytime.pdf}
-  \caption{Retraction speed at early time. Solid: \TC. Open symbols: \AB.
-  Dotted: \eqref{eq:diffusive}.}
+  \caption{Retraction speed at early time, all four solvers. Colour encodes
+  $\mathcal{L}$ and is keyed in (b); marker encodes the solver and is keyed in
+  (a). Solid: \TC. Circles: \AB. Squares: \textsf{TC1D-MASS}. Triangles:
+  \textsf{TC1D-ALE}. Dotted: \eqref{eq:diffusive}. The four agree to
+  $3\times10^{-4}$ over the whole window. \textsf{TC1D-MASS} markers begin at
+  $T = 10^{-3}$, the first time on its geometric output schedule.}
   \label{fig:early}
 \end{figure}
 

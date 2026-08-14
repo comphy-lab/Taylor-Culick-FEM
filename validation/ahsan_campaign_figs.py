@@ -200,6 +200,10 @@ def nearest_profile(d, prefix, Twant, suffix=""):
 
 # ===========================================================================
 print("fig1_earlytime")
+# This ~20.5in figure is scaled by ~0.32 at textwidth. The global LAB/TICK/LEG
+# put labels at 9.6pt and the legend at 4.5pt on the page, well under the 11pt
+# body; these match figure 2 instead.
+TICK1, LEG1, LAB1 = 30, 27, 32
 fig, axs = plt.subplots(1, 2, figsize=(2 * PANEL + 2.5, PANEL))
 for i, (L, lab) in enumerate(((0.1, r"$\mathcal{L}=0.1$"),
                               (1.0, r"$\mathcal{L}=1$"),
@@ -209,15 +213,35 @@ for i, (L, lab) in enumerate(((0.1, r"$\mathcal{L}=0.1$"),
         continue
     c = CYC[i]
     x, y = poslog(a["T"], a["V_TC1D_FEM"], f"fig1 V TC1D-FEM L={L:g}")
-    axs[0].plot(x, y, "-", color=c, lw=MLW, label=f"TC1D-FEM, {lab}", zorder=3)
+    # As in figure 2: colour keys L (in panel b), line style keys the solver
+    # (in panel a). Labelling both here would need 13 entries for four solvers.
+    axs[0].plot(x, y, "-", color=c, lw=MLW, zorder=3)
     k = max(1, len(a["T"]) // 22)
     x, y = poslog(a["T"][::k], a["V_ABDS_CN"][::k], f"fig1 V ABDS-CN L={L:g}")
     axs[0].plot(x, y, "o", mfc="none", mec=c, mew=MLW * 0.7,
-                ms=13 * S, ls="none", zorder=4,
-                label=f"ABDS-CN, {lab}")
-    axs[1].semilogx(a["T"], 100 * a["rel_TC1D_FEM"], "-", color=c, lw=MLW)
+                ms=13 * S, ls="none", zorder=4)
+    axs[1].semilogx(a["T"], 100 * a["rel_TC1D_FEM"], "-", color=c, lw=MLW,
+                    label=lab)
     axs[1].semilogx(a["T"][::k], 100 * a["rel_ABDS_CN"][::k], "o", mfc="none",
                     mec=c, mew=MLW * 0.7, ms=13 * S, ls="none")
+    theory = 2.0 * np.sqrt(a["T"] / np.pi)
+    for fname, mk, off in ((f"fig1_massfin_L{L:g}.txt", "s", 5),
+                           (f"fig1_ale_L{L:g}.txt", "^", 11)):
+        tx, ty = load_xy(EXTRA / fname)
+        if tx is None:
+            continue
+        mm = (tx >= np.min(a["T"])) & (tx <= np.max(a["T"]))
+        tx, ty = tx[mm], ty[mm]
+        if tx.size < 3:
+            continue
+        step = max(1, len(tx) // 12)
+        sl = slice(off % step, None, step)
+        xx, yy = poslog(tx[sl], ty[sl], f"fig1 {fname}")
+        axs[0].plot(xx, yy, mk, mfc="none", mec=c, mew=MLW * 0.7,
+                    ms=11 * S, ls="none", zorder=5)
+        rel = ty / (2.0 * np.sqrt(tx / np.pi)) - 1.0
+        axs[1].semilogx(tx[sl], 100 * rel[sl], mk, mfc="none", mec=c,
+                        mew=MLW * 0.7, ms=11 * S, ls="none", zorder=5)
 # Eq.~(12) is ``eq:diffusive`` in docs/validation-1d/validation-1d.tex.
 Tt = np.geomspace(1e-4, 1.0, 200)
 axs[0].plot(Tt, 2 * np.sqrt(Tt / np.pi), ":", color=C_TH, lw=MLW * 1.2,
@@ -226,18 +250,38 @@ axs[0].set_xscale("log")
 axs[0].set_yscale("log")
 axs[0].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
 axs[0].set_ylabel(r"$\mathrm{d}X_c/\mathrm{d}T$", fontsize=LAB, labelpad=LABPAD)
-axs[0].legend(fontsize=LEG * 0.62, loc="upper left", frameon=False,
+axs[0].plot([], [], "-", color="k", lw=MLW, label="TC1D-FEM")
+axs[0].plot([], [], "o", mfc="none", mec="k", mew=MLW * 0.7, ms=13 * S,
+            ls="none", label="ABDS-CN")
+axs[0].plot([], [], "s", mfc="none", mec="k", mew=MLW * 0.7, ms=11 * S,
+            ls="none", label="TC1D-MASS")
+axs[0].plot([], [], "^", mfc="none", mec="k", mew=MLW * 0.7, ms=11 * S,
+            ls="none", label="TC1D-ALE")
+axs[0].legend(fontsize=LEG1, loc="upper left", frameon=False,
               handlelength=1.6, labelspacing=0.25)
 axs[1].axhline(0.0, color=C_TH, ls=":", lw=MLW * 1.2)
 axs[1].set_ylim(-30, 5)
 axs[1].set_xlabel(r"$T$", fontsize=LAB, labelpad=LABPAD)
-axs[1].set_ylabel(r"deviation from Eq.~(12)  [\%]", fontsize=LAB * 0.8,
+axs[1].set_ylabel(r"deviation from Eq.~(12)  [\%]", fontsize=LAB1 * 0.8,
                   labelpad=LABPAD)
+# The colour key lives here, since panel (a) keys the solvers. Lower left is
+# the only corner all three curves leave empty: they all start at 0 on the
+# left and fall off the bottom on the right.
+axs[1].legend(fontsize=LEG1, loc="lower left", frameon=False,
+              handlelength=1.6, labelspacing=0.25)
 for ax in axs:
     axstyle(ax)
-axs[0].text(0.95, 0.06, r"(a)", transform=axs[0].transAxes, fontsize=LAB,
+    ax.tick_params(which="major", labelsize=TICK1, pad=TICKPAD)
+axs[0].set_xlabel(r"$T$", fontsize=LAB1, labelpad=LABPAD)
+axs[0].set_ylabel(r"$\mathrm{d}X_c/\mathrm{d}T$", fontsize=LAB1,
+                  labelpad=LABPAD)
+axs[1].set_xlabel(r"$T$", fontsize=LAB1, labelpad=LABPAD)
+axs[0].text(0.95, 0.06, r"(a)", transform=axs[0].transAxes, fontsize=LAB1,
             ha="right")
-axs[1].text(0.05, 0.06, r"(b)", transform=axs[1].transAxes, fontsize=LAB)
+# Upper right: the colour legend now occupies the lower left, and every curve
+# has fallen off the bottom of the panel by the time it reaches the right edge.
+axs[1].text(0.95, 0.90, r"(b)", transform=axs[1].transAxes, fontsize=LAB1,
+            ha="right")
 save(fig, "fig1_earlytime")
 
 
@@ -248,7 +292,11 @@ print("fig2_deceleration")
 # and sits on (a)'s right spine; use a one-line ratio instead.
 fig, axs = plt.subplots(1, 2, figsize=(2 * PANEL + 5.0, PANEL),
                         gridspec_kw={"wspace": 0.50})
-TICK2, LEG2, LAB2 = 42, 40, 40
+# Included at textwidth this ~23in figure is scaled by ~0.28, so these
+# nominal sizes land at ~10.2pt (labels) and ~9.5pt (ticks) on the page,
+# against an 11pt body. The previous 42/40/40 rendered ticks at 11.9pt,
+# larger than the surrounding text.
+TICK2, LEG2, LAB2 = 33, 35, 36
 for i, L in enumerate((1.0, 5.0, 20.0, 40.0)):
     a = load(ROOT / "analysis" / f"sec2_L{L:g}.csv")
     if a is None:
