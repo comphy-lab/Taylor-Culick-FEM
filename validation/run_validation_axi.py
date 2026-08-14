@@ -27,6 +27,31 @@ here rather than assuming a shared convention):
              a correctness diagnostic to carry alongside the physics, not a
              physical output in its own right
 
+LARGE ``--r0`` (the planar-reduction cases, R0 ~ 100): this driver passes no
+``newton_solver_tolerance``, and must not start doing so. The tolerance is
+set problem-side, per timestep, in
+``AxisymmetricTaylorCulickProblem.actions_before_newton_solve``, because the
+residual this problem assembles carries ``2*pi*r`` from the measure and
+``1/dt`` from the mass rows, so the floor a direct solve can reach grows with
+both. Before that existed, ``--r0 100`` died inside the FIRST output interval
+with Newton residuals oscillating at O(0.1) and the adaptive controller
+halving ``dt`` to underflow -- which reads like a startstep or formulation
+pathology and is neither: the first attempt converges quadratically to a
+~3.5e-8 floor and is rejected only against an absolute 1e-8 bound. The full
+evidence (an R0 = 1/10/30/100 scan on one translated mesh, the floor-vs-dt
+law, and the FD-Jacobian, uniform-mesh, iteration-budget, line-search, BDF1
+and startstep controls that rule out the alternatives) is in that module's
+docstring.
+
+One consequence is specific to the loop below: because each output row is its
+own ``run()`` call, its last sub-step is whatever remains to land exactly on
+``t``, and that leftover is occasionally a tiny sliver whose Newton floor is
+correspondingly high. That is a property of this schedule, not of the
+physics, and it is why the tolerance had to be made ``dt``-aware rather than
+merely R-scaled: at coarse resolution, ``--r0 100`` cleared the first output
+row under a fixed R-scaled tolerance and then died on a 3.4e-7 sliver in the
+second.
+
 Conventions carried over unchanged from run_validation.py / savva_bush.py:
 
     Oh_SB    = mu / sqrt(2 H rho gamma)        (ours omits the sqrt(2))
@@ -193,6 +218,11 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
             # floored at 1e-6 rather than 1e-9) converges immediately at the
             # same first output time -- the planar driver's floor was simply
             # too aggressive for this ALE geometry's extra mesh-position dofs.
+            # That is an R0 = 1 statement. The superficially identical abort at
+            # large --r0 is NOT a startstep problem (a larger startstep only
+            # buys a factor 1.7 of margin there); it is the absolute-Newton-
+            # tolerance scaling handled in axisymmetric_lab.py -- see this
+            # module's docstring and that module's TRAP section.
             problem.run(t, startstep=max((t - prev) * 1e-2, 1e-6),
                         maxstep=max(t - prev, 1e-9), temporal_error=temporal_error)
             now = float(problem.get_current_time(as_float=True))
