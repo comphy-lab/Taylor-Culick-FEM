@@ -940,8 +940,22 @@ less than that.
 
 ## 6.8 How large must `Oh` be for a 2D sheet to behave like the long-wave model?
 
-The reduced model removes `Oh` from the problem by measuring time on the
-visco-inertial scale. That is a legitimate step only while the thin-film
+The reduced model removes `Oh` from the problem by measuring length and time on
+the visco-inertial scales `l_I = 4h₀·Oh_p` and `t_I = 4µh₀/γ`. It is the
+*length* scale that carries the Ohnesorge number: once `x` is measured in units
+of `l_I`, the governing equations contain no parameter at all, and `Oh` survives
+only in the sheet length `L = l₀/l_I`. §1 of `validation-1d/validation-1d.tex`
+sets this out, and its Appendix A derives the model from the two-dimensional
+equations.
+
+Note that this is *not* an inertialess reduction, a point worth stating because
+it is easy to assume otherwise at large `Oh`. Dropping inertia outright forces a
+spatially uniform viscous stress, which no initially flat sheet can satisfy;
+inertia is what localises the disturbance near the edge. What "large `Oh`" buys
+is that capillary stress leaves the bulk and acts only through the edge
+condition.
+
+Scaling `Oh` out is legitimate only while the thin-film
 description holds, and Ahsan et al. bound its validity by `T = O(Oh_p)`. Every
 regime their analysis treats — `T ≪ 1`; the terminal approach `L − X_c ≪ 1` at
 arbitrary `L`; the semi-infinite limit `L ≫ T ≫ 1`; and the crossovers at finite

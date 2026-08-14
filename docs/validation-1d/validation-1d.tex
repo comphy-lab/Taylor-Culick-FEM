@@ -16,6 +16,7 @@
 \newcommand{\AB}{\textsf{ABDS-CN}}
 \newcommand{\Xc}{X_{c}}
 \newcommand{\Tc}{T_{c}}
+\newcommand{\Ohp}{\mathrm{Oh}_{p}}
 
 \title{Validation of a finite-element solver for one-dimensional viscous sheet
 retraction}
@@ -29,7 +30,7 @@ retraction}
 We validate a finite-element solver for the one-dimensional (long-wave)
 retraction of a viscous liquid sheet against an independent finite-difference
 implementation and against the asymptotic results of Ahsan \textit{et al.}
-(arXiv:2507.04603). The two solvers share no code, no discretisation and no
+\cite{ahsan2025}. The two solvers share no code, no discretisation and no
 coordinate system, and agree to between $2\times 10^{-5}$ and $1.3\times 10^{-4}$ in the
 retraction speed across four decades of time. Measured against the published
 asymptotics, the early-time law and the late-time finite-sheet law are
@@ -44,6 +45,184 @@ The coefficient is shown to depend on the initial condition, so $3/2$ is the
 value for the canonical rupture state rather than a universal constant.
 \end{abstract}
 
+\section{The model, and where the Ohnesorge number goes}
+\label{sec:model}
+
+Everything below is a statement about one model, so it is worth setting that
+model down before the solvers that integrate it. The physical problem is a
+planar Newtonian sheet of density $\rho$, viscosity $\mu$ and surface tension
+$\gamma$, initially at rest, of uniform half-thickness $h_{0}$ and length
+$l_{0}$, which ruptures at one end at $t = 0$ and retracts. Following the
+convention of the reference work, $h(x,t)$ denotes the \emph{half}-thickness,
+so the liquid occupies $-h < y < h$; \S\ref{sec:units} maps this onto the
+full-thickness convention used by the solver under validation.
+
+\subsection{The thin-film equations in the viscous limit}
+
+For a slender sheet, $|\partial h/\partial x| \ll 1$, the leading-order flow is
+purely axial and uniform across the thickness, $\mathbf{v} \approx v(x,t)
+\hat{e}_{x}$. This is the Trouton approximation \cite{trouton1906}, and the
+uniformity is a consequence of \emph{both} surfaces being traction-free; it is
+what distinguishes a free sheet from a film on a substrate, where no-slip
+imposes a profile across the layer instead. Appendix~\ref{sec:derivation}
+carries out the reduction from the two-dimensional equations. The result is a
+continuity equation and a momentum equation \cite{erneux1993,howell1996},
+%
+\begin{align}
+  \frac{\partial h}{\partial t} + \frac{\partial}{\partial x}(v h) &= 0,
+  \label{eq:mass} \\[2pt]
+  \underbrace{\rho h \frac{\mathrm{D} v}{\mathrm{D} t}}_{\text{inertial}}
+    &= \underbrace{4\mu \frac{\partial}{\partial x}
+       \left( h \frac{\partial v}{\partial x} \right)}_{\text{viscous}}
+     + \underbrace{\gamma h \frac{\partial^{3} h}{\partial x^{3}}}_{\text{capillary}},
+  \label{eq:mom}
+\end{align}
+%
+with $\mathrm{D}/\mathrm{D}t = \partial_{t} + v \partial_{x}$. The factor $4\mu$
+is the planar extensional viscosity; the dimensionless Trouton ratio for
+this geometry is $4$.
+
+The retraction is driven at the free edge. A circular tip cannot be imposed
+there, because $h \propto (x_{c}-x)^{1/2}$ gives a slope that diverges as
+$x \to x_{c}$ and so violates the approximation that produced
+\eqref{eq:mass}--\eqref{eq:mom}. Instead the reference work splits the domain
+into a long thin-film region and a small tip region of extent $\mathcal{O}(h)$
+in which the full two-dimensional Stokes problem is solved, and matches the two
+\cite{ahsan2025,hinch1991}. The matching returns an effective boundary
+condition for the thin-film region,
+%
+\begin{equation}
+  4\mu\, h(x_{c},t)\, \frac{\partial v}{\partial x}(x_{c},t) = -\gamma,
+  \label{eq:edge}
+\end{equation}
+%
+a balance between the viscous force transmitted down the sheet and the capillary
+force on the tip. Its derivation assumes the tip region is inertialess, which
+requires $\Ohp \gg 1$ and, separately, that the elapsed time is not
+asymptotically large compared with a viscous timescale --- a restriction that
+matters for \S\ref{sec:validity} and is treated in Appendix~A of
+\cite{ahsan2025}.
+
+Two consequences follow at large Ohnesorge number
+$\Ohp = \mu/\sqrt{\rho h_{0}\gamma}$, which is built on the half-thickness and
+is the reference work's Ohnesorge number; \S\ref{sec:units} relates it to the
+full-thickness $Oh$ used elsewhere here, $\Ohp = 2\,Oh$. First, \eqref{eq:edge} fixes the
+scale of the flow: with $h^{*}$, $v^{*}$ and $l^{*}$ the characteristic
+thickness, velocity and axial length, $4\mu h^{*} v^{*}/l^{*} \sim \gamma$.
+Comparing the two right-hand terms of \eqref{eq:mom} then gives
+%
+\begin{equation}
+  \frac{\text{capillary}}{\text{viscous}} \sim \left(\frac{h^{*}}{l^{*}}\right)^{2} \ll 1 ,
+  \label{eq:capsmall}
+\end{equation}
+%
+so capillary stress is negligible \emph{in the bulk} and survives only through
+the edge condition \eqref{eq:edge}. Surface tension still drives the whole
+problem; it simply does so from the tip rather than from the interior.
+
+Second --- and this is the point most easily got wrong --- inertia cannot be
+discarded, however viscous the liquid. Appendix~\ref{sec:stokes} shows that
+setting the left-hand side of \eqref{eq:mom} to zero and integrating against
+\eqref{eq:edge} forces a spatially uniform viscous stress, which is
+incompatible with a sheet that is initially flat and at rest. Inertia is what
+keeps the problem well posed, so ``large $\Ohp$'' here means
+\emph{capillary stresses leave the bulk}, not \emph{Stokes flow}.
+
+\subsection{The normalisation that removes the Ohnesorge number}
+\label{sec:removeoh}
+
+Retaining the inertial and viscous terms of \eqref{eq:mom} and balancing them
+against \eqref{eq:edge} yields the visco-inertial length and time
+\cite{ahsan2025},
+%
+\begin{equation}
+  l_{I} = 4\mu\sqrt{\frac{h_{0}}{\rho\gamma}} = 4 h_{0}\,\Ohp,
+  \qquad
+  t_{I} = \frac{4\mu h_{0}}{\gamma},
+  \qquad
+  \frac{l_{I}}{t_{I}} = u_{TC} = \sqrt{\frac{\gamma}{\rho h_{0}}} .
+  \label{eq:scales}
+\end{equation}
+%
+Note that $l_{I} \gg h_{0}$ precisely because $\Ohp \gg 1$, so the
+inertial adjustment occurs over distances long compared with the thickness and
+the thin-film approximation remains self-consistent. Scaling on these,
+%
+\begin{equation}
+  X = \frac{x}{l_{I}}, \quad T = \frac{t}{t_{I}}, \quad
+  \Xc = \frac{x_{c}}{l_{I}}, \quad H = \frac{h}{h_{0}}, \quad
+  V = \frac{v}{u_{TC}},
+  \label{eq:nondim}
+\end{equation}
+%
+and dropping the capillary term by \eqref{eq:capsmall}, the model becomes
+%
+\begin{equation}
+  \frac{\partial H}{\partial T} + \frac{\partial}{\partial X}(HV) = 0,
+  \qquad
+  H\frac{\mathrm{D}V}{\mathrm{D}T}
+    = \frac{\partial}{\partial X}\left( H \frac{\partial V}{\partial X}\right),
+  \label{eq:nd}
+\end{equation}
+%
+with $H(\Xc,T)\,\partial_{X}V(\Xc,T) = -1$ and $V(\Xc,T) = \mathrm{d}\Xc/\mathrm{d}T$
+at the free edge, $V = \partial_{X} H = 0$ at the fixed end, and
+$H(X,0) = 1$, $V(X,0) = 0$, $\Xc(0) = 0$. The domain is
+$\Xc(T) < X < \mathcal{L}$, so this is a free-boundary problem.
+
+\emph{No parameter appears in \eqref{eq:nd}.} Viscosity has been absorbed into
+the units, and with it the Ohnesorge number: $\mu$ enters both $l_{I}$ and
+$t_{I}$, and the combination that survives in \eqref{eq:nd} is dimensionless
+and equal to one. This is why a single solution serves every viscosity, and it
+is the reason the curves in this document carry no $\mathrm{Oh}$ label.
+
+The Ohnesorge number does not vanish from the problem, however. It reappears in
+exactly one place --- the length of the sheet measured in the new unit,
+%
+\begin{equation}
+  \mathcal{L} = \frac{l_{0}}{l_{I}} = \frac{l_{0}}{4 h_{0}\,\Ohp} ,
+  \label{eq:Lgroup}
+\end{equation}
+%
+which enters only through the position of the fixed end. $\mathcal{L}$ is the
+single dimensionless group of the problem. Because $l_{0}/h_{0}$ and
+$\Ohp$ are both large and independent, $\mathcal{L}$ may take any value,
+and the semi-infinite sheet is the limit $\mathcal{L} \to \infty$.
+
+\subsection{The exact collapse, and what it is not}
+\label{sec:collapse}
+
+The system \eqref{eq:nd} admits a conserved quantity: $V + H^{-1}\partial_{X}H$
+is material, and the rest state fixes its value at zero, so
+\cite{ahsan2025}
+%
+\begin{equation}
+  V = -\frac{1}{H}\frac{\partial H}{\partial X} .
+  \label{eq:invariant}
+\end{equation}
+%
+Substituting \eqref{eq:invariant} into the continuity equation reduces the
+coupled pair to a single linear equation for the thickness,
+%
+\begin{equation}
+  \frac{\partial H}{\partial T} = \frac{\partial^{2} H}{\partial X^{2}},
+  \label{eq:heat}
+\end{equation}
+%
+with the edge condition becoming $\mathrm{D}H/\mathrm{D}T(\Xc,T) = 1$, hence
+$H(\Xc,T) = 1 + T$: the tip thickens linearly in time.
+
+It is worth being explicit about what \eqref{eq:heat} is, because the phrase
+``reduced model'' invites a misreading. The heat equation is an \emph{exact}
+consequence of \eqref{eq:nd}, obtained by integrating the conservation law
+\eqref{eq:invariant}; it is not the inertialess limit of anything. Inertia has
+not been dropped --- it has been integrated out. A solver that advances
+\eqref{eq:heat} and a solver that advances \eqref{eq:nd} directly are therefore
+solving the same physical model by different routes, and agreement between them
+tests discretisation rather than modelling. That distinction is what makes the
+comparisons in this document meaningful, and it is recorded in
+Table~\ref{tab:solvers}.
+
 \section{Scope and nomenclature}
 
 Two solvers are compared throughout.
@@ -55,7 +234,8 @@ piecewise-linear elements, integrated with BDF2. The free edge is a material
 point of the mesh, so no interface tracking or remeshing is required.
 
 \textbf{\AB} is an independent reference: a transcription into Python of the
-finite-difference solver released with Ahsan \textit{et al.}, which advances a
+finite-difference solver released with Ahsan \textit{et al.} \cite{ahsan2025},
+which advances a
 Crank--Nicolson discretisation on a static grid with Picard iteration and a
 tridiagonal solve. Appendix~\ref{sec:port} establishes that the transcription
 reproduces the original code to the precision at which the original can be
@@ -66,7 +246,7 @@ to test one result independently, and \textsf{TC1D-ALE}, which solves the same
 model as \TC\ but on a moving mesh in the physical coordinate.
 Table~\ref{tab:solvers} sets out how the four differ.
 
-The asymptotic predictions of Ahsan \textit{et al.} are treated here as
+The asymptotic predictions of Ahsan \textit{et al.} \cite{ahsan2025} are treated here as
 hypotheses to be tested, and are plotted as such: they are not used to
 normalise or calibrate any solver.
 
@@ -78,10 +258,10 @@ normalise or calibrate any solver.
    & \TC & \AB & \textsf{TC1D-MASS} & \textsf{TC1D-ALE} \\
   \midrule
   Model solved
-    & full momentum balance, inertia retained
-    & reduced form, inertia eliminated
-    & reduced form, inertia eliminated
-    & full momentum balance, inertia retained \\[2pt]
+    & \eqref{eq:nd} directly, inertia explicit
+    & \eqref{eq:heat}, inertia integrated out
+    & \eqref{eq:heat} recast, inertia integrated out
+    & \eqref{eq:nd} directly, inertia explicit \\[2pt]
   Equations
     & $h_T = -h^2 u_m$, \newline $u_T = 4\mu\,\partial_m(h^2 u_m)$
     & front-fixed heat equation of their Appendix~D
@@ -113,7 +293,7 @@ normalise or calibrate any solver.
     & tridiagonal (Thomas)
     & symbolic Jacobian, sparse direct \\[2pt]
   Edge condition
-    & natural: $h^2 u_m = -1/2\mu$ enters as a weak boundary term
+    & natural: $h^{2} u_{m} = -1/(2\mu)$ enters as a weak boundary term
     & $\sqrt{\;}$ tip shape imposed on the last two nodes
     & essential: $H(0,T) = 1+T$
     & natural closure plus kinematic $\dot{x}_c = u(x_c)$ by Lagrange multiplier \\[2pt]
@@ -129,10 +309,13 @@ normalise or calibrate any solver.
     & $u = 0$, $h$ free \\
   \bottomrule
   \end{tabular}
-  \caption{The four solvers. Any two share at most one of the major choices.
-  \TC\ and \textsf{TC1D-MASS} share the mass coordinate but differ in the model
-  integrated, in the number of unknowns, and in whether the edge condition is
-  natural or essential; \AB\ works in a physical coordinate and so covers the
+  \caption{The four solvers. All four integrate the same physical model,
+  \S\ref{sec:model}; they differ in which equivalent form of it they advance and
+  in every discretisation choice, so agreement between them tests numerics
+  rather than modelling. Any two share at most one of the major choices.
+  \TC\ and \textsf{TC1D-MASS} share the mass coordinate but differ in the
+  equation integrated, in the number of unknowns, and in whether the edge
+  condition is natural or essential; \AB\ works in a physical coordinate and so covers the
   case those two do not. \textsf{TC1D-ALE} shares the model and the framework
   with \TC\ but places the sheet in the physical coordinate on a moving mesh,
   which is the discretisation the two-dimensional solver uses; it therefore
@@ -141,12 +324,13 @@ normalise or calibrate any solver.
 \end{table}
 
 \subsection{Units}
+\label{sec:units}
 
-Ahsan \textit{et al.} scale on the half-thickness $h_0 = H/2$, with
+Ahsan \textit{et al.} \cite{ahsan2025} scale on the half-thickness $h_0 = H/2$, with
 $u_{TC} = \sqrt{\gamma/\rho h_0}$, Ohnesorge number
 $Oh_{p} = \mu/\sqrt{\rho h_0 \gamma}$ and visco-inertial time
 $t_I = 4\mu h_0/\gamma$. This work scales on the full thickness $H$, with the
-Savva--Bush Ohnesorge number $Oh$ and viscous time
+Savva--Bush \cite{savva2009} Ohnesorge number $Oh$ and viscous time
 $\tau_{\mathrm{vis}} = \mu H/2\gamma$. The maps are
 %
 \begin{equation}
@@ -506,14 +690,16 @@ $1 < T < \mathcal{L}$ of \S\ref{sec:tc} --- all share one assumption that is
 worth stating explicitly, because it is invisible in the equations actually
 solved.
 
-The long-wave reduction carries no Ohnesorge number. That is what makes the
-curves of the preceding sections universal, and it is the reason a single
-solution serves every viscosity. The number has not disappeared from the
-physics, however: it has been absorbed into the time unit. The reduction
-remains faithful to the underlying flow only while the thin-film description
-does, and the reference work bounds that by $T = O(Oh_{p})$, beyond which it
-identifies a two-dimensional inertial regime governed by the full
-Navier--Stokes equations. For the analysis of a sheet of length $\mathcal{L}$
+Section~\ref{sec:removeoh} showed that the Ohnesorge number is absorbed into
+the units \eqref{eq:scales}, which is what makes the curves of the preceding
+sections universal and lets a single solution serve every viscosity. It does
+not follow that the results hold at every viscosity. The reduction remains
+faithful to the underlying flow only while the thin-film description does, and
+the reference work bounds that by $T = O(Oh_{p})$, beyond which it identifies a
+two-dimensional inertial regime governed by the full Navier--Stokes equations.
+The edge condition \eqref{eq:edge} carries a restriction of the same kind, since
+its derivation requires the elapsed time not to be asymptotically large
+relative to a viscous timescale \cite{ahsan2025}. For the analysis of a sheet of length $\mathcal{L}$
 to be uniformly valid over its whole history, one therefore needs
 %
 \begin{equation}
@@ -552,6 +738,235 @@ present validation establishes.
 
 \appendix
 
+\section{From the two-dimensional equations to the thin-film model}
+\label{sec:derivation}
+
+This appendix records the reduction used in \S\ref{sec:model}, first retaining
+inertia and then discarding it. The second case is included not because it is
+used --- it is not --- but because discarding inertia is the natural thing to
+try at large Ohnesorge number, and seeing precisely how it fails is what
+justifies the visco-inertial scaling \eqref{eq:scales}. The systematic versions
+of the first derivation are due to Erneux and Davis \cite{erneux1993} and
+Howell \cite{howell1996}, following Trouton \cite{trouton1906}; the treatment
+here is condensed to the terms that matter for the retraction problem. The
+matched-asymptotic treatment of the tip region is that of the reference work
+\cite{ahsan2025}.
+
+\subsection{The two-dimensional problem}
+
+Take a Newtonian liquid of constant $\rho$ and $\mu$, occupying
+$-h(x,t) < y < h(x,t)$, with velocity $(u,w)$ and pressure $p$, surrounded by a
+passive ambient at zero stress. The sheet is symmetric about $y = 0$, so $u$ is
+even and $w$ odd in $y$. The equations are
+%
+\begin{equation}
+  \frac{\partial u}{\partial x} + \frac{\partial w}{\partial y} = 0,
+  \qquad
+  \rho \frac{\mathrm{D} u_{i}}{\mathrm{D} t}
+    = \frac{\partial \sigma_{ij}}{\partial x_{j}},
+  \qquad
+  \sigma_{ij} = -p\,\delta_{ij} + \mu\left(
+    \frac{\partial u_{i}}{\partial x_{j}} + \frac{\partial u_{j}}{\partial x_{i}}
+  \right),
+  \label{eq:ns}
+\end{equation}
+%
+subject on $y = h(x,t)$ to the kinematic condition and the stress condition
+%
+\begin{equation}
+  \frac{\partial h}{\partial t} + u \frac{\partial h}{\partial x} = w,
+  \qquad
+  \sigma_{ij} n_{j} = -\gamma \kappa\, n_{i},
+  \label{eq:bc}
+\end{equation}
+%
+with $\mathbf{n}$ the outward unit normal and $\kappa = \nabla\!\cdot\!\mathbf{n}$
+the curvature, positive on a bulge. The sign is fixed by the static check: for a
+quiescent drop $\sigma_{ij}n_{j} = -p\,n_{i}$, so \eqref{eq:bc} gives
+$p = \gamma\kappa > 0$ inside, as it must be.
+
+\subsection{Reduction with arbitrary inertia}
+\label{sec:inertial}
+
+Let $\varepsilon = h_{0}/l_{0} \ll 1$ and scale $x \sim l_{0}$, $y \sim h_{0}$,
+$u \sim U$, $w \sim \varepsilon U$, so that continuity balances. Expanding in
+$\varepsilon^{2}$,
+%
+\begin{equation}
+  u = u_{0}(x,t) + \varepsilon^{2} u_{2}(x,y,t) + \dots,
+  \qquad
+  p = p_{0}(x,t) + \dots
+\end{equation}
+%
+The transverse momentum equation gives $\partial p/\partial y = \mathcal{O}(\varepsilon^{2})$,
+so the pressure is uniform across the thickness at leading order. The axial
+equation at leading order reduces to $\mu\,\partial^{2}u_{0}/\partial y^{2} = 0$,
+and the tangential stress condition on \emph{both} free surfaces forces the
+constant of integration to vanish, leaving $u_{0}$ independent of $y$. This is
+the step that distinguishes a free sheet from a film on a substrate: with two
+traction-free surfaces the leading-order profile is plug flow, whereas no-slip
+on a wall would give a parabolic profile and a lubrication model instead.
+Continuity then fixes the transverse velocity, $w = -y\,\partial_{x}u_{0}$.
+
+The normal stress condition on $y = h$ balances the transverse deviatoric
+stress and the pressure against the Laplace pressure. For a weakly curved
+surface the curvature is $\kappa = -\partial^{2}h/\partial x^{2}$, positive on a
+bulge, so with a passive ambient at zero pressure
+%
+\begin{equation}
+  p_{0} = -2\mu \frac{\partial u_{0}}{\partial x}
+          - \gamma \frac{\partial^{2} h}{\partial x^{2}}
+          + \mathcal{O}(\varepsilon^{2}),
+\end{equation}
+%
+where the first term follows from $\partial w/\partial y = -\partial u_{0}/\partial x$.
+The axial stress carried by the sheet is then
+%
+\begin{equation}
+  \sigma_{xx} = -p_{0} + 2\mu \frac{\partial u_{0}}{\partial x}
+  = 4\mu \frac{\partial u_{0}}{\partial x}
+    + \gamma \frac{\partial^{2} h}{\partial x^{2}} .
+  \label{eq:sigmaxx}
+\end{equation}
+%
+The factor $4\mu$ is the planar extensional viscosity of Trouton
+\cite{trouton1906}: a factor $2$ from the deviatoric stress and a further
+factor $2$ because the transverse contraction $\partial_{y}w = -\partial_{x}u_{0}$
+feeds back through the pressure.
+
+Integrating continuity across the thickness and applying the kinematic
+condition at $y = \pm h$ gives \eqref{eq:mass} exactly. For momentum, balance
+the forces on a slice. The mass per unit length is $2\rho h$, and the total
+axial force transmitted across a section is the depth integral of
+\eqref{eq:sigmaxx} plus the axial projection of the tension carried by the two
+surfaces,
+%
+\begin{equation}
+  N = \int_{-h}^{h}\!\sigma_{xx}\,\mathrm{d}y
+      + \frac{2\gamma}{\sqrt{1 + h_{x}^{2}}}
+    = 8\mu\, h \frac{\partial u_{0}}{\partial x}
+      + 2\gamma h \frac{\partial^{2} h}{\partial x^{2}}
+      + 2\gamma - \gamma h_{x}^{2} + \dots,
+  \label{eq:N}
+\end{equation}
+%
+the projection factor being the only place the surface slope enters at this
+order. The two capillary contributions in \eqref{eq:N} do not act separately:
+differentiating,
+%
+\begin{equation}
+  \frac{\partial}{\partial x}\left( 2\gamma h\, h_{xx} - \gamma h_{x}^{2}\right)
+  = 2\gamma h_{x} h_{xx} + 2\gamma h\, h_{xxx} - 2\gamma h_{x} h_{xx}
+  = 2\gamma h\, h_{xxx},
+\end{equation}
+%
+so the $h_{x}h_{xx}$ terms cancel exactly and only the third derivative
+survives. This cancellation is worth carrying explicitly: keeping the depth
+integral of $\sigma_{xx}$ while forgetting that surface tension acts along an
+inclined surface leaves a spurious $\gamma h_{x}h_{xx}$ and does not reproduce
+\eqref{eq:mom}. With $2\rho h\,\mathrm{D}u_{0}/\mathrm{D}t = \partial_{x} N$
+and division by two, the result is \eqref{eq:mom} \cite{erneux1993,howell1996}.
+
+Two features deserve comment. The constant $2\gamma$ has zero gradient and so
+exerts no bulk force; it acts only where the sheet terminates, which is why
+surface tension enters this problem through a boundary condition. And
+$\gamma h\,\partial^{3}h/\partial x^{3}$ is the only place bulk capillarity
+survives, which by \eqref{eq:capsmall} is negligible once $\Ohp \gg 1$.
+
+Equations \eqref{eq:mass} and \eqref{eq:mom} are what \TC\ and
+\textsf{TC1D-ALE} integrate. In the Lagrangian mass coordinate $m$ with
+$\mathrm{d}m = h\,\mathrm{d}x$, so that $\partial_{x} = h\,\partial_{m}$ and the
+free edge is a material point, they take the form quoted in
+Table~\ref{tab:solvers},
+%
+\begin{equation}
+  \left.\frac{\partial h}{\partial T}\right|_{m} = -h^{2}\frac{\partial u}{\partial m},
+  \qquad
+  \frac{\partial u}{\partial T}
+    = 4\mu \frac{\partial}{\partial m}\left( h^{2} \frac{\partial u}{\partial m}\right),
+\end{equation}
+%
+with \eqref{eq:edge} entering as a natural boundary term.
+
+\subsection{Reduction with vanishing inertia, and why it fails here}
+\label{sec:stokes}
+
+Now suppose inertia is negligible, so that the two-dimensional problem is
+unsteady Stokes flow: $\partial\sigma_{ij}/\partial x_{j} = 0$ together with
+$\partial u/\partial x + \partial w/\partial y = 0$.
+
+The essential point is that this does \emph{not} make the problem steady. The
+Stokes equations are quasi-static in the sense that the momentum balance
+carries no time derivative and the velocity field at each instant is determined
+by the instantaneous geometry; but the geometry itself evolves, and it does so
+through the kinematic condition in \eqref{eq:bc}, which retains
+$\partial h/\partial t$. The time dependence therefore migrates entirely into
+the free-surface evolution. Integrating it out --- solving a sequence of steady
+Stokes problems and forgetting that the domain moves --- would discard the
+history of the retraction, which is precisely the information the late-time
+behaviour depends on.
+
+Carrying the same slender expansion through, the reduced system is
+%
+\begin{equation}
+  \underbrace{\frac{\partial h}{\partial t}
+    + \frac{\partial}{\partial x}(v h) = 0}_{\text{unchanged; time retained}},
+  \qquad
+  \underbrace{0 = 4\mu \frac{\partial}{\partial x}
+      \left( h \frac{\partial v}{\partial x} \right)
+      + \gamma h \frac{\partial^{3} h}{\partial x^{3}}}_{\text{quasi-static}} .
+  \label{eq:stokes1d}
+\end{equation}
+%
+Neglecting the capillary term by \eqref{eq:capsmall} and integrating the
+momentum equation once in $x$, the viscous stress $4\mu h\,\partial_{x}v$ is
+independent of $x$. Its value is set by the edge condition \eqref{eq:edge},
+giving
+%
+\begin{equation}
+  4\mu\, h \frac{\partial v}{\partial x} = -\gamma
+  \qquad \text{for all } x .
+  \label{eq:uniformstress}
+\end{equation}
+%
+Combining \eqref{eq:uniformstress} with the Lagrangian form of \eqref{eq:mass},
+$\mathrm{D}h/\mathrm{D}t = -h\,\partial_{x}v$, gives
+%
+\begin{equation}
+  \frac{\mathrm{D} h}{\mathrm{D} t} = \frac{\gamma}{4\mu}
+  \qquad \Longleftrightarrow \qquad
+  \frac{\mathrm{D} H}{\mathrm{D} T} = 1
+  \quad \text{everywhere},
+  \label{eq:uniformthicken}
+\end{equation}
+%
+so \emph{every} material element thickens at the same constant rate and
+$H = 1 + T$ throughout the sheet.
+
+This is inconsistent. The sheet is initially flat and at rest, and for a long
+or semi-infinite sheet the far field must remain flat and quiescent,
+$H \to 1$ and $V \to 0$; \eqref{eq:uniformthicken} instead thickens the whole
+sheet uniformly and instantaneously, no matter how distant. The purely viscous
+solution cannot satisfy the initial and far-field conditions, and the
+resolution is that inertia --- however small --- is what localises the
+disturbance near the retracting edge and keeps the problem well posed
+\cite{ahsan2025}. Balancing the inertial and viscous terms of \eqref{eq:mom} is
+then not optional, and it produces the scales \eqref{eq:scales}.
+
+Contrast \eqref{eq:uniformthicken} with the correct result of
+\S\ref{sec:collapse}: there $H(\Xc,T) = 1+T$ holds \emph{at the tip}, with $H$
+relaxing to unity away from it, and that spatial structure is exactly what
+inertia supplies.
+
+The failure is specific to the planar geometry. As noted in \cite{ahsan2025},
+in the axisymmetric problem of an expanding hole the viscous operator becomes
+$\partial_{r}\!\left(h r^{-1} \partial_{r}(r v_{r})\right)$, for which a purely
+viscous solution \emph{is} compatible with the initial and boundary conditions.
+The necessity of retaining inertia at large $\mathrm{Oh}$ is therefore a
+property of this configuration rather than a general feature of viscous sheet
+retraction, and it is worth stating plainly because the opposite assumption is
+easy to carry over from the axisymmetric literature.
+
 \section{Fidelity of the reference transcription}
 \label{sec:port}
 
@@ -577,5 +992,68 @@ every digit that can be compared.
 The campaign comprises 72 cases. Each is recorded in a manifest with its
 parameters and the exact command that regenerates it, alongside the derived
 series used for every figure and table in this document.
+
+\begin{thebibliography}{99}
+
+\bibitem{taylor1959}
+G.~I. Taylor,
+\newblock The dynamics of thin sheets of fluid. III. Disintegration of fluid
+  sheets,
+\newblock \emph{Proc. R. Soc. Lond. A} \textbf{253}, 313 (1959).
+
+\bibitem{culick1960}
+F.~E.~C. Culick,
+\newblock Comments on a ruptured soap film,
+\newblock \emph{J. Appl. Phys.} \textbf{31}, 1128 (1960).
+
+\bibitem{trouton1906}
+F.~T. Trouton,
+\newblock On the coefficient of viscous traction and its relation to that of
+  viscosity,
+\newblock \emph{Proc. R. Soc. Lond. A} \textbf{77}, 426 (1906).
+
+\bibitem{erneux1993}
+T.~Erneux and S.~H. Davis,
+\newblock Nonlinear rupture of free films,
+\newblock \emph{Phys. Fluids A} \textbf{5}, 1117 (1993).
+
+\bibitem{howell1996}
+P.~D. Howell,
+\newblock Models for thin viscous sheets,
+\newblock \emph{Eur. J. Appl. Math.} \textbf{7}, 321 (1996).
+
+\bibitem{hinch1991}
+E.~J. Hinch,
+\newblock \emph{Perturbation Methods},
+\newblock Cambridge University Press, Cambridge (1991).
+
+\bibitem{brenner1999}
+M.~P. Brenner and D.~Gueyffier,
+\newblock On the bursting of viscous films,
+\newblock \emph{Phys. Fluids} \textbf{11}, 737 (1999).
+
+\bibitem{savva2009}
+N.~Savva and J.~W.~M. Bush,
+\newblock Viscous sheet retraction,
+\newblock \emph{J. Fluid Mech.} \textbf{626}, 211 (2009).
+
+\bibitem{deka2020}
+H.~Deka and J.-L. Pierson,
+\newblock Revisiting the Taylor--Culick approximation. II. Retraction of a
+  viscous sheet,
+\newblock \emph{Phys. Rev. Fluids} \textbf{5}, 093603 (2020).
+
+\bibitem{munro2015}
+J.~P. Munro, C.~R. Anthony, O.~A. Basaran and J.~R. Lister,
+\newblock Thin-sheet flow between coalescing bubbles,
+\newblock \emph{J. Fluid Mech.} \textbf{773}, R3 (2015).
+
+\bibitem{ahsan2025}
+T.~Ahsan, R.~Brand\~{a}o, B.~Davidovitch and H.~A. Stone,
+\newblock Retraction of a viscous liquid sheet,
+\newblock arXiv:2507.04603 (2025).
+\newblock Released code: \url{https://github.com/taosifahsan/Thin-Film-Simulations}.
+
+\end{thebibliography}
 
 \end{document}
