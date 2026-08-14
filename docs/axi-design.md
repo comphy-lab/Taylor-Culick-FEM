@@ -77,36 +77,62 @@ flag exists to *measure* its importance against the DNS, not to assert it.
 ## Mass-coordinate form (axi TC1D-FEM)
 
 Per-radian mass coordinate `dm = r h dr`, tip at `m = 0`, fixed domain
-`[0, M]`. New relative to planar: the radius `r(m,t)` must be carried as an
-unknown, because it appears in every residual. This removes the planar
-pathology where a carried `x` had dead Jacobian columns — here `r` is fully
-coupled. With `d/dr = r h d/dm`:
+`[0, M]`. New relative to planar: the radial metric must be carried as an
+unknown, because it appears in every residual. Carry `w = r^2/2` on C1 (not
+`r` itself), constrained by
 
-    r_t|_m = u                          (pointwise ODE, C1 field)
+    w_m = 1/h        (both sides cell-constant under the staggering,
+                      so the discrete radial map is EXACTLY consistent
+                      with the discrete mass distribution, cell by cell)
+
+with `r = sqrt(2w)`, plus one global scalar `R(t)`:
+
+    partial_t(R) - u|_{m=0} = 0        (point contribution at the tip)
+    w|_{m=0} - R^2/2 = 0               (EnforcedBC — the value depends on
+                                        the unknown R; never DirichletBC)
+
+This supersedes evolving `r_t = u` pointwise, which is only consistent in
+the continuum. Governing residuals (`rho = gamma_surface = 1`):
+
     h_t|_m = -h (r h u_m + u/r)         (pointwise in h: D0 survives)
     u_t|_m = d/dm (r h sigma_rr) - sigma_thth / r
     sigma_rr   = 2 mu (2 r h u_m + u/r)
     sigma_thth = 2 mu (r h u_m + 2 u/r)
 
-Weak form (test v on C1, measure stays cartesian in `m`; the metric is
-explicit):
+Momentum weak form (test v on C1, cartesian measure in `m`, metric
+explicit), expanded so that the ONLY reciprocal is one guarded `1/r^2`
+(implementing `sigma_thth/r` literally introduces a spurious `1/r` that
+cancels analytically but not numerically):
 
-    int u_t v dm = - int (r h sigma_rr) v_m dm - int (sigma_thth/r) v dm
-                   + 2 R v(0)          [tip: -(r h sigma_rr)|_0 = +2R]
+    int u_t v dm
+    + int [ 4 mu r^2 h^2 u_m + 2 mu h u ] v_m dm     [flux slot]
+    + int [ 2 mu h u_m + 4 mu u / r^2 ] v dm          [hoop remainder]
+    - 2 R v(0)  = 0                                   [tip pull, nonlinear in R]
 
-Far field `m = M`: `u = 0` Dirichlet (h has no nodal value on D0, as in
-planar). Consistency identity: `r_m = 1/(r h)` follows from mass
-conservation; enforcing `r_t = u` and checking `r_m - 1/(rh)` drift is a
-free domain diagnostic, as is total mass (exact by construction).
+Tip term sign convention matches planar `TipFlux` (value -2, natural
+boundary term of the flux slot), multiplied by the unknown `R`. Far field
+`m = M`: `u = 0` Dirichlet (h has no nodal value on D0, as in planar).
 
-Staggering carries over untouched: `h` on D0, `u` on C1, `r` on C1, no
-midside dofs anywhere. `with_capillarity=True` stays rejected for D0 `h`.
+Staggering carries over untouched: `h` on D0, `u` and `w` on C1, no midside
+dofs anywhere. `with_capillarity=True` stays rejected for D0 `h`; if
+capillarity is ever wanted in axi, switch to `f = h^2` at the same time
+(S&B A1; both curvature terms bounded at the tip, azimuthal part -> 1/r).
 
-Initial condition: `h = 1`, `u = 0`, `r(m) = sqrt(R0^2 + 2m)` (the exact map
-for uniform h). This is the canonical-rupture analogue; `R0 = 0` is excluded
-because the hole then has zero edge circumference and the `u/r`, `1/r` terms
-are singular at `m = 0` — a point hole does not open in this model
-(Taylor & Michael 1973 closure aside; S&B section 3 opens with this).
+Initial condition: `h = 1`, `u = 0`, `w(m) = (R0^2 + 2m)/2` (exact map for
+uniform h), `R = R0`. This is the canonical-rupture analogue; `R0 = 0` is
+excluded on four independent grounds: S&B's early solution R(t) = R0
+exp(t/2 tau_vis) is linear in R0 (a zero hole never opens); the mass map
+degenerates (dr/dm -> infinity); the edge force and rim mass both vanish
+(0/0 tip acceleration); and the azimuthal curvature 1/R diverges — below
+the Taylor & Michael (1973) threshold at R ~ h0 the hole closes. Production
+1D runs should use `R0 >= 5` (S&B's own smallest is 5H); `R0 ~ 1` sits at
+~2x the closing threshold and is reserved for the DNS comparison, where the
+volume-matched radius below applies.
+
+Conditioning watch: the flux slot carries `r^2` (a 1e4-1e6 spread across a
+long domain), on top of the planar `1/dm^2` stiffness. If Newton degrades
+as R grows, scale the momentum test space or non-dimensionalise `r` by
+`R(t)` before reaching for smaller timesteps.
 
 ## ALE physical-coordinate form (axi TC1D-ALE)
 
@@ -129,24 +155,56 @@ safe (no midside nodes on a linear line mesh).
 
 ## Internal exact checks (tests)
 
-1. **Planar-limit regression**: axi with `R0 ~ 100` must track the planar
+1. **Metric consistency**: `w_m - 1/h = 0` per cell at machine precision
+   (the structural advantage of the staggering — if this drifts, the
+   discretisation of `w` is wrong).
+2. **Planar-limit regression**: axi with `R0 ~ 100` must track the planar
    solver over an early window with `O(1/R0)` error; the error must fall
    linearly in `1/R0` across `R0 = {50, 100, 200}`. (Do not run `R0 = 1e6`:
    the `r^2 h^2 u_m` flux then carries ~1e12 scale factors; conditioning,
    not physics, would be measured.)
-2. **Tip-thickness identity**: the closure implies, exactly,
+3. **Tip-thickness identity**: the closure implies, exactly,
    `dh_tip/dt = 1/(2 mu) - h_tip u_tip / (2 r_tip)`; planar limit recovers
-   `h_tip = 1 + t*/4`. Integrable alongside the run and comparable to the
-   solver's own tip state — the axi analogue of the `h_tip_exact` column.
-3. **Mass conservation**: exact in `m`; measured drift in ALE.
-4. **High-Oh early growth**: `R(t) = R0 exp(t / (2 tau_vis))` (S&B 3.30) at
-   `Oh_SB >> 1`, `t <~ tau_vis` — measured exponential rate.
-5. **Self-similarity**: matched `Oh h0/R0` at high Oh collapses `u*(t*)`
+   `h_tip = 1 + t*/4`, and the late-time axi limit is `h_tip -> t*/6`
+   (azimuthal stretching thins the rim by exactly 2/3 relative to planar —
+   the headline non-planar prediction, derived independently twice).
+   Integrate the ODE alongside the run using the solver's own `u_tip`,
+   `r_tip`; this is the axi analogue of the `h_tip_exact` column.
+4. **Mass conservation**: exact in `m`; measured drift in ALE
+   (`2 pi int h r dr`).
+5. **Dissipation positivity**: the depth-averaged dissipation density
+   `2 mu h [u_r^2 + (u/r)^2 + (u_r + u/r)^2]` is a positive-definite form
+   (eigenvalues 1/2, 3/2); assemble it as a diagnostic — any hoop-term sign
+   error makes it go negative immediately.
+6. **High-Oh early growth**: `R(t) = R0 exp(t / (2 tau_vis))` (S&B 3.30) at
+   `Oh_SB >> 1` — valid only in the small-hole regime
+   `R0* = R0/(Oh_SB h0) << 1`. The opposite regime `R0* >> 1` follows the
+   planar `sqrt(t*/pi)` start instead; note the Basilisk-matching DNS point
+   (`Oh_SB = 0.035`, `R0 = 1`) has `R0* = 28` — neither closed form is a
+   clean target there, so use `R0*` as a regime label when choosing tests.
+7. **Self-similarity**: matched `Oh h0/R0` at high Oh collapses `u*(t*)`
    (S&B section 3.3.1).
-6. **Late-time**: `dR/dt -> sqrt(2)` with a correction decaying in `h0/R`;
-   the planar late-time coefficients (3/2, `sqrt(Oh/t*)` law, 0.98073) are
-   planar-only and are NOT axi targets (`docs/validation-1d`, and the axi
-   system admits a purely viscous solution).
+8. **Late-time**: `dR/dt -> sqrt(2)` with a correction decaying like
+   `ell/R`, `ell = max(h0, Oh_SB h0)` — i.e. `1/t`, which DOMINATES the
+   planar `t^-2` deficit. Test `(1 - u*) R -> const`. The planar late-time
+   coefficients (3/2, `sqrt(Oh/t*)` law, 0.98073) are planar-only and must
+   never be fitted to axi data.
+
+## 1D-vs-DNS comparison protocol
+
+The DNS IC (cap of radius 1/2 on a hole of radius `R0 = 1`) carries cap
+volume the clean-hole 1D IC does not. Initialise the 1D solver at the
+volume-matched radius
+
+    R_eq^2 = r_s^2 - pi a r_s / 2 + 2 a^2 / 3,   r_s = R0 + a,  a = 1/2
+    (R0 = 1  ->  R_eq = 1.1129)
+
+and compare `dR/dt` rather than `R` (the 1D tip is the matched edge; the
+DNS hole radius is the innermost interface point — an irreducible O(h/2)
+offset). Expect the 1D model to miss the first few `tau_vis` at `R0 ~ 1`:
+the azimuthal curvature is an O(1) fraction of the edge force there and the
+default closure omits it — that is precisely what the optional
+`-2 + pi h_tip/(2R)` tip-correction flag exists to measure.
 
 ## 2D DNS (lab-frame axisymmetric ALE on a graded annulus)
 
