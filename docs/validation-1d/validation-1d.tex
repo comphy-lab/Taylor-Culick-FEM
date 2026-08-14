@@ -656,8 +656,15 @@ $T$.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig3_latetime_profiles.pdf}
-  \caption{Thickness and velocity profiles at large $\mathcal{L}$. Solid: \TC.
-  Open symbols: \AB. Dotted: eqs.~(7.13) and~(7.14) of Ahsan \textit{et al.} \cite{ahsan2025}}
+  \caption{Thickness and velocity profiles at large $\mathcal{L}$, all four
+  solvers. Colour encodes $T$ and is keyed in (a); marker encodes the solver
+  and is keyed in (b). Solid: \TC. Circles: \AB. Squares:
+  \textsf{TC1D-MASS}, mapped out of the mass coordinate by
+  $\hat{X} = \int_{0}^{m}\mathrm{d}m'/H$ and $V = -\partial_{m}H$, both exact
+  relations of the model. Triangles: \textsf{TC1D-ALE}. Dotted:
+  eqs.~(7.13) and~(7.14) of Ahsan \textit{et al.} \cite{ahsan2025}. The added
+  solvers were run to land on the exact output times of the reference profiles
+  and agree with them to $2\times10^{-4}$ in both $H$ and $V$.}
   \label{fig:profiles}
 \end{figure}
 
@@ -708,17 +715,71 @@ the finite-sheet law of \S\ref{sec:decel}. Ahsan \textit{et al.} \cite{ahsan2025
 crossover time $\Tc$ and its duration $\Delta \Tc$ as functions of
 $\mathcal{L}$, with $\Tc = \mathcal{L}$ for large $\mathcal{L}$.
 
-Neither quantity is defined in closed form in that paper, so an operational
-definition is adopted here and applied identically to both solvers; it is
-stated with the figure. Figure~\ref{fig:tc} compares both solvers against
-values digitised from Ahsan \textit{et al.} \cite{ahsan2025}
+Neither quantity is given in closed form in that paper, but both are defined
+unambiguously by the released code, and it is that definition which is used
+here and applied identically to every solver. Write the deceleration as the
+non-negative part of the edge acceleration,
+%
+\begin{equation}
+  A(T) = \max\!\left(-\frac{\mathrm{d}^{2}\Xc}{\mathrm{d}T^{2}},\; 0\right)
+       = \max\!\left(-\frac{\mathrm{d}V}{\mathrm{d}T},\; 0\right),
+  \label{eq:decelfun}
+\end{equation}
+%
+evaluated with the same centred difference the released code uses. Then
+%
+\begin{equation}
+  \Tc = \arg\max_{T} A(T),
+  \qquad
+  \Delta \Tc = 2\left( T_{+} - T_{-}\right),
+  \qquad
+  T_{\pm} : A(T_{\pm}) = \tfrac{1}{2}\max_{T} A ,
+  \label{eq:tcdef}
+\end{equation}
+%
+so $\Tc$ is the instant of strongest deceleration and $\Delta \Tc$ is twice the
+full width of that peak at half its height. Two details of
+\eqref{eq:tcdef} are inherited deliberately rather than improved upon, because
+the object is to reproduce their figure. The first is the factor of two,
+discussed below. The second is that $T_{-}$ and $T_{+}$ are located by a
+\emph{global} scan for the first and last times at which $A \ge \tfrac{1}{2}\max A$,
+so any second deceleration episode elsewhere in the record would widen
+$\Delta \Tc$; the contiguous-interval variant is computed alongside and is
+identical here, confirming the peak is single.
+
+A consequence worth stating, because it is visible in the figure.
+Equation~\eqref{eq:tcdef} reads $\Tc$ and $T_{\pm}$ off output grid points with
+no sub-grid interpolation, so $\Delta \Tc$ is quantised in steps of twice the
+output spacing. The runs use a fixed number of uniform samples over a window
+that grows with $\mathcal{L}$, so that quantum grows too --- from $0.013$ at
+$\mathcal{L} = 3$ to $0.050$ at $\mathcal{L} = 50$, or about $1.7\%$ of
+$\Delta \Tc$. Every value returned by \eqref{eq:tcdef} is an exact multiple of
+it. This is the origin of the small sawtooth in figure~\ref{fig:tc}(b) at large
+$\mathcal{L}$, including the single backward step near $\mathcal{L} = 47$; it
+is a property of the definition and the sampling, not of the solvers, and it
+affects both codes identically because both are read on the same grid. The
+smooth curve in figure~\ref{fig:tc}(b) locates $T_{\pm}$ by linear
+interpolation of $A$ between the bracketing samples and the peak by a parabola
+through its three highest, which removes the quantisation; the values quoted
+below are the unmodified \eqref{eq:tcdef} ones, so that the comparison with the
+digitised data is like for like.
+
+Figure~\ref{fig:tc} compares the solvers against values digitised from
+Ahsan \textit{et al.} \cite{ahsan2025}.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig4_Tc_vs_L.pdf}
   \caption{Crossover time $\Tc$ and duration $\Delta \Tc$ against
-  $\mathcal{L}$. Solid: \TC. Open circles: \AB. Open squares: values
-  digitised from Ahsan \textit{et al.} \cite{ahsan2025}.}
+  $\mathcal{L}$, by the definition \eqref{eq:tcdef}. Solid: \TC. Circles:
+  \AB. Green squares: \textsf{TC1D-MASS}. Triangles: \textsf{TC1D-ALE}.
+  Black squares: values digitised from Ahsan \textit{et al.}
+  \cite{ahsan2025}. The three solvers that track the free edge return the same
+  $\Tc$ at every $\mathcal{L}$. In (b) the line is $\Delta \Tc$ with the
+  half-maximum crossings located by sub-grid interpolation and the dots are the
+  same quantity read at grid points, as \eqref{eq:tcdef} does; the dots are
+  quantised in steps of twice the output spacing, and it is that quantisation,
+  not the solvers, which produces the scatter at large $\mathcal{L}$.}
   \label{fig:tc}
 \end{figure}
 
