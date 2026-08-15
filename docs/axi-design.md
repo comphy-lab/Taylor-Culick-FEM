@@ -292,3 +292,41 @@ Sibling files, not flags (the planar classes already carry `staggered`,
 `TipFlux`/`TipClosure` are imported from the planar modules (geometry-
 independent constants). Output tables keep the planar column prefix and
 append new columns (`compare_1d_2d.py` indexes positionally).
+
+## Formulation audits (2026-08-15)
+
+Two independent source-level audits, run after the validation gates passed.
+
+**Against Basilisk's `axi.h` (the metric-formulation reference).** Every
+axisymmetric term Basilisk adds by hand — the `lambda` hoop-viscosity patch
+in `viscosity.h`, the three separate `#if AXI` azimuthal-curvature additions
+in `curvature.h`, the bespoke `tau_qq` hoop-stress field and its momentum
+forcing in `log-conform.h` — corresponds one-to-one to terms pyoomph's
+single generic tensor layer produces automatically (`vector_gradient`'s
+`u_r/r` entry, `tensor_divergence`'s `(T_rr - T_thth)/r`, the surface
+divergence). No physics is missing on the FEM side; when the viscoelastic
+extension comes, the polymeric hoop stress arrives through `div(T)` with no
+bespoke module. Candidates for the residual 1.6-1.8% offset against the
+2024 Basilisk curves, ranked, all on the VOF side: height-function
+curvature noise plus the explicit `Delta/2` floor on the azimuthal
+curvature; the hoop viscous term being an acknowledged after-the-fact
+solver patch; quadtree coarse/fine transitions at the rim; and the
+two-phase ambient (`rho2 = 1e-3`) our single-phase formulation excludes.
+The metric factors themselves are exact and ruled out.
+
+**Against oomph-lib's hand-written axisymmetric elements (the FEM ground
+truth).** The C residuals pyoomph generated for `axisymmetric_lab.py` are
+term-for-term identical to `AxisymmetricNavierStokesEquations` (momentum
+including the `u_r/r^2` hoop viscous and `p psi/r` hoop pressure terms,
+continuity r-factors, ALE corrections, `Gamma = 1` stress-divergence form)
+and to the axisymmetric `FluidInterfaceElement` (surface-divergence
+capillary term with the `+psi/r` azimuthal-curvature injection), up to a
+global 2*pi and a global sign. The omitted end-of-interface co-normal term
+`[sigma m.v]` lands entirely in pinned equations at both ends — discarded
+correctly, not lost. The setup matches pyoomph's canonical
+`rayleigh_plateau.py` moving-mesh example, minus `AxisymmetryBC`, which the
+annulus structurally never needs. The absolute Newton tolerance behind the
+`eps R^2/dt` floor (hit three times in this strand) is inherited from
+oomph-lib's `Problem::newton_solve` — no relative test exists upstream
+either — so the per-step retune in `actions_before_newton_solve` is the
+correct local remedy and a relative-tolerance option is upstream work.
