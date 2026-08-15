@@ -229,6 +229,30 @@ class AnnularSheetMesh(GmshTemplate):
     ``_mesh_size_callback`` is therefore the primary grading mechanism; the
     explicit ``size=`` on the far corner points is a redundant first-pass
     pin, consistent with the callback's coarse asymptote there.
+
+    ``resolution`` DOES control the near-tip element size -- this was
+    doubted after an earlier investigation reported near-flat total element
+    counts (3283/3461/3601) across ``resolution`` = 0.06/0.04/0.03. Bounded
+    remeshing checks (2026-08) traced that to the measurement, not the mesh:
+    the minimum interface edge length at the tip tracks ``resolution``
+    almost exactly (both on the initial mesh and after an explicit
+    ``force_remesh()`` -- ratio 2.00-2.01 for a 2x change in ``resolution``,
+    matching the requested ratio to within 0.5%), and the near-tip element
+    *count* (``r < R0 + 2``) scales as ``~2.3x`` for a 2x ``resolution``
+    decrease, matching an independent analytic integral of the linear
+    grading law over that window almost exactly -- sub-quadratic because
+    that window only spans a third of ``mesh_grading_length`` (6.0), so most
+    of it is already well into the transition toward ``far_resolution``, by
+    design. What DOES go visibly flat is the *total* element count once
+    ``R_out`` is large relative to ``mesh_grading_length``: at ``R0 = 1``,
+    ``R_out = 131.4`` the same three ``resolution`` values give totals
+    2627/2772/2887 (+5.5%, +4.1%) -- reproducing the earlier report's shape
+    almost digit-for-digit (+5.4%, +4.0%) -- because the correctly
+    resolution-independent far film then vastly outnumbers the near-tip
+    elements it is being compared against. Counting total elements in a
+    large-``R_out`` mesh is therefore not a valid diagnostic for whether
+    ``resolution`` is doing its job; the interface's minimum edge length
+    near the tip is.
     """
 
     def define_geometry(self):
