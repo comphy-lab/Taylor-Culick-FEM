@@ -763,10 +763,29 @@ plotted short. The two solvers agree to $7.3\times10^{-6}$ over the range where
 both are available (\S\ref{sec:verif-ale}), so nothing in the conclusion turns
 on it.
 
-\todo{the comparison against the digitised axisymmetric figures of Savva \&
-Bush; no digitised axisymmetric curves exist in this repository yet, and the
-self-similar collapse at matched $\Ohsb\,h_{0}/R_{0}$ is the natural test to
-build on them}
+Two of Savva \& Bush's axisymmetric curves were digitised with the same
+calibrated workflow as the planar figures (\texttt{validation/data/}, with
+per-figure calibration overlays): their figure~16 inset curve~C
+($\mathrm{Oh}_{\rm SB} = 1$, $R_{0} = 50H$ --- at this Ohnesorge number their
+viscous and inertial clocks coincide, so the comparison is
+convention-proof) and figure~10 curve~G ($\mathrm{Oh}_{\rm SB} = 10$,
+$R_{0} = 50H$, viscous clock). Against the mass-coordinate solver at matched
+$R_{0}$: at $\mathrm{Oh}_{\rm SB} = 1$ over $t^{*} \in [2, 10]$ the default
+closure agrees to $1.9\%$ rms ($u^{*}(10) = 0.9133$ against their $0.8985$),
+and the toroidal tip correction \emph{improves} this to $1.3\%$ rms --- their
+model resolves the smoothed rim cap with full capillarity, which is exactly
+the physics the correction reinstates at leading order. At
+$\mathrm{Oh}_{\rm SB} = 10$ over $t^{*} \in [2, 34.5]$ the agreement is
+$3.5\%$ rms with the deviation concentrated in the early transient
+(where their published sensitivity to the initial tip-smoothing parameter
+$\alpha$ is strongest, their figure~14) and narrowing to $1.8\%$ by
+$t^{*} = 34.5$. Digitisation accuracy is $0.15$--$0.3\%$ of full scale. A
+third digitised curve (their figure~16 main panel, curve~D) is retained in
+the data directory but excluded here: its time-axis normalisation in the
+moderate-Oh section could not be established beyond doubt, and a comparison
+built on a guessed clock would be worse than none. The self-similar collapse
+at matched $\Ohsb\,h_{0}/R_{0}$ remains the natural test to build on these
+curves.
 
 \section{Four numerical traps}
 \label{sec:traps}
