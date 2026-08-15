@@ -253,9 +253,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--oh", type=float, nargs="*", default=None,
                     help="Ohnesorge numbers in the Savva-Bush convention")
-    ap.add_argument("--results", type=Path,
-                    default=Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
-                                 "newtonian-lab-frame-pyoomph/validation"))
+    # No committed default. Run outputs live outside this repository, on
+    # whichever compute host is being used, and a hard-coded absolute path
+    # bakes one machine's home directory into a shared repository -- it is
+    # wrong for every other reader and silently writes to a stale location
+    # for the one it was written on. Required, as in the figure drivers.
+    ap.add_argument("--results", type=Path, required=True,
+                    help="directory to write case output into, on the compute "
+                         "host's run root (not inside this repository)")
     ap.add_argument("--resolution", type=float, default=0.06)
     ap.add_argument("--r0", type=float, default=R0_DEFAULT,
                     help="initial hole radius, in h0")

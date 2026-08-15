@@ -205,9 +205,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--oh", type=float, nargs="*", default=None,
                     help="Ohnesorge numbers in the Savva-Bush convention")
-    ap.add_argument("--results", type=Path,
-                    default=Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
-                                 "newtonian-comoving-window-pyoomph/validation"))
+    # No committed default; see the note in run_validation_axi.py.
+    ap.add_argument("--results", type=Path, required=True,
+                    help="directory to write case output into, on the compute "
+                         "host's run root (not inside this repository)")
     ap.add_argument("--resolution", type=float, default=0.06)
     ap.add_argument("--r0", type=float, default=X0_DEFAULT, dest="x0",
                     help="initial hole radius X0, in h0 (spelled --r0 to match "
