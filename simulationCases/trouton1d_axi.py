@@ -271,6 +271,11 @@ class Trouton1DAxiProblem(Problem):
         self.with_capillarity = False
         #: The first geometric correction to the tip closure, default off.
         self.tip_azimuthal_correction = False
+        #: Absolute Newton tolerance when the roundoff floor permits it, and
+        #: the safety factor on the measured floor eps*(R0^2+2M)/dt; see
+        #: actions_before_newton_solve.
+        self.newton_tolerance_base = 1e-8
+        self.newton_tolerance_safety = 10.0
         # BDF2, as planar. If it ever misbehaves at start-up do NOT shrink
         # startstep: variable-step BDF2 started from a first-order step is
         # asymptotically the trapezoidal rule and loses L-stability, so the
@@ -302,6 +307,34 @@ class Trouton1DAxiProblem(Problem):
     @property
     def domain_mass(self) -> float:
         return auto_mass(self.r0, 0.0) if self.mass is None else float(self.mass)
+
+    def actions_before_newton_solve(self):
+        """Re-tune the absolute Newton tolerance to this step's roundoff floor.
+
+        Same trap and same cure as ``axisymmetric_lab.py`` (see its TRAP
+        section): ``newton_solver_tolerance`` is an absolute max-norm bound on
+        a residual whose flux slot carries ``4 mu r^2 h^2 u_m`` with
+        ``r^2`` up to ``r_max^2 = R0^2 + 2M``, and whose mass rows carry
+        ``1/dt``, so the direct-solve floor is ``~ eps*(R0^2 + 2M)/dt``.
+        Measured on the t* = 100 comparison legs at r0 = 1.1129, M ~ 3.1e4:
+        both runs died mid-campaign in a Newton two-cycle at 9.0e-4 --
+        exactly ``eps*6.3e4/dt`` at the cascade's dt of ~1.5e-8 -- after the
+        controller halved an output-landing sliver step into the raised
+        floor. The checks never saw this because their shorter horizons keep
+        M (hence the floor) three orders smaller.
+        """
+        super().actions_before_newton_solve()
+        base = self.newton_tolerance_base
+        try:
+            dt = float(self.time_pt().dt(0))
+        except Exception:  # noqa: BLE001 -- no timestepper yet: stationary solve
+            dt = 0.0
+        if not dt > 0.0:
+            self.newton_solver_tolerance = base
+            return
+        r_max_sq = self.r0 * self.r0 + 2.0 * self.domain_mass
+        floor = 2.220446049250313e-16 * r_max_sq / dt
+        self.newton_solver_tolerance = max(base, self.newton_tolerance_safety * floor)
 
     def define_problem(self):
         # CARTESIAN, DELIBERATELY. The mesh coordinate is the mass label m, not
