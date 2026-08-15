@@ -1,0 +1,56 @@
+\begin{thebibliography}{1}
+
+\bibitem{taylor1959}
+G.~I. Taylor.
+\newblock The dynamics of thin sheets of fluid. {III}. disintegration of fluid
+  sheets.
+\newblock {\em Proc. R. Soc. Lond. A}, 253:313, 1959.
+
+\bibitem{culick1960}
+F.~E.~C. Culick.
+\newblock Comments on a ruptured soap film.
+\newblock {\em J. Appl. Phys.}, 31:1128, 1960.
+
+\bibitem{savva2009}
+N.~Savva and J.~W.~M. Bush.
+\newblock Viscous sheet retraction.
+\newblock {\em J. Fluid Mech.}, 626:211, 2009.
+
+\bibitem{diddens2023}
+C.~Diddens and D.~Rocha.
+\newblock Bifurcation tracking on moving meshes and with consideration of
+  azimuthal symmetry breaking instabilities.
+\newblock {\em arXiv:2312.11416}, 2023.
+\newblock The \textsf{pyoomph} method.
+
+\bibitem{trouton1906}
+F.~T. Trouton.
+\newblock On the coefficient of viscous traction and its relation to that of
+  viscosity.
+\newblock {\em Proc. R. Soc. Lond. A}, 77:426, 1906.
+
+\bibitem{eggers1994}
+J.~Eggers and T.~F. Dupont.
+\newblock Drop formation in a one-dimensional approximation of the
+  {Navier}--{Stokes} equation.
+\newblock {\em J. Fluid Mech.}, 262:205, 1994.
+
+\bibitem{taylor1973}
+G.~I. Taylor and D.~H. Michael.
+\newblock On making holes in a sheet of fluid.
+\newblock {\em J. Fluid Mech.}, 58:625, 1973.
+
+\bibitem{basilisk}
+S.~Popinet and collaborators.
+\newblock \textsf{Basilisk}.
+\newblock \url{http://basilisk.fr}.
+\newblock Accessed 2026.
+
+\bibitem{heil2006}
+M.~Heil and A.~L. Hazel.
+\newblock \textsf{oomph-lib} --- an object-oriented multi-physics
+  finite-element library.
+\newblock In {\em Fluid--Structure Interaction}, volume~53 of {\em Lecture
+  Notes in Computational Science and Engineering}, page~19. Springer, 2006.
+
+\end{thebibliography}
