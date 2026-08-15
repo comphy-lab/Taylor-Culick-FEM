@@ -628,8 +628,16 @@ laboratory solver's differenced $1.083$. The modified volume identity of
 laboratory case's own volume drift on the same mesh, so the identity is
 satisfied to the accuracy at which conservation itself holds, and the window
 bookkeeping adds nothing measurable.
-\todo{the long co-moving run and the $L$-convergence ladder that would establish
-window-length independence}
+The long-window demonstration completed: with $L = 40$ the window carried the
+tip to $R = 38.77$ at $t = 30$ ($u^{*} = 0.940$ and rising toward $\sqrt{2}$),
+more than three times the radius at which the laboratory annulus used in
+\S\ref{sec:validation} exhausts its domain, at a per-step cost that does not
+grow with $R$ --- the structural property the window formulation exists to
+provide. The modified volume identity held to $3.5\times10^{-7}$ relative over
+the whole run, and a second run at $1.6\times$ coarser resolution reproduced
+$R(30)$ to $0.13\%$. The $L$-convergence ladder ($L = 20/40/80$) that would
+establish window-length independence is deliberately left to the follow-up
+campaign; $L = 40$ is asserted from the planar experience, not measured.
 
 \section{Validation}
 \label{sec:validation}
