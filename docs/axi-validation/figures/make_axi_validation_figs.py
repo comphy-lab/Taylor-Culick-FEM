@@ -195,6 +195,23 @@ def refresh(args):
         _write_cache("dns_planar_reduction_r0_100", (d[:, 1], d[:, 4]),
                      "tstar,ustar -- 2D axisymmetric DNS, Oh_SB = 0.5, "
                      "R0 = 100 (planar-reduction gate)")
+    if args.dns_matched:
+        d = np.loadtxt(args.dns_matched)   # t tstar R Rdot ustar volume
+        _write_cache("dns_oh0354_r0_1", (d[:, 1], d[:, 2], d[:, 4]),
+                     "tstar,R,ustar -- 2D axisymmetric DNS, lab frame, "
+                     "Oh_SB = 0.0353553 (mu = 0.05), R0 = 1; matched leg for "
+                     "the fresh volume-of-fluid rerun")
+    if args.basilisk_fresh:
+        d = np.loadtxt(args.basilisk_fresh)   # t R_tip R_tip_vof R_tip_global
+        # The rerun writes DIMENSIONAL time on a uniform tsnap = 1 grid, and
+        # tau_vis = mu/2 = 0.025 at mu = 0.05, so t* = 40 t.  Column 1 is the
+        # facet-based tip; column 2 is the independent midplane volume-of-fluid
+        # integral, carried so the cache records both rather than a choice.
+        _write_cache("basilisk_fresh_oh0354", (d[:, 0] / (0.05 / 2.0),
+                                               d[:, 1], d[:, 2]),
+                     "tstar,R_tip,R_tip_vof -- Basilisk volume-of-fluid, fresh "
+                     "Newtonian axisymmetric rerun, mu = 0.05 "
+                     "(Oh_SB = 0.0353553), R0 = 1, MAXlevel 12")
 
 
 # -------------------------------------------------------------- figure 1 ---
@@ -340,6 +357,67 @@ def figure2():
     save(fig, "fig2_planar_reduction")
 
 
+# -------------------------------------------------------------- figure 3 ---
+def figure3():
+    """The fresh volume-of-fluid rerun against its matched finite-element leg.
+
+    Panel (a) has to carry two curves that differ by half a percent over a
+    fifty-fold change in R, so it is drawn log-log and the agreement is not
+    legible there by construction -- that is what panel (b) is for.  Panel (a)
+    earns its place by showing WHAT was compared: the whole retraction, from
+    the cap-dominated start to the linear late-time growth, on both codes.
+    """
+    dns = _read_cache("dns_oh0354_r0_1")          # tstar, R, ustar
+    bas = _read_cache("basilisk_fresh_oh0354")    # tstar, R_tip, R_tip_vof
+
+    fig, axes = plt.subplots(1, 2, figsize=(2 * PANEL + 1.4, PANEL + 0.6))
+    a, b = axes
+
+    # (a) both records, log-log.
+    a.plot(*poslog(dns[:, 0], dns[:, 1], "FEM R"), "-", color=C_DNS, lw=MLW,
+           label=r"2D DNS (sharp interface)", zorder=3)
+    xb, yb = poslog(bas[:, 0], bas[:, 1], "VoF R")
+    # The rerun is on a uniform t* grid against a log abscissa; space the
+    # markers logarithmically or they all land in the last decade.
+    want = np.logspace(np.log10(xb[0]), np.log10(xb[-1]), 14)
+    idx = np.unique(np.searchsorted(xb, want).clip(0, len(xb) - 1))
+    a.plot(xb[idx], yb[idx], "o", mfc="none", mec=C_REF, mew=MLW * 0.7,
+           ms=13 * S, label=r"Basilisk VoF (fresh rerun)", zorder=2)
+
+    a.set_xscale("log")
+    a.set_yscale("log")
+    a.set_xlabel(r"$t^{*}=t/\tau_{\rm vis}$", fontsize=LAB, labelpad=LABPAD)
+    a.set_ylabel(r"$R/h_{0}$", fontsize=LAB, labelpad=LABPAD)
+    a.legend(fontsize=LEG, loc="upper left", frameon=False,
+             handlelength=2.4, borderaxespad=0.6)
+    axstyle(a)
+    a.text(-0.16, 1.02, r"(a)", transform=a.transAxes, fontsize=LAB)
+
+    # (b) the difference, as a percentage of the finite-element radius.  The
+    # volume-of-fluid record is the coarser of the two in time, so the FEM is
+    # interpolated onto it rather than the other way round; both are smooth and
+    # monotone over the window, so this introduces nothing.
+    t = bas[:, 0]
+    Rf = np.interp(t, dns[:, 0], dns[:, 1], left=np.nan, right=np.nan)
+    rel = 100.0 * (bas[:, 1] - Rf) / Rf
+    m = np.isfinite(rel) & (t >= 2.0 / (0.05 / 2.0))   # from t = 2
+    b.plot(t[m], rel[m], "-", color=C_REF, lw=MLW,
+           label=r"$(R_{\rm VoF}-R_{\rm FEM})/R_{\rm FEM}$")
+    b.axhline(0.0, color=C_DNS, lw=MLW, zorder=1)
+    b.axhline(rel[m][-1], ls=":", color=C_TH, lw=MLW * 0.8, zorder=1)
+    b.text(1.3e2, rel[m][-1] + 0.035, r"$-0.51\%$", color=C_TH, fontsize=LEG)
+
+    b.set_xscale("log")
+    b.set_ylim(-0.75, 0.25)
+    b.set_xlabel(r"$t^{*}=t/\tau_{\rm vis}$", fontsize=LAB, labelpad=LABPAD)
+    b.set_ylabel(r"relative difference in $R$ (\%)", fontsize=LAB,
+                 labelpad=LABPAD)
+    axstyle(b)
+    b.text(-0.20, 1.02, r"(b)", transform=b.transAxes, fontsize=LAB)
+
+    save(fig, "fig3_vof_rerun")
+
+
 def save(fig, name):
     fig.tight_layout()
     for ext in ("pdf", "png"):
@@ -358,6 +436,8 @@ def main():
     p.add_argument("--ale-tipcorr")
     p.add_argument("--basilisk")
     p.add_argument("--planar-reduction")
+    p.add_argument("--dns-matched")
+    p.add_argument("--basilisk-fresh")
     args = p.parse_args()
     if args.refresh:
         print("refreshing cache")
@@ -366,6 +446,8 @@ def main():
     figure1()
     print("figure 2")
     figure2()
+    print("figure 3")
+    figure3()
 
 
 if __name__ == "__main__":

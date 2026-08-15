@@ -670,9 +670,52 @@ be a missing term on the finite-element side. It is not: every axisymmetric term
 the volume-of-fluid code adds by hand corresponds one-to-one with a term the
 finite-element tensor layer generates automatically, and the metric factors are
 exact. The ranked candidates that remain are all on the volume-of-fluid side.
-\todo{the fresh Newtonian axisymmetric rerun of the reference code, which will
-either reproduce the 2024 curves or localise the offset in the campaign rather
-than the method}
+That reasoning is exhausted by an audit; it needs a measurement. The reference
+code was therefore rerun from scratch as a Newtonian axisymmetric case, carrying
+the three defect fixes recorded in \S\ref{sec:traps} and an in-code tip
+diagnostic that the 2024 axisymmetric case never had, and compared against a
+finite-element leg at matched parameters. The rerun is not at the operating
+point of the comparison above: it is at $\mu=0.05$, that is $\Ohsb=0.0354$
+through $\mu=\sqrt{2}\,\Ohsb$, with $R_{0}=h_{0}=1$, carried to $t=40$
+($t^{*}=1600$, $R\simeq52$) at \texttt{MAXlevel}~12.
+
+Over that record the two methods agree to $0.51\%$ in the hole radius, the
+largest departure anywhere after $t=2$ (figure~\ref{fig:vofrerun}). The
+difference is not scatter: it grows smoothly from about $0.1\%$ at $t=4$,
+saturates by $t\approx32$ and sits at $-0.512\%$ at the end of the record, with
+the volume-of-fluid radius consistently the smaller. A monotone, saturating
+offset of that size is what a diffuse interface and a real gas phase should
+produce against a sharp interface with no gas, and it is bounded by the
+interface thickness rather than growing with the solution.
+
+Half a percent between two methods that share no discretisation, no interface
+representation and no time integrator is a much tighter agreement than the
+$1.6\%$ and $1.8\%$ above. Since the same volume-of-fluid method, freshly
+configured and free of the recorded defects, tracks the sharp-interface solver
+to that tolerance, the larger offset is unlikely to be a property of the method.
+The evidence therefore points at the 2024 campaign rather than at either code.
+It does not close the question: the rerun is an order of magnitude lower in
+Ohnesorge number than the case it is being used to argue about, and a
+like-for-like rerun at $\Ohsb=0.7071$ is what would settle it. That run is
+cheap, and it is the obvious next measurement.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/fig3_vof_rerun.pdf}
+  \caption{The fresh Newtonian axisymmetric rerun of the volume-of-fluid code
+  against a finite-element leg at matched parameters, $\Ohsb=0.0354$
+  ($\mu=0.05$), $R_{0}=h_{0}=1$. (a) The hole radius over the whole retraction,
+  from the cap-dominated start to the linear late-time growth. The
+  volume-of-fluid record is written on a uniform $t=1$ output grid, so its first
+  point is at $t^{*}=40$; the early transient is computed on both sides but
+  sampled only by the finite-element leg. (b) The difference between them as a
+  percentage of the finite-element radius, from $t=2$. It is monotone and
+  saturating rather than scattered, reaching $-0.512\%$ at the end of the
+  record, with the volume-of-fluid radius the smaller throughout --- the
+  signature of a diffuse interface and a resolved gas phase against a sharp
+  interface with none, not of a disagreement that grows with the solution.}
+  \label{fig:vofrerun}
+\end{figure}
 
 At $R_{0}=1$ the direct solver shows a mesh-independent feature that the
 depth-averaged model cannot represent at all. The tip does not open
