@@ -127,6 +127,14 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
     if output_spacing not in ("geom", "uniform"):
         raise ValueError(f"output_spacing must be 'geom' or 'uniform', "
                          f"got {output_spacing!r}")
+    # Guarded here rather than only in main(), because the check suites call
+    # this function directly. nsteps sets dt = t_end/nsteps below, and
+    # n_outputs <= 0 leaves the output schedule empty so the final-row lookup
+    # has nothing to read. n_outputs == 1 is legal and handled explicitly.
+    if nsteps <= 0:
+        raise ValueError(f"nsteps must be positive, got {nsteps}")
+    if n_outputs <= 0:
+        raise ValueError(f"n_outputs must be positive, got {n_outputs}")
     # Resolve before the chdir: every later use of `outdir` -- the metadata
     # write at the end above all -- would otherwise be reinterpreted against
     # the new working directory and land somewhere nested and wrong.
