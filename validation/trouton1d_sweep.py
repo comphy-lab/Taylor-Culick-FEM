@@ -81,11 +81,17 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
     # of a shared root; pyoomph did not honour that and wrote into the root
     # instead, so the metadata write then failed on a directory that did not
     # exist. The caller supplies a unique --out per case and this writes there.
+    # ROOT CAUSE (found 2026-08-14 while building the axi sweep): pyoomph's
+    # Problem.initialise runs parse_known_args on the real sys.argv with
+    # argparse prefix matching, so this driver's --out is accepted as pyoomph's
+    # --outdir and overrides set_output_directory for every problem in the
+    # process. ignore_command_line stops the hijack.
     outdir = outroot
     outdir.mkdir(parents=True, exist_ok=True)
     os.chdir(outdir)
 
     with Trouton1DProblem() as p:
+        p.ignore_command_line = True
         p.Oh_SB = oh_sb
         # Both default in the problem class; overriding here is what makes an
         # h-form vs f-form regression a one-flag re-run of the same driver

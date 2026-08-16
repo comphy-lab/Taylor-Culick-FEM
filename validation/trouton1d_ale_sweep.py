@@ -88,6 +88,10 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
     os.chdir(outdir)
 
     with Trouton1DALEProblem() as p:
+        # Stop pyoomph's parse_known_args from prefix-matching this driver's
+        # --out into its own --outdir and hijacking set_output_directory for
+        # every problem in the process (see trouton1d_sweep.run_case).
+        p.ignore_command_line = True
         p.Oh_SB = oh_sb
         p.nelem = nelem
         p.grade = grade
