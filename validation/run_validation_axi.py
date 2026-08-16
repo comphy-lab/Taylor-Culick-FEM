@@ -283,7 +283,16 @@ def main() -> None:
                          "spans that state's time to --tstar-end. Only valid "
                          "for a single --oh, since one state belongs to one case.")
     args = ap.parse_args()
+    # The geometric output schedule divides by (n_outputs - 1) and needs a first
+    # and last point, so anything below two is a bad argument rather than a
+    # degenerate run: reject it here instead of dividing by zero mid-case.
+    if args.n_outputs < 2:
+        raise SystemExit(f"--n-outputs must be at least 2, got {args.n_outputs}")
     if args.restart_from is not None:
+        # RESOLVE BEFORE run_case, which chdirs into the case directory. A
+        # relative path passes the exists() check here in the launch directory
+        # and then fails inside load_state() after the chdir.
+        args.restart_from = args.restart_from.resolve()
         if not args.restart_from.exists():
             raise SystemExit(f"restart state not found: {args.restart_from}")
         if args.oh and len(args.oh) > 1:
