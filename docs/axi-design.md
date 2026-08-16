@@ -284,9 +284,13 @@ Sibling files, not flags (the planar classes already carry `staggered`,
     simulationCases/trouton1d_axi.py       # mass-coordinate axi (D0/C1 + r on C1)
     simulationCases/trouton1d_ale_axi.py   # ALE axi
     simulationCases/axisymmetric_lab.py    # 2D DNS, lab-frame graded annulus
+    simulationCases/axisymmetric_comoving.py  # 2D DNS, translating window
     validation/trouton1d_axi_sweep.py
     validation/trouton1d_ale_axi_sweep.py
+    validation/trouton1d_axi_checks.py     # mass-coordinate check suite
+    validation/trouton1d_ale_axi_checks.py # ALE check suite
     validation/run_validation_axi.py       # mirrors run_validation.py columns
+    validation/run_validation_axi_comoving.py  # co-moving window driver
     validation/axi_smoketests.py           # smoke ladder S0-S2 (+ quick S4 probe)
 
 `TipFlux`/`TipClosure` are imported from the planar modules (geometry-

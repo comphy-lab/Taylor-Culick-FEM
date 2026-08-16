@@ -354,6 +354,20 @@ def main() -> int:
     sub.add_parser("cross-solver", help="check 3: vs mass-coordinate axi solver (may SKIP)")
     sub.add_parser("all", help="run every check, in the spec's run order")
     a = ap.parse_args()
+
+    # HIDE THE COMMAND LINE FROM pyoomph, as trouton1d_axi_checks.py does.
+    # Problem.initialise parses the real sys.argv with argparse prefix matching
+    # active and one of its flags is --outdir, so this script's --outroot can be
+    # accepted as that flag and override every per-case output directory in the
+    # process. The ALE sweep sets ignore_command_line, but the planar reference
+    # run below goes through a sibling driver that does not.
+    sys.argv = sys.argv[:1]
+
+    # RESOLVE BEFORE ANY CASE RUNS. run_case() chdirs into its output directory
+    # and does not chdir back, so a relative --outroot would resolve against the
+    # previous case's directory from the second check onwards, and the control
+    # files read afterwards would point at paths that no longer exist.
+    a.outroot = a.outroot.resolve()
     a.outroot.mkdir(parents=True, exist_ok=True)
 
     if a.cmd == "import":

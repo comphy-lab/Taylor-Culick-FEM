@@ -116,6 +116,16 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
     os.chdir(outdir)
 
     with Trouton1DALEAxiProblem() as p:
+        # PYOOMPH READS sys.argv, AND ARGPARSE ABBREVIATES. Problem.initialise
+        # calls parse_known_args() on the real command line, which carries
+        # --outdir; prefix matching means a caller's --out (or --outd, --outdi)
+        # is accepted as that flag and OVERWRITES the output directory set
+        # here, for every problem built in the process. A single-case script
+        # never notices because the two paths coincide; a driver running
+        # several cases in one process silently writes them all into one
+        # directory. trouton1d_axi_sweep.py refuses the command line for this
+        # reason and the ALE sibling must do the same.
+        p.ignore_command_line = True
         p.Oh_SB = oh_sb
         p.r0 = r0
         p.nelem = nelem

@@ -9,5 +9,7 @@ axi-validation.pdf: axi-validation.tex axi-validation.bib
 	pdflatex -interaction=nonstopmode axi-validation
 
 clean:
-	rm -f axi-validation.aux axi-validation.bbl axi-validation.blg \
-	      axi-validation.log axi-validation.out axi-validation.toc
+	# axi-validation.bbl and .blg are tracked -- the .bbl is what lets the
+	# note build without BibTeX -- so clean must not remove them.
+	rm -f axi-validation.aux axi-validation.log axi-validation.out \
+	      axi-validation.toc

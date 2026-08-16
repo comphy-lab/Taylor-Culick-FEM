@@ -232,7 +232,13 @@ def main() -> None:
     ap.add_argument("--restart-from", type=Path, default=None,
                     help="pyoomph state dump to continue from")
     args = ap.parse_args()
+    # See run_validation_axi.py: the schedule divides by (n_outputs - 1).
+    if args.n_outputs < 2:
+        raise SystemExit(f"--n-outputs must be at least 2, got {args.n_outputs}")
     if args.restart_from is not None:
+        # Resolve before run_case chdirs into the case directory; a relative
+        # path would pass this check and then fail inside load_state().
+        args.restart_from = args.restart_from.resolve()
         if not args.restart_from.exists():
             raise SystemExit(f"restart state not found: {args.restart_from}")
         if args.oh and len(args.oh) > 1:

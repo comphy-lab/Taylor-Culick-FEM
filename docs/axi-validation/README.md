@@ -70,7 +70,7 @@ uv run python validation/run_validation_axi_comoving.py --oh ... --results ...
 
 ## Figures
 
-`figures/make_axi_validation_figs.py` builds both figures. It reads a small
+`figures/make_axi_validation_figs.py` builds all three figures. It reads a small
 cached copy of each plotted series from `figures/data/`, so the figures rebuild
 from this repository alone:
 
@@ -101,9 +101,18 @@ and leaves the PDF.
 
 ## Open slots
 
-The note carries three `\todo{...}` markers, one per measurement that is
-scheduled but not yet made: the fresh Newtonian axisymmetric rerun of the
-volume-of-fluid reference, the comparison against digitised axisymmetric Savva
-& Bush curves, and the long co-moving run with its window-length convergence
-ladder. They are flagged in red in the PDF so that no reader mistakes a missing
-measurement for an established one.
+None in the note itself. The three measurements it was written around — the
+fresh Newtonian axisymmetric rerun of the volume-of-fluid reference, the
+comparison against digitised axisymmetric Savva & Bush curves, and the long
+co-moving run — have all been made, so the `\todo{...}` markers and the macro
+that rendered them in red are gone.
+
+Two measurements the note names as wanted but does not contain:
+
+- the **like-for-like volume-of-fluid rerun at `Oh_SB = 0.7071`**, which is what
+  would settle whether the 1.6%/1.8% disagreement with the 2024 campaign belongs
+  to that campaign or to a method (§5.2 says so in print);
+- the **window-length ladder `L = 20/40/80`** for the co-moving solver, whose
+  `L = 40` is currently asserted from planar experience rather than measured.
+
+If either is added, reinstate a `\todo` macro rather than leaving a silent gap.
