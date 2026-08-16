@@ -100,18 +100,37 @@ def _step_h_tipode(h_prev: float, u_prev: float, r_prev: float,
     return h_prev + 0.5 * dt_seg * (k1 + k2)
 
 
-def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
-             outroot: Path, r0: float, l0: float | None, nelem: int,
-             grade: float, temporal_error: float = 1e-3, drift_tol: float = 1e-4,
-             max_newton: int | None = None, gcn: bool = False,
-             ale: bool = True, tip_azimuthal_correction: bool = False,
-             newton_tol: float = 1e-6,
-             profiles: bool = False,
-             output_spacing: str = "geom") -> dict:
+def run_case(*args, **kwargs) -> dict:
+    """Run one case and leave the working directory as it was found.
+
+    The body chdirs into the case directory, as pyoomph's output machinery
+    expects. The check suites call this repeatedly in one process, so without
+    the restore the second case resolves relative paths against the first
+    case's directory. A single-case run never sees it, which is why it took a
+    review to notice.
+    """
+    prev_cwd = os.getcwd()
+    try:
+        return _run_case(*args, **kwargs)
+    finally:
+        os.chdir(prev_cwd)
+
+
+def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
+              outroot: Path, r0: float, l0: float | None, nelem: int,
+              grade: float, temporal_error: float = 1e-3, drift_tol: float = 1e-4,
+              max_newton: int | None = None, gcn: bool = False,
+              ale: bool = True, tip_azimuthal_correction: bool = False,
+              newton_tol: float = 1e-6,
+              profiles: bool = False,
+              output_spacing: str = "geom") -> dict:
     if output_spacing not in ("geom", "uniform"):
         raise ValueError(f"output_spacing must be 'geom' or 'uniform', "
                          f"got {output_spacing!r}")
-    outdir = outroot
+    # Resolve before the chdir: every later use of `outdir` -- the metadata
+    # write at the end above all -- would otherwise be reinterpreted against
+    # the new working directory and land somewhere nested and wrong.
+    outdir = Path(outroot).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     os.chdir(outdir)
 
@@ -196,6 +215,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         worst_drift = 0.0
         worst_affinity = 0.0
         worst_rough = 0.0
+        diagnostics_finite = True
         rows = []
         t0 = time.time()
         for t in out_times:
@@ -229,6 +249,17 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
                             late_coeff, p.total_mass(), aff, rough, dh, du,
                             p.tip_cell_size())
             rows.append([tstar, R, ustar, h_tip, h_tipode, late_coeff])
+            # max() SWALLOWS NaN when the running worst is finite:
+            # max(1.0, nan) is 1.0. A diagnostic that has gone non-finite would
+            # therefore leave every "worst" value looking healthy, and
+            # domain_ok below would still be True. This is not hypothetical --
+            # mesh_affinity_residual() returns nan by design when the span
+            # collapses. Record it instead of letting it disappear.
+            if not all(np.isfinite(v) for v in (dh, du, aff, rough)):
+                diagnostics_finite = False
+                print(f"[ale-axi oh={oh_sb:g} R0={r0:g}] WARNING: non-finite "
+                      f"diagnostic at t*={tstar:.4f}: dh={dh} du={du} "
+                      f"aff={aff} rough={rough}", flush=True)
             worst_drift = max(worst_drift, abs(dh), abs(du))
             worst_affinity = max(worst_affinity, aff)
             worst_rough = max(worst_rough, rough)
@@ -253,7 +284,10 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             "worst_thickness_roughness": worst_rough,
             "tip_cell_final": p.tip_cell_size(),
         })
-        meta["domain_ok"] = bool(worst_drift <= drift_tol)
+        meta["diagnostics_finite"] = bool(diagnostics_finite)
+        # A case whose diagnostics went non-finite has not demonstrated a
+        # healthy domain, whatever the surviving finite maxima say.
+        meta["domain_ok"] = bool(diagnostics_finite and worst_drift <= drift_tol)
         if not meta["domain_ok"]:
             print(f"[ale-axi oh={oh_sb:g} R0={r0:g}] WARNING: far-field drift "
                   f"{worst_drift:.3e} exceeds {drift_tol:g}; the disturbance "
