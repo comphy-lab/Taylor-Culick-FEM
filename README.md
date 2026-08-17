@@ -17,7 +17,7 @@ oomph-lib), tracked against the CoMPhy fork's `develop` branch.
 ## Why FEM here
 
 The existing Basilisk study of this problem
-([comphy-lab/Elastic-Taylor-Culick](https://github.com/comphy-lab/Elastic-Taylor-Culick))
+([comphy-lab/Taylor-Culick-ViscoElastic](https://github.com/comphy-lab/Taylor-Culick-ViscoElastic))
 is a volume-of-fluid, two-phase calculation on a domain 100 sheet-thicknesses
 wide. Two things motivate the FEM version:
 
@@ -143,6 +143,6 @@ dependency set resolves and `pyoomph check all` passes.
 
 ## Reference
 
-- Basilisk implementation: [comphy-lab/Elastic-Taylor-Culick](https://github.com/comphy-lab/Elastic-Taylor-Culick)
+- Basilisk implementation: [comphy-lab/Taylor-Culick-ViscoElastic](https://github.com/comphy-lab/Taylor-Culick-ViscoElastic)
 - Taylor, G. I. (1959) *Proc. R. Soc. A* **253**, 313.
 - Culick, F. E. C. (1960) *J. Appl. Phys.* **31**, 1128.

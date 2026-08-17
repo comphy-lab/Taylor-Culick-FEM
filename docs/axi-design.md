@@ -263,7 +263,7 @@ Smoke ladder before any long run (in order, all must pass):
 
 ## Validation targets (external)
 
-- Basilisk `Elastic-Taylor-Culick/simulationCases/TaylorCulick.c` run
+- Basilisk `Taylor-Culick-ViscoElastic/simulationCases/TaylorCulick.c` run
   Newtonian (`G1 = 0`): same IC, `dR/dt -> sqrt(2)`.
 - 2024 campaign CSV `Ec0.000_v1202_2024.csv` (t, rTip, vTip to t = 300,
   plateau 1.4134): direct vTip(t) comparison for the DNS.
