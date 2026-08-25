@@ -29,7 +29,8 @@ All four live in `simulationCases/`.
 
 The design authority for all four — derivations, the reconciled scheme, the
 internal-check list, the comparison protocol and the two source-level audits —
-is `docs/axi-design.md`.
+is `docs/axi-design.md`. The translating-window DNS is explained, with
+schematics, in [`../axi-comoving-window.html`](../axi-comoving-window.html).
 
 ## Running the checks
 

@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Axisymmetric co-moving window</title>
+  <script>
+    (function () {
+      try {
+        var v = localStorage.getItem("axi-comoving-theme");
+        if (v === "light" || v === "dark") {
+          document.documentElement.setAttribute("data-theme", v);
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1b1b18;
+      --muted: #5a574e;
+      --paper: #f7f4ee;
+      --card: #fffdf8;
+      --line: #d7d1c4;
+      --liquid: #c4a574;
+      --liquid-fill: #efe3cc;
+      --gas: #dfe7ef;
+      --pin: #8b2942;
+      --window: #1f4d6e;
+      --inflow: #2f6b4f;
+      --inflow-wash: #cfe3d6;
+      --leftbehind: #c9c2b4;
+      --obs: #1f4d6e;
+      --inf: #6b4a1f;
+      --unk: #5a574e;
+      --focus: #1f4d6e;
+      --on-accent: #fff;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --ink: #ece7db;
+      --muted: #a59e90;
+      --paper: #141310;
+      --card: #1c1a16;
+      --line: #3d3930;
+      --liquid: #c4a574;
+      --liquid-fill: #4a3d28;
+      --gas: #1e2a36;
+      --pin: #e07a8a;
+      --window: #8bb8d6;
+      --inflow: #7fbf98;
+      --inflow-wash: #1f3d2e;
+      --leftbehind: #4d483c;
+      --obs: #8bb8d6;
+      --inf: #d4a56a;
+      --unk: #a59e90;
+      --focus: #8bb8d6;
+      --on-accent: #141310;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --ink: #ece7db;
+        --muted: #a59e90;
+        --paper: #141310;
+        --card: #1c1a16;
+        --line: #3d3930;
+        --liquid: #c4a574;
+        --liquid-fill: #4a3d28;
+        --gas: #1e2a36;
+        --pin: #e07a8a;
+        --window: #8bb8d6;
+        --inflow: #7fbf98;
+        --inflow-wash: #1f3d2e;
+        --leftbehind: #4d483c;
+        --obs: #8bb8d6;
+        --inf: #d4a56a;
+        --unk: #a59e90;
+        --focus: #8bb8d6;
+        --on-accent: #141310;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Palatino, "Palatino Linotype", "Iowan Old Style", "Times New Roman", serif;
+      font-size: 1.05rem;
+      line-height: 1.55;
+    }
+    header, main, footer { max-width: 62rem; margin: 0 auto; padding: 1.25rem 1.1rem; }
+    header { padding-top: 2rem; }
+    .header-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.6rem 1rem;
+    }
+    .theme-switch {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }
+    .theme-switch button {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.82rem;
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      padding: 0.28rem 0.55rem;
+      cursor: pointer;
+    }
+    .theme-switch button[aria-pressed="true"] {
+      border-color: var(--window);
+      background: var(--window);
+      color: var(--on-accent);
+    }
+    .theme-switch button:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    h1 { font-size: 1.85rem; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.35rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.08rem; margin: 1.25rem 0 0.4rem; }
+    p, li { max-width: 46em; }
+    .lede { font-size: 1.12rem; color: var(--muted); max-width: 48em; }
+    .meta { font-size: 0.92rem; color: var(--muted); margin-top: 0.6rem; }
+    nav.toc { margin: 1.2rem 0 0; padding: 0.8rem 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    nav.toc ul { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; list-style: none; padding: 0; margin: 0; }
+    nav.toc a { color: var(--window); text-decoration: none; border-bottom: 1px solid transparent; }
+    nav.toc a:hover, nav.toc a:focus-visible { border-bottom-color: currentColor; }
+    .badge {
+      display: inline-block;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.12rem 0.4rem;
+      border: 1px solid currentColor;
+      border-radius: 0.2rem;
+      vertical-align: 0.12em;
+      margin-right: 0.35rem;
+    }
+    .badge.obs { color: var(--obs); }
+    .badge.inf { color: var(--inf); }
+    .badge.unk { color: var(--unk); }
+    figure.schematic {
+      margin: 1rem 0 1.4rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 0.8rem;
+    }
+    figure.schematic svg { display: block; width: 100%; height: auto; }
+    figure.schematic svg [fill="#fffdf8"] { fill: var(--card); }
+    figure.schematic svg [fill="#efe3cc"] { fill: var(--liquid-fill); }
+    figure.schematic svg [fill="#dfe7ef"] { fill: var(--gas); }
+    figure.schematic svg [fill="#cfe3d6"] { fill: var(--inflow-wash); }
+    figure.schematic svg [fill="#8b2942"] { fill: var(--pin); }
+    figure.schematic svg [fill="#1f4d6e"] { fill: var(--window); }
+    figure.schematic svg [fill="#2f6b4f"] { fill: var(--inflow); }
+    figure.schematic svg [fill="#1b1b18"] { fill: var(--ink); }
+    figure.schematic svg [fill="#5a574e"] { fill: var(--muted); }
+    figure.schematic svg [fill="#c4a574"] { fill: var(--liquid); }
+    figure.schematic svg [stroke="#8b2942"] { stroke: var(--pin); }
+    figure.schematic svg [stroke="#1f4d6e"] { stroke: var(--window); }
+    figure.schematic svg [stroke="#2f6b4f"] { stroke: var(--inflow); }
+    figure.schematic svg [stroke="#1b1b18"] { stroke: var(--ink); }
+    figure.schematic svg [stroke="#5a574e"] { stroke: var(--muted); }
+    figure.schematic svg [stroke="#c4a574"] { stroke: var(--liquid); }
+    figure.schematic svg [stroke="#b8b1a4"] { stroke: var(--leftbehind); }
+    figure.schematic svg text { fill: var(--ink); }
+    figure.schematic svg text[fill="#8b2942"] { fill: var(--pin); }
+    figure.schematic svg text[fill="#1f4d6e"] { fill: var(--window); }
+    figure.schematic svg text[fill="#2f6b4f"] { fill: var(--inflow); }
+    figure.schematic svg text[fill="#5a574e"] { fill: var(--muted); }
+    #hatch line { stroke: var(--leftbehind); }
+    figcaption { font-size: 0.95rem; color: var(--muted); margin-top: 0.55rem; max-width: 52em; }
+    .eq {
+      overflow-x: auto;
+      margin: 0.9rem 0;
+      padding: 0.85rem 1rem;
+      background: var(--card);
+      border-left: 3px solid var(--window);
+    }
+    math {
+      font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", "DejaVu Math TeX Gyre", math, Palatino, serif;
+    }
+    math[display="block"] { font-size: 1.18rem; }
+    details.tex {
+      margin: -0.5rem 0 1rem;
+      font-size: 0.92rem;
+    }
+    details.tex summary {
+      cursor: pointer;
+      color: var(--window);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.82rem;
+      letter-spacing: 0.02em;
+    }
+    details.tex pre {
+      margin: 0.4rem 0 0;
+      padding: 0.6rem 0.75rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      overflow-x: auto;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 0.7rem 1.2rem; font-size: 0.92rem; margin: 0.4rem 0 0.8rem; }
+    .swatch { display: inline-block; width: 0.85rem; height: 0.85rem; border: 1px solid var(--ink); margin-right: 0.35rem; vertical-align: -0.1rem; }
+    .swatch.liquid { background: var(--liquid-fill); }
+    .swatch.gas { background: var(--gas); }
+    .swatch.leftbehind { background: var(--leftbehind); }
+    .swatch.inflow { background: var(--inflow); border-color: var(--inflow); }
+    .swatch.pin { background: var(--pin); border-color: var(--pin); }
+    .swatch.window { background: var(--window); border-color: var(--window); }
+    .tablist { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.8rem 0; }
+    .tablist button {
+      font: inherit;
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      padding: 0.35rem 0.7rem;
+      cursor: pointer;
+    }
+    .tablist button[aria-selected="true"] {
+      border-color: var(--window);
+      background: var(--window);
+      color: var(--on-accent);
+    }
+    .tablist button:focus-visible,
+    .export button:focus-visible,
+    .theme-switch button:focus-visible,
+    a:focus-visible,
+    details.tex summary:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .panel[hidden] { display: none; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin: 0.8rem 0 1.2rem; }
+    th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); }
+    th { font-weight: 650; }
+    code {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.88em;
+      overflow-wrap: anywhere;
+    }
+    .note { color: var(--muted); font-size: 0.95rem; }
+    .export { margin: 1.2rem 0; }
+    .export button {
+      font: inherit;
+      padding: 0.4rem 0.8rem;
+      border: 1px solid var(--window);
+      background: var(--card);
+      color: var(--window);
+      cursor: pointer;
+    }
+    #export-status { margin-left: 0.6rem; color: var(--muted); font-size: 0.92rem; }
+    footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); }
+    a { color: var(--window); }
+    @media (max-width: 40rem) {
+      h1 { font-size: 1.5rem; }
+      math[display="block"] { font-size: 1.02rem; }
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      tbody tr { border: 1px solid var(--line); margin: 0 0 0.8rem; padding: 0.2rem 0; background: var(--card); }
+      tbody th[scope="row"] {
+        background: var(--paper);
+        border-bottom: 1px solid var(--line);
+        padding: 0.5rem;
+      }
+      tbody td {
+        border-bottom: 0;
+        padding: 0.35rem 0.5rem 0.55rem;
+      }
+      tbody td::before {
+        content: attr(data-label);
+        display: block;
+        font-weight: 650;
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin-bottom: 0.15rem;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
+    }
+    @media (scripting: none) {
+      .panel[hidden] { display: block !important; }
+      .tablist, .theme-switch { display: none; }
+    }
+    @media print {
+      :root, :root[data-theme="dark"] {
+        color-scheme: light;
+        --ink: #1b1b18;
+        --muted: #5a574e;
+        --paper: #fff;
+        --card: #fff;
+        --line: #d7d1c4;
+        --liquid: #c4a574;
+        --liquid-fill: #efe3cc;
+        --gas: #dfe7ef;
+        --pin: #8b2942;
+        --window: #1f4d6e;
+        --inflow: #2f6b4f;
+        --inflow-wash: #cfe3d6;
+        --leftbehind: #c9c2b4;
+        --obs: #1f4d6e;
+        --inf: #6b4a1f;
+        --unk: #5a574e;
+        --focus: #1f4d6e;
+        --on-accent: #fff;
+      }
+      body { background: #fff; color: #1b1b18; }
+      nav.toc, .tablist, .export, .theme-switch { display: none; }
+      .panel[hidden] { display: block !important; }
+      figure.schematic, .eq, details.tex { break-inside: avoid; }
+      details.tex { display: block; }
+      details.tex pre { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <p class="meta">Taylor–Culick FEM documentation. Self-contained page (no external scripts or fonts). Companion to <a href="axi-design.md">axi-design.md</a> and the campaign write-up in <a href="README.md">docs/README.md</a>.</p>
+      <div class="theme-switch" role="group" aria-label="Colour theme">
+        <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+    <h1>Axisymmetric co-moving window</h1>
+    <p class="lede">A hole nucleates in a thin liquid sheet and opens under surface tension. We do not mesh the remaining film. We keep a window of fixed length <em>L</em> and drag that window with the rim. Velocities remain laboratory-frame. The window motion is ALE mesh translation; it is not a Galilean boost of the velocity field.</p>
+    <nav class="toc" aria-label="Contents">
+      <ul>
+        <li><a href="#picture">Picture</a></li>
+        <li><a href="#ale">ALE, not Galilean</a></li>
+        <li><a href="#equations">Equations</a></li>
+        <li><a href="#compare">Three formulations</a></li>
+        <li><a href="#pin">The pin</a></li>
+        <li><a href="#sources">Sources</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <section id="picture" aria-labelledby="picture-h">
+      <h2 id="picture-h">Physical picture</h2>
+      <p>
+        Axisymmetric Taylor–Culick is hole-opening. Liquid occupies
+        <em>r</em> greater than the hole radius; the midplane is
+        <em>z</em> = 0. We take the initial hole radius
+        <em>X</em><sub>0</sub> = 1, measured in full thicknesses <em>h</em><sub>0</sub>,
+        so that the initial condition matches the Basilisk hole
+        (<em>hole</em><sub>0</sub> = 1, cap radius <em>h</em><sub>0</sub>/2).
+        Only the upper half-sheet is solved. The mesh is a semicircular cap of
+        radius 1/2, then a flat film of half-thickness 1/2. In the two-dimensional
+        mesh the radial coordinate is stored as <code>mesh_x</code>.
+      </p>
+      <p>
+        A laboratory-frame annulus with a fixed outer wall must contain the
+        whole trajectory plus the disturbance that runs ahead of the rim.
+        Doubling the run length therefore grows the mesh. The window
+        formulation holds the radial extent of the meshed region fixed at
+        <em>L</em> (default 40, in units of <em>h</em><sub>0</sub>) and
+        translates the outer edge with the rim. The film ahead of the rim is
+        unbounded; wall-clock, not the mesh budget, limits how far we can run.
+      </p>
+
+      <div class="legend" aria-label="Schematic colours">
+        <span><i class="swatch liquid"></i>liquid (meshed)</span>
+        <span><i class="swatch gas"></i>hole / gas (not meshed)</span>
+        <span><i class="swatch leftbehind"></i>left behind</span>
+        <span><i class="swatch inflow"></i>swallowed film</span>
+        <span><i class="swatch pin"></i>tip pin</span>
+        <span><i class="swatch window"></i>window edge</span>
+      </div>
+
+      <figure class="schematic">
+        <svg viewBox="0 0 900 310" role="img" aria-labelledby="cap-times">
+          <title id="cap-times">Two snapshots of the translating window. Length L is fixed; the window slides outward with the rim.</title>
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 1.5 L9 5 L0 8.5 Z" fill="#1f4d6e"/>
+            </marker>
+            <marker id="arr-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 1.5 L9 5 L0 8.5 Z" fill="#1b1b18"/>
+            </marker>
+            <marker id="arr-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 1.5 L9 5 L0 8.5 Z" fill="#2f6b4f"/>
+            </marker>
+            <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+              <line x1="0" y1="0" x2="0" y2="6" stroke="#b8b1a4" stroke-width="1.4"/>
+            </pattern>
+          </defs>
+          <rect x="0" y="0" width="900" height="310" fill="#fffdf8"/>
+
+          <!-- left panel: t -->
+          <text x="28" y="28" font-size="16" fill="#1b1b18" font-style="italic">t</text>
+          <line x1="40" y1="40" x2="40" y2="250" stroke="#1b1b18" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <text x="18" y="54" font-size="13" fill="#5a574e">z</text>
+          <rect x="40" y="70" width="70" height="150" fill="#dfe7ef"/>
+          <text x="52" y="148" font-size="13" fill="#5a574e">hole</text>
+          <!-- cap + film -->
+          <path d="M110 220 A40 40 0 0 1 150 180 L360 180 L360 220 Z" fill="#efe3cc" stroke="#c4a574" stroke-width="2"/>
+          <line x1="28" y1="220" x2="400" y2="220" stroke="#1b1b18" stroke-width="1.4"/>
+          <line x1="360" y1="55" x2="360" y2="220" stroke="#1f4d6e" stroke-width="3"/>
+          <circle cx="110" cy="220" r="6" fill="#8b2942"/>
+          <text x="98" y="248" font-size="14" fill="#8b2942">X(t)</text>
+          <text x="332" y="248" font-size="14" fill="#1f4d6e">X+L</text>
+          <path d="M110 268 L360 268" stroke="#1f4d6e" stroke-width="1.4" marker-start="url(#arr)" marker-end="url(#arr)"/>
+          <text x="210" y="288" font-size="13" fill="#1f4d6e">L fixed</text>
+          <text x="175" y="168" font-size="13" fill="#1b1b18">liquid, meshed</text>
+          <text x="368" y="100" font-size="13" fill="#1f4d6e">far, u = 0</text>
+          <text x="388" y="236" font-size="13" fill="#5a574e">r</text>
+
+          <!-- arrow between times -->
+          <path d="M410 150 L470 150" stroke="#1f4d6e" stroke-width="1.8" marker-end="url(#arr)"/>
+          <text x="414" y="136" font-size="12" fill="#1f4d6e">window</text>
+          <text x="416" y="172" font-size="12" fill="#1f4d6e">slides at U</text>
+
+          <!-- right panel: t + Δt -->
+          <text x="500" y="28" font-size="16" fill="#1b1b18" font-style="italic">t + Δt</text>
+          <line x1="500" y1="40" x2="500" y2="250" stroke="#1b1b18" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <text x="478" y="54" font-size="13" fill="#5a574e">z</text>
+          <!-- left-behind (old window start to new tip) -->
+          <rect x="500" y="70" width="70" height="150" fill="#dfe7ef"/>
+          <rect x="570" y="180" width="60" height="40" fill="url(#hatch)" stroke="#b8b1a4"/>
+          <text x="508" y="148" font-size="12" fill="#5a574e">unmeshed</text>
+          <text x="572" y="204" font-size="11" fill="#5a574e">left behind</text>
+          <!-- new liquid window -->
+          <path d="M630 220 A40 40 0 0 1 670 180 L840 180 L840 220 Z" fill="#efe3cc" stroke="#c4a574" stroke-width="2"/>
+          <!-- swallowed strip at far -->
+          <rect x="800" y="180" width="40" height="40" fill="#cfe3d6" stroke="#2f6b4f" stroke-width="1.4"/>
+          <line x1="488" y1="220" x2="880" y2="220" stroke="#1b1b18" stroke-width="1.4"/>
+          <line x1="840" y1="55" x2="840" y2="220" stroke="#1f4d6e" stroke-width="3"/>
+          <circle cx="630" cy="220" r="6" fill="#8b2942"/>
+          <text x="610" y="248" font-size="14" fill="#8b2942">X(t+Δt)</text>
+          <text x="798" y="248" font-size="14" fill="#1f4d6e">X+L</text>
+          <path d="M630 268 L840 268" stroke="#1f4d6e" stroke-width="1.4" marker-start="url(#arr)" marker-end="url(#arr)"/>
+          <text x="710" y="288" font-size="13" fill="#1f4d6e">same L</text>
+          <text x="682" y="168" font-size="13" fill="#1b1b18">still length L</text>
+          <path d="M820 100 L820 170" stroke="#2f6b4f" stroke-width="1.5" marker-end="url(#arr-in)"/>
+          <text x="730" y="92" font-size="13" fill="#2f6b4f">swallows film</text>
+          <text x="868" y="236" font-size="13" fill="#5a574e">r</text>
+        </svg>
+        <figcaption>
+          Window kinematics, lengths not to scale. The mesh occupies a box of radial width <em>L</em> whose left edge is the rim.
+          The physics is a hole growing in an unbounded sheet. Film to the left of <em>X</em> has already become hole and is dropped from the mesh;
+          film to the right of <em>X</em>+<em>L</em> has not yet been swallowed.
+          Default <em>L</em> = 40. The laboratory-frame outer wall <em>R</em><sub>out</sub> is used only to seed the mesh at <em>t</em> = 0, at <em>X</em><sub>0</sub> + <em>L</em>.
+        </figcaption>
+      </figure>
+
+      <h3>Rim geometry</h3>
+      <figure class="schematic">
+        <svg viewBox="0 0 720 260" role="img" aria-labelledby="cap-rim">
+          <title id="cap-rim">Close-up of the meridional rim: semicircular cap of radius one half, tip pin, midplane symmetry.</title>
+          <rect x="0" y="0" width="720" height="260" fill="#fffdf8"/>
+          <line x1="40" y1="30" x2="40" y2="200" stroke="#1b1b18" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <text x="18" y="44" font-size="13" fill="#5a574e">z</text>
+          <rect x="40" y="50" width="160" height="130" fill="#dfe7ef"/>
+          <text x="90" y="120" font-size="14" fill="#5a574e">hole</text>
+          <path d="M200 180 A50 50 0 0 1 250 130 L620 130 L620 180 Z" fill="#efe3cc" stroke="#c4a574" stroke-width="2.2"/>
+          <line x1="30" y1="180" x2="680" y2="180" stroke="#1b1b18" stroke-width="1.5"/>
+          <circle cx="200" cy="180" r="7" fill="#8b2942"/>
+          <!-- cap radius -->
+          <line x1="250" y1="180" x2="250" y2="130" stroke="#5a574e" stroke-width="1" stroke-dasharray="3 2"/>
+          <line x1="200" y1="180" x2="250" y2="180" stroke="#5a574e" stroke-width="1" stroke-dasharray="3 2"/>
+          <path d="M200 180 L236 155" stroke="#5a574e" stroke-width="1"/>
+          <text x="252" y="162" font-size="13" fill="#5a574e">h0/2 = 1/2</text>
+          <text x="186" y="210" font-size="14" fill="#8b2942">tip (X, 0)</text>
+          <text x="258" y="210" font-size="13" fill="#5a574e">shoulder (X + 1/2, 1/2)</text>
+          <text x="430" y="116" font-size="14" fill="#1b1b18">free surface</text>
+          <text x="400" y="158" font-size="14" fill="#1b1b18">undisturbed film</text>
+          <text x="30" y="210" font-size="13" fill="#5a574e">midplane z = 0</text>
+          <text x="688" y="196" font-size="13" fill="#5a574e">r</text>
+          <text x="40" y="240" font-size="13" fill="#8b2942">cartesian pin: mesh_x − X = 0 at interface/symmetry</text>
+        </svg>
+        <figcaption>Initial cap matching the Basilisk hole. The centre of the semicircle sits on the midplane at the shoulder station. Only the upper half-sheet is solved; the lower half is the midplane image.</figcaption>
+      </figure>
+    </section>
+
+    <section id="ale" aria-labelledby="ale-h">
+      <h2 id="ale-h">ALE window, not a moving frame</h2>
+      <p>
+        The coordinate system remains <code>axisymmetric</code>. Mesh coordinates
+        carry the true radius, so the 2<em>πr</em> measure and the hoop terms
+        see physical <em>r</em>. Fluid velocities are laboratory-frame throughout.
+        Only the outer boundary of the meshed region moves.
+      </p>
+      <p>
+        A radial translation is not a Galilean transformation in axisymmetry
+        (the 1/<em>r</em> metric terms do not translate). We therefore apply no
+        body force. The planar correction
+        <math>
+          <mrow>
+            <mo>−</mo><mi>ρ</mi>
+            <mfrac><mrow><mi>∂U</mi></mrow><mrow><mi>∂t</mi></mrow></mfrac>
+          </mrow>
+        </math>
+        has no analogue here and must not be copied.
+      </p>
+
+      <div class="tablist" role="tablist" aria-label="Formulation schematics">
+        <button type="button" role="tab" id="tab-axi" aria-selected="true" aria-controls="panel-axi">Axi window</button>
+        <button type="button" role="tab" id="tab-lab" aria-selected="false" aria-controls="panel-lab">Axi lab</button>
+        <button type="button" role="tab" id="tab-planar" aria-selected="false" aria-controls="panel-planar">Planar co-moving</button>
+      </div>
+
+      <div id="panel-axi" class="panel" role="tabpanel" aria-labelledby="tab-axi">
+        <figure class="schematic">
+          <svg viewBox="0 0 720 300" role="img" aria-labelledby="cap-axi">
+            <title id="cap-axi">Far-edge kinematics of the axi window: mesh moves, fluid is at rest.</title>
+            <rect x="0" y="0" width="720" height="300" fill="#fffdf8"/>
+            <path d="M80 200 A36 36 0 0 1 116 164 L520 164 L520 200 Z" fill="#efe3cc" stroke="#c4a574" stroke-width="2"/>
+            <line x1="30" y1="200" x2="680" y2="200" stroke="#1b1b18" stroke-width="1.4"/>
+            <line x1="520" y1="50" x2="520" y2="200" stroke="#1f4d6e" stroke-width="3"/>
+            <circle cx="80" cy="200" r="6" fill="#8b2942"/>
+            <text x="62" y="228" font-size="14" fill="#8b2942">r = X(t)</text>
+            <text x="488" y="228" font-size="14" fill="#1f4d6e">r = X+L</text>
+            <!-- mesh velocity -->
+            <path d="M480 92 L560 92" stroke="#1f4d6e" stroke-width="2" marker-end="url(#arr)"/>
+            <text x="430" y="80" font-size="14" fill="#1f4d6e">mesh velocity = U ê_r</text>
+            <!-- fluid rest -->
+            <text x="536" y="130" font-size="14" fill="#2f6b4f">fluid u = 0</text>
+            <circle cx="548" cy="148" r="3" fill="#2f6b4f"/>
+            <circle cx="568" cy="148" r="3" fill="#2f6b4f"/>
+            <circle cx="588" cy="148" r="3" fill="#2f6b4f"/>
+            <text x="536" y="170" font-size="13" fill="#2f6b4f">(lab rest)</text>
+            <text x="90" y="150" font-size="14">liquid window</text>
+            <text x="90" y="258" font-size="13" fill="#5a574e">no bulk force (radial translation is not Galilean)</text>
+            <text x="90" y="280" font-size="13" fill="#5a574e">relative flux into the window = U times the far-edge area</text>
+          </svg>
+          <figcaption>Axi window. The far film is at rest in the laboratory and is swallowed as the window advances. There is no body force.</figcaption>
+        </figure>
+      </div>
+
+      <div id="panel-lab" class="panel" role="tabpanel" aria-labelledby="tab-lab" hidden>
+        <figure class="schematic">
+          <svg viewBox="0 0 720 300" role="img" aria-labelledby="cap-lab">
+            <title id="cap-lab">Axisymmetric lab-frame annulus with a fixed outer wall.</title>
+            <rect x="0" y="0" width="720" height="300" fill="#fffdf8"/>
+            <rect x="40" y="50" width="80" height="150" fill="#dfe7ef"/>
+            <path d="M120 200 A36 36 0 0 1 156 164 L640 164 L640 200 Z" fill="#efe3cc" stroke="#c4a574" stroke-width="2"/>
+            <line x1="30" y1="200" x2="700" y2="200" stroke="#1b1b18" stroke-width="1.4"/>
+            <line x1="640" y1="40" x2="640" y2="200" stroke="#1b1b18" stroke-width="3"/>
+            <circle cx="120" cy="200" r="6" fill="#5a574e"/>
+            <line x1="40" y1="30" x2="40" y2="230" stroke="#1b1b18" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <text x="104" y="228" font-size="15">R(t)</text>
+            <text x="600" y="228" font-size="15">R_out fixed</text>
+            <text x="260" y="148" font-size="15">annulus must cover the whole path</text>
+            <text x="648" y="90" font-size="14">wall, u = 0</text>
+            <text x="70" y="258" font-size="13" fill="#5a574e">R(t) is an observable (min mesh_x on the interface), not a global unknown</text>
+            <text x="70" y="280" font-size="13" fill="#5a574e">no frame velocity, no tip pin, exact global volume conservation</text>
+          </svg>
+          <figcaption>Axi lab. The outer radius is a wall that must contain <em>R</em><sub>0</sub> + <em>V</em><sub>TC</sub> <em>t</em><sub>end</sub> plus the disturbance footprint.</figcaption>
+        </figure>
+      </div>
+
+      <div id="panel-planar" class="panel" role="tabpanel" aria-labelledby="tab-planar" hidden>
+        <figure class="schematic">
+          <svg viewBox="0 0 720 300" role="img" aria-labelledby="cap-pl">
+            <title id="cap-pl">Planar co-moving sheet: tip frozen at x = 0, far film enters at minus U.</title>
+            <rect x="0" y="0" width="720" height="300" fill="#fffdf8"/>
+            <path d="M80 200 A36 36 0 0 1 116 164 L600 164 L600 200 Z" fill="#efe3cc" stroke="#c4a574" stroke-width="2"/>
+            <line x1="30" y1="200" x2="700" y2="200" stroke="#1b1b18" stroke-width="1.4"/>
+            <line x1="600" y1="50" x2="600" y2="200" stroke="#2f6b4f" stroke-width="3"/>
+            <circle cx="80" cy="200" r="6" fill="#8b2942"/>
+            <text x="64" y="228" font-size="15" fill="#8b2942">x = 0</text>
+            <text x="560" y="228" font-size="15" fill="#2f6b4f">x = L</text>
+            <text x="240" y="148" font-size="15">true co-moving frame</text>
+            <path d="M660 100 L600 100" stroke="#2f6b4f" stroke-width="2" marker-end="url(#arr-in)"/>
+            <text x="430" y="80" font-size="14" fill="#2f6b4f">inflow u_x = −U(t)</text>
+            <text x="90" y="258" font-size="13" fill="#8b2942">pin: mesh_x = 0 closes the global dof U</text>
+            <text x="90" y="280" font-size="13" fill="#1b1b18">bulk force −ρ ∂t U because the frame itself accelerates</text>
+          </svg>
+          <figcaption>Planar co-moving. Here the computational frame itself moves. The tip is held at the origin and the far film enters at −<em>U</em>.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="equations" aria-labelledby="eq-h">
+      <h2 id="eq-h">Equations</h2>
+      <p>
+        We non-dimensionalize on the <em>full</em> thickness, with
+        <em>ρ</em> = <em>σ</em> = <em>h</em><sub>0</sub> = 1. The half-thickness is 1/2.
+        Getting this wrong moves the answer by exactly
+        <math><msqrt><mn>2</mn></msqrt></math>.
+        Taylor (1959) and Culick (1960) give the same terminal speed in planar
+        and axisymmetric geometry. Both constants are imported from
+        <code>planar_comoving</code> so the three geometries cannot drift apart.
+      </p>
+      <div class="eq" aria-label="Taylor-Culick speed">
+        <math display="block">
+          <mrow>
+            <msub><mi>V</mi><mtext>TC</mtext></msub>
+            <mo>=</mo>
+            <msqrt>
+              <mfrac>
+                <mrow><mn>2</mn><mi>σ</mi></mrow>
+                <mrow><mi>ρ</mi><msub><mi>h</mi><mn>0</mn></msub></mrow>
+              </mfrac>
+            </msqrt>
+            <mo>=</mo>
+            <msqrt><mn>2</mn></msqrt>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>V_{\mathrm{TC}} = \sqrt{\frac{2\sigma}{\rho h_0}} = \sqrt{2}</pre>
+      </details>
+      <p>
+        The Savva–Bush Ohnesorge number (the driver’s <code>--oh</code>) includes a factor
+        <math><msqrt><mn>2</mn></msqrt></math>
+        that the coded viscosity does not. We caution that this convention mismatch
+        is large enough to look like physics.
+      </p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <msub><mi>Oh</mi><mtext>SB</mtext></msub>
+            <mo>=</mo>
+            <mfrac>
+              <mi>μ</mi>
+              <msqrt>
+                <mrow>
+                  <mn>2</mn><mi>ρ</mi><mi>σ</mi><msub><mi>h</mi><mn>0</mn></msub>
+                </mrow>
+              </msqrt>
+            </mfrac>
+          </mrow>
+        </math>
+        <math display="block">
+          <mrow>
+            <mi>μ</mi>
+            <mo>=</mo>
+            <msqrt><mn>2</mn></msqrt>
+            <msub><mi>Oh</mi><mtext>SB</mtext></msub>
+            <mo>,</mo>
+            <mspace width="0.7em"/>
+            <msub><mi>τ</mi><mtext>vis</mtext></msub>
+            <mo>=</mo>
+            <mfrac>
+              <mrow><mi>μ</mi><msub><mi>h</mi><mn>0</mn></msub></mrow>
+              <mrow><mn>2</mn><mi>σ</mi></mrow>
+            </mfrac>
+            <mo>=</mo>
+            <mfrac><mi>μ</mi><mn>2</mn></mfrac>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>Oh_{\mathrm{SB}} = \frac{\mu}{\sqrt{2\rho\sigma h_0}}
+\quad\Rightarrow\quad
+\mu = \sqrt{2}\,Oh_{\mathrm{SB}},
+\qquad
+\tau_{\mathrm{vis}} = \frac{\mu h_0}{2\sigma} = \frac{\mu}{2}</pre>
+      </details>
+
+      <h3>Window kinematics</h3>
+      <p>The meshed interval is the translating cut</p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <mi>X</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo>
+            <mo>≤</mo>
+            <mi>r</mi>
+            <mo>≤</mo>
+            <mi>X</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo>
+            <mo>+</mo>
+            <mi>L</mi>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>X(t) \le r \le X(t) + L</pre>
+      </details>
+      <p>
+        Two global unknowns close the system: hole radius <em>X</em> and retraction speed <em>U</em>.
+        The far-edge position is not an extra unknown; it is slaved to <em>X</em>.
+      </p>
+      <div class="eq">
+        <math display="block">
+          <mtable columnalign="right left" columnspacing="0.6em" displaystyle="true">
+            <mtr>
+              <mtd><mrow><msub><mi>r</mi><mtext>tip</mtext></msub><mo>−</mo><mi>X</mi></mrow></mtd>
+              <mtd><mrow><mo>=</mo><mn>0</mn></mrow></mtd>
+            </mtr>
+            <mtr>
+              <mtd>
+                <mrow>
+                  <mfrac>
+                    <mrow><mi mathvariant="normal">d</mi><mi>X</mi></mrow>
+                    <mrow><mi mathvariant="normal">d</mi><mi>t</mi></mrow>
+                  </mfrac>
+                  <mo>−</mo>
+                  <mi>U</mi>
+                </mrow>
+              </mtd>
+              <mtd><mrow><mo>=</mo><mn>0</mn></mrow></mtd>
+            </mtr>
+            <mtr>
+              <mtd>
+                <mrow>
+                  <msub><mi>r</mi><mtext>far</mtext></msub>
+                  <mo>−</mo>
+                  <mo stretchy="false">(</mo><mi>X</mi><mo>+</mo><mi>L</mi><mo stretchy="false">)</mo>
+                </mrow>
+              </mtd>
+              <mtd><mrow><mo>=</mo><mn>0</mn></mrow></mtd>
+            </mtr>
+          </mtable>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>r_{\mathrm{tip}} - X = 0
+\qquad
+\frac{\mathrm{d}X}{\mathrm{d}t} - U = 0
+\qquad
+r_{\mathrm{far}} - (X+L) = 0</pre>
+      </details>
+      <p>
+        Far-edge fluid velocity is laboratory rest:
+        <math>
+          <mrow>
+            <msub><mi>u</mi><mi>r</mi></msub>
+            <mo>=</mo>
+            <msub><mi>u</mi><mi>z</mi></msub>
+            <mo>=</mo>
+            <mn>0</mn>
+          </mrow>
+        </math>.
+        Mesh velocity of that edge is
+        <math>
+          <mrow>
+            <msub><mi>U</mi><mtext>mesh</mtext></msub>
+            <mo>=</mo>
+            <mi>U</mi>
+            <msub><mover><mi>e</mi><mo>^</mo></mover><mi>r</mi></msub>
+          </mrow>
+        </math>.
+        The relative flux into the window is therefore <em>U</em> times the far-edge area.
+      </p>
+
+      <h3>An exact volume identity</h3>
+      <p>
+        The far edge is an inflow of undisturbed film (half-thickness 1/2, at rest).
+        The flux is the product of mesh speed and far-edge area:
+      </p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <mfrac>
+              <mrow><mi mathvariant="normal">d</mi><mi>V</mi></mrow>
+              <mrow><mi mathvariant="normal">d</mi><mi>t</mi></mrow>
+            </mfrac>
+            <mo>=</mo>
+            <mover><mi>X</mi><mo>˙</mo></mover>
+            <mo>⋅</mo>
+            <mn>2</mn><mi>π</mi>
+            <mo stretchy="false">(</mo><mi>X</mi><mo>+</mo><mi>L</mi><mo stretchy="false">)</mo>
+            <mo>⋅</mo>
+            <mfrac><mn>1</mn><mn>2</mn></mfrac>
+            <mo>=</mo>
+            <mi>π</mi>
+            <mo stretchy="false">(</mo><mi>X</mi><mo>+</mo><mi>L</mi><mo stretchy="false">)</mo>
+            <mover><mi>X</mi><mo>˙</mo></mover>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>\frac{\mathrm{d}V}{\mathrm{d}t}
+  = \dot{X}\cdot 2\pi(X+L)\cdot\tfrac12
+  = \pi(X+L)\,\dot{X}</pre>
+      </details>
+      <p>This integrates in closed form. No time-step error accumulates from the output cadence:</p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <mi>V</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo>
+            <mo>=</mo>
+            <mi>V</mi><mo stretchy="false">(</mo><mn>0</mn><mo stretchy="false">)</mo>
+            <mo>+</mo>
+            <mfrac><mi>π</mi><mn>2</mn></mfrac>
+            <mo stretchy="false">[</mo>
+            <msup>
+              <mrow>
+                <mo stretchy="false">(</mo>
+                <mi>X</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo>
+                <mo>+</mo>
+                <mi>L</mi>
+                <mo stretchy="false">)</mo>
+              </mrow>
+              <mn>2</mn>
+            </msup>
+            <mo>−</mo>
+            <msup>
+              <mrow>
+                <mo stretchy="false">(</mo>
+                <msub><mi>X</mi><mn>0</mn></msub>
+                <mo>+</mo>
+                <mi>L</mi>
+                <mo stretchy="false">)</mo>
+              </mrow>
+              <mn>2</mn>
+            </msup>
+            <mo stretchy="false">]</mo>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>V(t) = V(0) + \frac{\pi}{2}\Bigl[(X(t)+L)^2 - (X_0+L)^2\Bigr]</pre>
+      </details>
+      <p class="note">
+        Drift of <em>V</em> − <em>V</em><sub>expected</sub> is as diagnostic here as exact volume conservation is for the lab annulus. A drift indicts the ALE mass balance, the far-edge constraint, or the free-surface kinematics.
+      </p>
+    </section>
+
+    <section id="compare" aria-labelledby="cmp-h">
+      <h2 id="cmp-h">Three formulations, same physics</h2>
+      <p>
+        These are sibling files, not flags. The planar class is only co-moving;
+        there is no planar lab driver.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col"></th>
+              <th scope="col">Planar co-moving</th>
+              <th scope="col">Axi window</th>
+              <th scope="col">Axi lab</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Module</th>
+              <td data-label="Planar co-moving"><code>planar_comoving.py</code></td>
+              <td data-label="Axi window"><code>axisymmetric_comoving.py</code></td>
+              <td data-label="Axi lab"><code>axisymmetric_lab.py</code></td>
+            </tr>
+            <tr>
+              <th scope="row">Driver</th>
+              <td data-label="Planar co-moving"><code>run_validation.py</code></td>
+              <td data-label="Axi window"><code>run_validation_axi_comoving.py</code></td>
+              <td data-label="Axi lab"><code>run_validation_axi.py</code></td>
+            </tr>
+            <tr>
+              <th scope="row">What moves</th>
+              <td data-label="Planar co-moving">The frame. Tip frozen at <em>x</em> = 0.</td>
+              <td data-label="Axi window">Only the meshed interval. Tip at physical <em>r</em> = <em>X(t)</em>.</td>
+              <td data-label="Axi lab">Nothing. Wall at fixed <em>R</em><sub>out</sub>.</td>
+            </tr>
+            <tr>
+              <th scope="row">Velocities</th>
+              <td data-label="Planar co-moving">Co-moving: far film enters at −<em>U</em>.</td>
+              <td data-label="Axi window">Laboratory: far film at rest, swallowed.</td>
+              <td data-label="Axi lab">Laboratory: far film at rest against a wall.</td>
+            </tr>
+            <tr>
+              <th scope="row">Global dofs</th>
+              <td data-label="Planar co-moving"><em>U</em> (frame speed)</td>
+              <td data-label="Axi window"><em>X</em> (hole radius) and <em>U</em> = d<em>X</em>/d<em>t</em></td>
+              <td data-label="Axi lab">None. <em>R</em> is read off the mesh.</td>
+            </tr>
+            <tr>
+              <th scope="row">Bulk force</th>
+              <td data-label="Planar co-moving">−<em>ρ</em> ∂<sub>t</sub><em>U</em></td>
+              <td data-label="Axi window">None (radial translation is not Galilean)</td>
+              <td data-label="Axi lab">None.</td>
+            </tr>
+            <tr>
+              <th scope="row">Cost vs <em>t</em><sub>end</sub></th>
+              <td data-label="Planar co-moving">Window length <em>L</em> only</td>
+              <td data-label="Axi window">Window length <em>L</em> only</td>
+              <td data-label="Axi lab">Annulus must cover the whole path</td>
+            </tr>
+            <tr>
+              <th scope="row">Volume check</th>
+              <td data-label="Planar co-moving">Not conserved (inflow)</td>
+              <td data-label="Axi window">Exact swallowed-film identity</td>
+              <td data-label="Axi lab">Exact global conservation</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        We keep the name “co-moving” for the axisymmetric window because it is
+        the sibling of the planar class. Physically the formulation is an ALE
+        translating cut of laboratory-frame axisymmetric Navier–Stokes.
+      </p>
+    </section>
+
+    <section id="pin" aria-labelledby="pin-h">
+      <h2 id="pin-h">Does the pin hold the tip still?</h2>
+      <p>
+        In the planar problem, yes. One global unknown <em>U</em> is closed by a
+        point constraint at the rim/midplane junction:
+      </p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <msub><mi>x</mi><mtext>tip</mtext></msub>
+            <mo>=</mo>
+            <mn>0</mn>
+            <mtext>&#x2003;with test function of&#x2003;</mtext>
+            <mi>U</mi>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>x_{\mathrm{tip}} = 0 \qquad\text{(test function of }U\text{)}</pre>
+      </details>
+      <p>
+        Far inflow uses a second multiplier field (<code>EnforcedDirichlet</code>) because −<em>U</em> depends on an unknown.
+        The tip is stationary in the computational frame.
+      </p>
+      <p>
+        In the axisymmetric window the tip is not held still. We use the same
+        device (one global unknown, one point constraint, residual fed into an
+        <code>EnforcedBC</code>), but the residual is
+      </p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <msub><mi>r</mi><mtext>tip</mtext></msub>
+            <mo>−</mo>
+            <mi>X</mi>
+            <mo>=</mo>
+            <mn>0</mn>
+            <mtext>&#x2003;cartesian measure</mtext>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>r_{\mathrm{tip}} - X = 0
+\quad\text{(cartesian measure; not }2\pi r\text{)}</pre>
+      </details>
+      <p>
+        so <em>X</em> is the moving hole radius. We caution that writing the
+        planar residual <em>r</em><sub>tip</sub> = 0 would be wrong twice. The tip
+        sits at <em>R</em><sub>0</sub> &gt; 0, and under the 2<em>πr</em> measure that
+        constraint is a double root with a vanishing Jacobian row. The pin is
+        therefore written in the cartesian measure so the row stays O(1) rather
+        than growing like 2<em>πR(t)</em>.
+      </p>
+      <p>
+        The far edge is not Dirichlet. The residual form is
+      </p>
+      <div class="eq">
+        <math display="block">
+          <mrow>
+            <msub><mi>r</mi><mtext>far</mtext></msub>
+            <mo>−</mo>
+            <mo stretchy="false">(</mo><mi>X</mi><mo>+</mo><mi>L</mi><mo stretchy="false">)</mo>
+            <mo>=</mo>
+            <mn>0</mn>
+          </mrow>
+        </math>
+      </div>
+      <details class="tex">
+        <summary>LaTeX</summary>
+        <pre>r_{\mathrm{far}} - (X+L) = 0
+\quad\text{(EnforcedBC residual, not Dirichlet)}</pre>
+      </details>
+      <p>
+        At the far/interface corner, the free-surface kinematic multiplier must be pinned
+        (<code>DirichletBC(_kin_bc=0)</code>). Otherwise two multipliers act on one free
+        <code>mesh_x</code> and the Jacobian is exactly singular.
+      </p>
+      <p>
+        The design note originally listed the window as a fallback if the
+        graded annulus could not reach the desired <em>t</em><sub>end</sub>.
+        It is now a first-class sibling of <code>axisymmetric_lab.py</code>.
+        A shifted-metric co-moving variant, with a measure that depends on a
+        global unknown, was assessed and rejected. It would route azimuthal
+        curvature, the quantity under study, through unexercised custom machinery.
+      </p>
+    </section>
+
+    <section id="sources" aria-labelledby="src-h">
+      <h2 id="src-h">Sources</h2>
+      <ul>
+        <li><code>simulationCases/axisymmetric_comoving.py</code> (window, pin, volume identity)</li>
+        <li><code>simulationCases/planar_comoving.py</code> (true co-moving frame; tip pin at <em>x</em> = 0)</li>
+        <li><code>simulationCases/axisymmetric_lab.py</code> (fixed-wall annulus)</li>
+        <li><a href="axi-design.md"><code>docs/axi-design.md</code></a> (lab-frame primary design and the original window fallback)</li>
+        <li><code>validation/run_validation_axi_comoving.py</code> (campaign driver; Savva–Bush <code>--oh</code>)</li>
+        <li>Taylor (1959); Culick (1960); Savva &amp; Bush, JFM 626 (2009); Sanjay, Sen, Kant &amp; Lohse, JFM 948 (2022)</li>
+      </ul>
+      <div class="export">
+        <button type="button" id="copy-md">Copy Markdown summary</button>
+        <span id="export-status" role="status"></span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Self-contained HTML. No network resources. Open the file locally, or serve the <code>docs/</code> tree.</p>
+  </footer>
+
+  <script>
+    (function () {
+      var THEME_KEY = "axi-comoving-theme";
+      var ALLOWED = { system: true, light: true, dark: true };
+      var themeButtons = document.querySelectorAll("[data-theme-choice]");
+      function readTheme() {
+        try {
+          var v = localStorage.getItem(THEME_KEY);
+          return ALLOWED[v] ? v : "system";
+        } catch (e) {
+          return "system";
+        }
+      }
+      function applyTheme(mode) {
+        if (!ALLOWED[mode]) mode = "system";
+        if (mode === "light" || mode === "dark") {
+          document.documentElement.setAttribute("data-theme", mode);
+        } else {
+          document.documentElement.removeAttribute("data-theme");
+        }
+        themeButtons.forEach(function (btn) {
+          btn.setAttribute("aria-pressed", btn.getAttribute("data-theme-choice") === mode ? "true" : "false");
+        });
+        try {
+          if (mode === "system") localStorage.removeItem(THEME_KEY);
+          else localStorage.setItem(THEME_KEY, mode);
+        } catch (e) {}
+      }
+      applyTheme(readTheme());
+      themeButtons.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          applyTheme(btn.getAttribute("data-theme-choice"));
+        });
+      });
+
+      var tabs = document.querySelectorAll('[role="tab"]');
+      var panels = {
+        "tab-axi": document.getElementById("panel-axi"),
+        "tab-lab": document.getElementById("panel-lab"),
+        "tab-planar": document.getElementById("panel-planar")
+      };
+      var ids = ["tab-axi", "tab-lab", "tab-planar"];
+      function selectTab(id) {
+        tabs.forEach(function (t) {
+          var on = t.id === id;
+          t.setAttribute("aria-selected", on ? "true" : "false");
+          t.tabIndex = on ? 0 : -1;
+        });
+        Object.keys(panels).forEach(function (key) {
+          panels[key].hidden = key !== id;
+        });
+      }
+      tabs.forEach(function (tab) {
+        tab.addEventListener("click", function () { selectTab(tab.id); });
+        tab.addEventListener("keydown", function (ev) {
+          var i = ids.indexOf(tab.id);
+          var next = i;
+          if (ev.key === "ArrowRight" || ev.key === "ArrowDown") {
+            next = (i + 1) % ids.length;
+          } else if (ev.key === "ArrowLeft" || ev.key === "ArrowUp") {
+            next = (i + ids.length - 1) % ids.length;
+          } else if (ev.key === "Home") {
+            next = 0;
+          } else if (ev.key === "End") {
+            next = ids.length - 1;
+          } else {
+            return;
+          }
+          selectTab(ids[next]);
+          document.getElementById(ids[next]).focus();
+          ev.preventDefault();
+        });
+      });
+      selectTab("tab-axi");
+
+      var md = [
+        "# Axisymmetric co-moving window",
+        "",
+        "Mesh occupies $X(t) \\le r \\le X(t)+L$. Velocities are laboratory-frame.",
+        "ALE window translation, not a Galilean boost; no bulk force. Far film is at rest and is swallowed.",
+        "",
+        "Pin: $r_{\\mathrm{tip}} - X = 0$ (cartesian measure). Far: $r_{\\mathrm{far}}-(X+L)=0$ (EnforcedBC residual).",
+        "$U = \\mathrm{d}X/\\mathrm{d}t$ is a solved dof.",
+        "",
+        "Volume: $V(t) = V(0) + (\\pi/2)\\bigl[(X+L)^2 - (X_0+L)^2\\bigr]$.",
+        "",
+        "Planar co-moving is a moving frame (tip $x=0$, inflow $-U$, bulkforce $-\\rho\\partial_t U$).",
+        "Axi lab: fixed $R_{\\mathrm{out}}$, $R(t)$ observable only.",
+        "",
+        "Taylor (1959); Culick (1960); Savva & Bush, JFM 626 (2009); Sanjay, Sen, Kant & Lohse, JFM 948 (2022).",
+        "Modules: axisymmetric_comoving.py, planar_comoving.py, axisymmetric_lab.py; docs/axi-design.md."
+      ].join("\n");
+
+      var btn = document.getElementById("copy-md");
+      var status = document.getElementById("export-status");
+      btn.addEventListener("click", function () {
+        function done(ok) {
+          status.textContent = ok ? "Copied." : "Copy failed; select the summary from the page.";
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(md).then(function () { done(true); }, function () { done(false); });
+        } else {
+          done(false);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

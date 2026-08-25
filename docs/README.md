@@ -21,6 +21,11 @@ finite-element method in a frame co-moving with the rim**, built on
 Savva & Bush are settled and are reported below. The production sweep is
 mid-flight; §7 states exactly what is and is not established.
 
+The axisymmetric co-moving window (ALE cut of laboratory-frame Navier–Stokes,
+not a Galilean boost) is explained with schematics in
+[`axi-comoving-window.html`](axi-comoving-window.html). The design note for the
+axisymmetric solvers is [`axi-design.md`](axi-design.md).
+
 ---
 
 ## 1. Problem

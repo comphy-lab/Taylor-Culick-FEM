@@ -248,6 +248,11 @@ co-moving variant (measure depending on a global unknown) was assessed and
 rejected: implementable, but it routes the azimuthal curvature — the very
 quantity under study — through unexercised custom machinery.
 
+The window formulation is now a first-class sibling of the lab annulus
+(`simulationCases/axisymmetric_comoving.py`). A physical account, with
+schematics and the constraint equations, is
+[`axi-comoving-window.html`](axi-comoving-window.html).
+
 Smoke ladder before any long run (in order, all must pass):
 
 1. **S0 hoop-curvature discriminator**: static quarter-disc droplet, axis at

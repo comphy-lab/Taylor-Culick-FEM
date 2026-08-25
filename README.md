@@ -90,7 +90,9 @@ control is the result rather than a fixed point.
 Note that a radial translation is *not* a Galilean transformation in
 axisymmetry — the `1/r` metric terms do not translate. The co-moving frame is
 therefore implemented as ALE mesh motion with the true physical radius retained
-in the metric, not as a change of variables.
+in the metric, not as a change of variables. Schematics and the constraint
+equations are in
+[`docs/axi-comoving-window.html`](docs/axi-comoving-window.html).
 
 ## Layout
 
