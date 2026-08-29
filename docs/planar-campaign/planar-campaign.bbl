@@ -1,0 +1,66 @@
+\begin{thebibliography}{10}
+
+\bibitem{taylor1959}
+G.~I. Taylor.
+\newblock The dynamics of thin sheets of fluid. {III}. disintegration of fluid
+  sheets.
+\newblock {\em Proc. R. Soc. Lond. A}, 253:313, 1959.
+
+\bibitem{culick1960}
+F.~E.~C. Culick.
+\newblock Comments on a ruptured soap film.
+\newblock {\em J. Appl. Phys.}, 31:1128, 1960.
+
+\bibitem{sanjay2022}
+V.~Sanjay, U.~Sen, P.~Kant, and D.~Lohse.
+\newblock {Taylor}--{Culick} retractions and the influence of the surroundings.
+\newblock {\em J. Fluid Mech.}, 948:A14, 2022.
+
+\bibitem{basilisk}
+S.~Popinet and collaborators.
+\newblock \textsf{Basilisk}.
+\newblock \url{http://basilisk.fr}.
+\newblock Accessed 2026.
+
+\bibitem{diddens2023}
+C.~Diddens and D.~Rocha.
+\newblock Bifurcation tracking on moving meshes and with consideration of
+  azimuthal symmetry breaking instabilities.
+\newblock {\em arXiv:2312.11416}, 2023.
+\newblock The \textsf{pyoomph} method.
+
+\bibitem{heil2006}
+M.~Heil and A.~L. Hazel.
+\newblock \textsf{oomph-lib} --- an object-oriented multi-physics
+  finite-element library.
+\newblock In {\em Fluid--Structure Interaction}, volume~53 of {\em Lecture
+  Notes in Computational Science and Engineering}, page~19. Springer, 2006.
+
+\bibitem{savva2009}
+N.~Savva and J.~W.~M. Bush.
+\newblock Viscous sheet retraction.
+\newblock {\em J. Fluid Mech.}, 626:211, 2009.
+
+\bibitem{brenner1999}
+M.~P. Brenner and D.~Gueyffier.
+\newblock On the bursting of viscous films.
+\newblock {\em Phys. Fluids}, 11:737, 1999.
+
+\bibitem{trouton1906}
+F.~T. Trouton.
+\newblock On the coefficient of viscous traction and its relation to that of
+  viscosity.
+\newblock {\em Proc. R. Soc. Lond. A}, 77:426, 1906.
+
+\bibitem{ahsan2025}
+T.~Ahsan, R.~Brand{\~a}o, B.~Davidovitch, and H.~A. Stone.
+\newblock Retraction of a viscous liquid sheet.
+\newblock {\em arXiv:2507.04603}, 2025.
+
+\bibitem{pierson2020}
+J.-L. Pierson, J.~Magnaudet, E.~Soares, and S.~Popinet.
+\newblock Revisiting the {Taylor}--{Culick} approximation. retraction of an
+  axisymmetric filament.
+\newblock {\em Phys. Rev. Fluids}, 5:073602, 2020.
+
+\end{thebibliography}
