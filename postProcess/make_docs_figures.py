@@ -69,7 +69,8 @@ V_TC = np.sqrt(2.0)
 INTERFACE_COLOR = "#FF00C8"
 
 # Ohnesorge numbers are quoted in the Savva & Bush / JFM convention throughout
-# the docs. See docs/planar-campaign/README.md; the coded value is a factor sqrt(2) larger.
+# the docs. See docs/planar-campaign/planar-campaign.tex sec:units; the coded
+# value is a factor sqrt(2) larger.
 PANELS = [
     ("0.035", "Oh_SB_0.035_inertial_log", "archive"),
     ("0.2377", "Oh_SB_0.2377_u995", "sweep"),

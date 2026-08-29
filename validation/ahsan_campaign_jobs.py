@@ -9,7 +9,8 @@ the parameter policy is in one readable place.
 RESOLUTION POLICY
 
   TC1D-FEM   dT = 5e-4 uniformly (nsteps = Tend/5e-4). BDF2 is second order in
-             dt and the published convergence study (docs/planar-campaign/README.md) puts
+             dt and the published convergence study
+             (docs/planar-campaign/planar-campaign.tex sec:timestep) puts
              u*(30) at 3.9e-8 from the dt -> 0 limit at dT = 1.2e-3, so 5e-4 is
              comfortably inside the plateau. Mesh: the driver's auto_nelem
              holds the graded tip cell at the value validated by the 1D mesh
