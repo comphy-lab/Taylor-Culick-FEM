@@ -6,6 +6,13 @@ direct free-surface Navier–Stokes formulations. The physics, the derivations,
 the measured numbers and the numerical traps are in `axi-validation.tex`; this
 file records what exists and how to run it.
 
+This note is the solver construction check. It spans viscous and inertial
+axisymmetric formulations together, which is why it was not renamed
+`validation-inertial`. The inertial FEM–Basilisk *campaign* (planar closed,
+axi still running) is
+[`../validation-inertial/`](../validation-inertial/). The planar viscous
+Trouton/Ahsan note is [`../validation-viscous/`](../validation-viscous/).
+
 | file | role |
 |---|---|
 | `axi-validation.tex` | source |
@@ -29,7 +36,8 @@ All four live in `simulationCases/`.
 
 The design authority for all four — derivations, the reconciled scheme, the
 internal-check list, the comparison protocol and the two source-level audits —
-is `docs/axi-design.md`.
+is `docs/axi-design.md`. The translating-window DNS is explained, with
+schematics, in [`../axi-comoving-window.html`](../axi-comoving-window.html).
 
 ## Running the checks
 

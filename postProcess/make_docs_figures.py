@@ -37,7 +37,7 @@ look like the papers they support.
 
 Run from the repository root with the campaign volumes mounted::
 
-    uv run python postProcess/make_docs_figures.py --out docs/figures
+    uv run python postProcess/make_docs_figures.py --out docs/planar-campaign/figures
 
 Simulation output is NOT in this repository. ``--sweep`` and ``--archive``
 point at the run roots; any case whose data is missing is skipped with a
@@ -69,7 +69,8 @@ V_TC = np.sqrt(2.0)
 INTERFACE_COLOR = "#FF00C8"
 
 # Ohnesorge numbers are quoted in the Savva & Bush / JFM convention throughout
-# the docs. See docs/README.md; the coded value is a factor sqrt(2) larger.
+# the docs. See docs/planar-campaign/planar-campaign.tex sec:units; the coded
+# value is a factor sqrt(2) larger.
 PANELS = [
     ("0.035", "Oh_SB_0.035_inertial_log", "archive"),
     ("0.2377", "Oh_SB_0.2377_u995", "sweep"),
@@ -460,7 +461,7 @@ def fig4_approach(out: Path, sweep: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", type=Path, default=Path("docs/figures"))
+    ap.add_argument("--out", type=Path, default=Path("docs/planar-campaign/figures"))
     ap.add_argument("--sweep", type=Path,
                     default=Path("/mnt/stokesInt1/running-simulations/"
                                  "elastic-taylor-culick/u995-sweep"))
