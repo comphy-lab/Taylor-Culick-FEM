@@ -10,3 +10,12 @@ output/
 _ccode/
 .pytest_cache/
 .ruff_cache/
+
+# LaTeX auxiliaries. Tracked products (.tex, .pdf, .bib, .bbl) stay in docs/.
+docs/**/*.aux
+docs/**/*.log
+docs/**/*.out
+docs/**/*.fls
+docs/**/*.fdb_latexmk
+docs/**/*.synctex.gz
+
