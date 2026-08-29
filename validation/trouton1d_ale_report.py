@@ -42,7 +42,7 @@ from pathlib import Path
 import numpy as np
 
 #: The published constants this solver is being held to.
-USTAR_30_REFERENCE = 0.98073          # Richardson limit, docs/README.md
+USTAR_30_REFERENCE = 0.98073          # Richardson limit, docs/planar-campaign/README.md
 R_REFERENCE = {50: 1.498623, 100: 1.499660, 200: 1.499919, 300: 1.499993}
 
 

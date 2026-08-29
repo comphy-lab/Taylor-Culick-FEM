@@ -1,5 +1,10 @@
 # Axisymmetric Taylor-Culick: design note
 
+Formulation authority for the four axisymmetric solvers. The inertial
+FEM–Basilisk *campaign* is `docs/validation-inertial/`; the solver
+construction checks are `docs/axi-validation/`. This file is the design
+note those documents point at.
+
 Feature branch `kelvin/axi-taylor-culick`. Scope: viscous (Newtonian)
 axisymmetric hole-opening variants of the depth-averaged solvers (mass
 coordinate and ALE) and of the 2D sharp-interface DNS. The guiding choice,

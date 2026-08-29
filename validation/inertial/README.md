@@ -40,6 +40,12 @@ In this regime the approach is inertial, set by rim growth in capillary time
 `sqrt(rho h0^3/gamma)`, and `t*` is not a meaningful target. Report low-`Oh`
 results against capillary time.
 
+## Cross-method check
+
+The planar FEM–Basilisk comparison at `Oh_SB < 0.1` is closed. The write-up
+is `docs/validation-inertial/`. The oscillation question below is about
+mechanism, not about whether `u*` approaches 1.
+
 ## Open question this can settle
 
 Whether the planar rim approaches `V_TC` **monotonically or with oscillation**

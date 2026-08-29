@@ -13,7 +13,7 @@ still resolves and `python -m pyoomph check all` passes.
 
 ```bash
 uv sync                                # build/refresh the environment
-uv run python cases/planar_comoving.py
+uv run python simulationCases/planar_comoving.py
 uv sync --upgrade-package pyoomph      # move to a newer develop commit
 ```
 

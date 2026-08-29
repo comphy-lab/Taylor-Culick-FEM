@@ -288,7 +288,7 @@ for i, (L, lab) in enumerate(((0.1, r"$\mathcal{L}=0.1$"),
         rel = ty / (2.0 * np.sqrt(tx / np.pi)) - 1.0
         axs[1].semilogx(tx[sl], 100 * rel[sl], mk, mfc="none", mec=c,
                         mew=MLW * 0.7, ms=11 * S, ls="none", zorder=5)
-# Eq.~(12) is ``eq:diffusive`` in docs/validation-1d/validation-1d.tex.
+# Eq.~(12) is ``eq:diffusive`` in docs/validation-viscous/validation-viscous.tex.
 Tt = np.geomspace(1e-4, 1.0, 200)
 axs[0].plot(Tt, 2 * np.sqrt(Tt / np.pi), ":", color=C_TH, lw=MLW * 1.2,
             zorder=2, label=r"Eq.~(12), $2\sqrt{T/\pi}$")

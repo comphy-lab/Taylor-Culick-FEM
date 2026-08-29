@@ -32,7 +32,7 @@ import os
 
 import numpy as np
 
-# t* = t / tau_vis and T = t / t_I are both viscous times; see docs/README.md
+# t* = t / tau_vis and T = t / t_I are both viscous times; see docs/planar-campaign/README.md
 # section 2.  The reduced-model literature works in T, this code in t*.
 TSTAR_PER_T = 4.0
 
