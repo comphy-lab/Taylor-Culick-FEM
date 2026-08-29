@@ -38,7 +38,8 @@ latexmk -pdf planar-campaign.tex
 The output is `planar-campaign.pdf`. `make clean` removes the auxiliary files
 and leaves the PDF.
 
-Figures are rebuilt from campaign output, when those volumes are mounted, by
+Figures are rebuilt from campaign output, when those volumes are mounted, from
+the repository root:
 
 ```bash
 uv run python postProcess/make_docs_figures.py --out docs/planar-campaign/figures

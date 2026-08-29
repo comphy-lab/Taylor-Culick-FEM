@@ -61,7 +61,7 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 
 ## Validation order
 
-`cases/planar_comoving.py` must pass before any axisymmetric result is
+`simulationCases/planar_comoving.py` must pass before any axisymmetric result is
 believed, because it is the only case with published data to check against:
 Savva & Bush, JFM 626 (2009), figure 6. At `Oh_SB = 0.5` this code gives
 `U/V_TC = 0.9297` at `t* = 30` against their ~0.93. Treat that as the
@@ -76,7 +76,7 @@ convergence, because every run agrees there regardless of mesh or domain.
 
 ## Repository conventions
 
-- `cases/` holds runnable problem definitions, one physical configuration each.
+- `simulationCases/` holds runnable problem definitions, one physical configuration each.
 - `src/taylor_culick_fem/` holds shared equations, mesh templates and
   diagnostics. Anything used by two cases belongs here.
 - `postProcess/` holds analysis and figure generation, never simulation state.

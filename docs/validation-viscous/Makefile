@@ -2,7 +2,9 @@
 
 pdf: validation-viscous.pdf
 
-validation-viscous.pdf: validation-viscous.tex validation-viscous.bib
+FIGURES := $(wildcard figures/*.pdf)
+
+validation-viscous.pdf: validation-viscous.tex validation-viscous.bib $(FIGURES)
 	pdflatex -interaction=nonstopmode validation-viscous
 	bibtex validation-viscous
 	pdflatex -interaction=nonstopmode validation-viscous

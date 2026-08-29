@@ -187,7 +187,8 @@ class TroutonSheet(Equations):
         # It agrees with the co-located answer where both exist: maximum relative
         # difference in u_tip of 7.1e-5 across all 183 common output rows, and
         # u*(t*=31.4) = 0.9806746 against 0.9806744, so it reproduces the
-        # Richardson limit u*(30) -> 0.98073 recorded in docs/planar-campaign/README.md.
+        # Richardson limit u*(30) -> 0.98073 recorded in
+        # docs/planar-campaign/planar-campaign.tex sec:oned.
         #
         # THE VELOCITY SPACE IS THE DISCRIMINATOR, NOT THE THICKNESS SPACE. A
         # variant sweep at N=1600 settles this: with u on C2, the failure time is

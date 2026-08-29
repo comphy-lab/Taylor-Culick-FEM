@@ -243,20 +243,18 @@ code written anywhere. Relative to `planar_comoving.py`:
 - `R_out` sizing reuses the planar disturbance-footprint rule
   (`run_validation.py`), plus the full tip travel.
 
-Fallback, only if `t_end` must grow beyond the graded-annulus budget: a
-moving window `[X(t), X(t) + L]` with one bookkeeping global dof `X` slaved
-to the tip via `WeakContribution(mesh_x - X, Xtest,
-coordinate_system=cartesian)` and `EnforcedDirichlet(mesh_x = X + L)` at the
-far boundary. This reintroduces the finite-window clamp (the dominant planar
-error) and both recorded traps; it is not the default. The shifted-metric
-co-moving variant (measure depending on a global unknown) was assessed and
-rejected: implementable, but it routes the azimuthal curvature — the very
-quantity under study — through unexercised custom machinery.
-
-The window formulation is now a first-class sibling of the lab annulus
-(`simulationCases/axisymmetric_comoving.py`). A physical account, with
-schematics and the constraint equations, is
-[`axi-comoving-window.html`](axi-comoving-window.html).
+The window formulation (`simulationCases/axisymmetric_comoving.py`) is a
+first-class sibling of the lab annulus (`simulationCases/axisymmetric_lab.py`).
+One bookkeeping global dof `X` is slaved to the tip by
+`WeakContribution(mesh_x - X, Xtest, coordinate_system=cartesian)`. The far
+edge is an `EnforcedBC` residual `r_far - (X + L) = 0`, not
+`EnforcedDirichlet(mesh_x = X + L)`. The window still imposes a finite-domain
+clamp, so it is not a substitute for checking that `L` contains the
+disturbance footprint. The shifted-metric co-moving variant (measure depending
+on a global unknown) was assessed and rejected: implementable, but it routes
+the azimuthal curvature — the very quantity under study — through unexercised
+custom machinery. A physical account, with schematics and the constraint
+equations, is [`axi-comoving-window.html`](axi-comoving-window.html).
 
 Smoke ladder before any long run (in order, all must pass):
 

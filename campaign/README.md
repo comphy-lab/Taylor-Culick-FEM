@@ -13,7 +13,7 @@ recorded in the project tracker.
 |---|---|
 | `launch_batch2.sh` | Restarts `Oh_SB` 0.38372, 0.2377, 0.61945, 1.0 from their checkpoints. |
 | `launch_batch3.sh` | Re-runs `Oh_SB = 0.035` from `t = 0` (its field output was lost; see below). |
-| `launch_batch4_dtstudy.sh` | The timestep study of `docs/planar-campaign/README.md` §6.3. |
+| `launch_batch4_dtstudy.sh` | The timestep study of `docs/planar-campaign/planar-campaign.tex` (`sec:timestep`). |
 
 ## Conventions these encode
 
@@ -24,7 +24,8 @@ on 2026-08-08. Each script therefore refuses to start while another batch is
 live, and each case runs in a systemd scope with its own `MemoryMax`.
 
 **`--n-outputs` sets the timestep**, so it is a physics-relevant parameter and
-not an output preference. See `docs/planar-campaign/README.md` §3.4 and §6.3. On a restart it
+not an output preference. See `docs/planar-campaign/planar-campaign.tex`
+(`sec:method`, `--n-outputs`; `sec:timestep`). On a restart it
 must be scaled down to preserve the original cadence; `run_validation.py` warns
 and prints the matched count.
 

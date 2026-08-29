@@ -2,7 +2,9 @@
 
 pdf: planar-campaign.pdf
 
-planar-campaign.pdf: planar-campaign.tex planar-campaign.bib
+FIGURES := $(wildcard figures/*.pdf)
+
+planar-campaign.pdf: planar-campaign.tex planar-campaign.bib $(FIGURES)
 	pdflatex -interaction=nonstopmode planar-campaign
 	bibtex planar-campaign
 	pdflatex -interaction=nonstopmode planar-campaign
