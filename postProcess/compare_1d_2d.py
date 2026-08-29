@@ -156,7 +156,7 @@ def main() -> None:
         "/mnt/stokesInt1/running-simulations/elastic-taylor-culick/trouton1d-oh-sweep"))
     ap.add_argument("--twod", type=Path, default=Path(
         "/mnt/stokesInt1/running-simulations/elastic-taylor-culick/u995-sweep"))
-    ap.add_argument("--out", type=Path, default=Path("docs/figures"))
+    ap.add_argument("--out", type=Path, default=Path("docs/planar-campaign/figures"))
     ap.add_argument("--json-out", type=Path, default=None)
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)

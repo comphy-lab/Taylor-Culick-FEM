@@ -6,11 +6,15 @@ a frame co-moving with the retracting rim.
 Built on [pyoomph](https://github.com/comphy-lab/pyoomph) (a Python front-end to
 oomph-lib), tracked against the CoMPhy fork's `develop` branch.
 
-> **Start here: [`docs/README.md`](docs/README.md)** — the campaign write-up for
-> Newtonian retraction at arbitrary Ohnesorge number. It covers the method, the
-> convergence evidence, the comparison against Savva & Bush (2009), and the
-> `√2` convention mismatch between this code and the published literature.
-> Written as an extension of Appendix A of
+> The documentation index is [`docs/README.md`](docs/README.md).
+> Inertial FEM versus Basilisk (`Oh_SB < 0.1`) is
+> [`docs/validation-inertial/`](docs/validation-inertial/) (planar closed).
+> The viscous Trouton/Ahsan note is
+> [`docs/validation-viscous/`](docs/validation-viscous/).
+> The full planar Newtonian write-up, including the `√2` convention mismatch
+> and the comparison against Savva & Bush (2009), is
+> [`docs/planar-campaign/`](docs/planar-campaign/). That write-up is intended
+> as an extension of Appendix A of
 > [Sanjay *et al.*, JFM 948 (2022) A14](https://arxiv.org/abs/2202.13400) to
 > arbitrary `Oh`, with FEM in place of Basilisk.
 
@@ -53,7 +57,7 @@ V_TC = sqrt(2 sigma / (rho h0))  ->  sqrt(2) = 1.41421...
 
 ## Cases
 
-### 1. Planar (`cases/planar_comoving.py`) — validation
+### 1. Planar (`simulationCases/planar_comoving.py`) — validation
 
 A semi-infinite two-dimensional sheet retracting into a rim. The control
 velocity must approach `sqrt(2)`.
@@ -79,7 +83,7 @@ carries a `sqrt(2)` ours does not (our `Oh = 0.05` is their `0.035`), and
 collapse only for `Oh >~ 0.5`. At lower `Oh` the approach is inertial and set
 by rim growth in capillary time, so `t*` is not a useful target.
 
-### 2. Axisymmetric (`cases/axisymmetric_comoving.py`) — the physical problem
+### 2. Axisymmetric (`simulationCases/axisymmetric_comoving.py`) — the physical problem
 
 A hole opening in a flat sheet: the rim is a torus expanding radially, matching
 the Basilisk configuration. Here `U(t)` approaches `sqrt(2)` only
@@ -101,7 +105,7 @@ simulationCases/        runnable problem definitions (2D co-moving, 1D Trouton)
 validation/             validation drivers, convergence studies, digitised data
 postProcess/            analysis and figure generation
 campaign/               the exact scripts used to run the Oh sweep on Stokes
-docs/                   campaign write-up and figures
+docs/                   public write-up tree (index, viscous, inertial, planar campaign, axi solvers)
 ```
 
 Simulation output does not live here. Runs write to the project run root on the
@@ -115,7 +119,7 @@ Python is pinned by `.python-version` and dependencies are locked in
 ```bash
 uv sync                    # build the environment (compiles pyoomph from source)
 uv run python -m pyoomph check all
-uv run python cases/planar_comoving.py
+uv run python simulationCases/planar_comoving.py
 ```
 
 `uv sync` performs a **source build** of pyoomph: CMake compiles the vendored
