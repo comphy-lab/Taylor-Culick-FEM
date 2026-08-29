@@ -109,9 +109,10 @@ upper bound rather than a measurement.
 
 - Q1 answered for `Oh_SB = 1`: mesh and time tolerance converged to 0.06 %;
   **domain length is the controlling parameter** and needs the diffusive rule.
-- Q2 open. `u*` reaches 0.949 at `t* = 30` (`L = 25`) and 0.950 at `t = 29.7`
-  for the inertial case; both still climbing. `u* -> 1` only asymptotically, so
-  answering Q2 needs long `t*` on a correspondingly long window.
+- Q2 for `Oh_SB < 0.1` is closed against `V_TC` and against Basilisk. FEM
+  terminal `u*` is `0.994`–`0.996`; Basilisk at `Oh_SB = 0.035`, `t = 500`
+  is `u* ≈ 0.977`. See `docs/validation-inertial/`. The moderate-Oh approach
+  to `V_TC` is the planar-campaign write-up.
 
 ## The claim
 
@@ -217,9 +218,10 @@ not as a measured 0.26 % discrepancy. An earlier 0.04 % figure quoted here was
 against a rounded eyeball reading of the printed figure rather than the
 digitised curve, and was spurious precision.
 
-Remaining cases pending. A single agreeing point is weak evidence — the whole
-point of digitising both figures is to compare the entire `u*(t*)` curve across
-`Oh`, which can actually falsify the formulation.
+A single agreeing point is weak evidence. The point of digitising both
+figures is to compare the entire `u*(t*)` curve across `Oh`, which can
+falsify the formulation. The inertial planar comparison is now in
+`docs/validation-inertial/`.
 
 ## Split
 
