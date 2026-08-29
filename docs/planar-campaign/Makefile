@@ -2,7 +2,7 @@
 
 pdf: planar-campaign.pdf
 
-FIGURES := $(wildcard figures/*.pdf)
+FIGURES := $(wildcard figures/*.pdf figures/*.png)
 
 planar-campaign.pdf: planar-campaign.tex planar-campaign.bib $(FIGURES)
 	pdflatex -interaction=nonstopmode planar-campaign
@@ -11,5 +11,6 @@ planar-campaign.pdf: planar-campaign.tex planar-campaign.bib $(FIGURES)
 	pdflatex -interaction=nonstopmode planar-campaign
 
 clean:
-	rm -f planar-campaign.aux planar-campaign.bbl planar-campaign.blg \
-	      planar-campaign.log planar-campaign.out planar-campaign.toc
+	# .bbl and .blg are tracked so the note builds without BibTeX.
+	rm -f planar-campaign.aux planar-campaign.log planar-campaign.out \
+	      planar-campaign.toc

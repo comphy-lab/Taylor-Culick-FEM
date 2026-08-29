@@ -11,5 +11,6 @@ validation-viscous.pdf: validation-viscous.tex validation-viscous.bib $(FIGURES)
 	pdflatex -interaction=nonstopmode validation-viscous
 
 clean:
-	rm -f validation-viscous.aux validation-viscous.bbl validation-viscous.blg \
-	      validation-viscous.log validation-viscous.out validation-viscous.toc
+	# .bbl and .blg are tracked so the note builds without BibTeX.
+	rm -f validation-viscous.aux validation-viscous.log validation-viscous.out \
+	      validation-viscous.toc
