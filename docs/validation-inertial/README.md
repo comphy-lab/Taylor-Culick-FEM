@@ -29,8 +29,10 @@ closed result.
 
 *Figure. Retraction speed `u* = U/V_TC` against capillary time for
 `Oh_SB < 0.1`. Left, planar sheet. FEM at four Ohnesorge numbers approaches
-`u* → 1`; Basilisk at `Oh_SB = 0.035` sits slightly below, as expected for a
-two-phase VoF interface. Right, circular hole, still in progress.*
+`u* → 1`; Basilisk at `Oh_SB = 0.035` for two liquid:gas viscosity ratios sits
+slightly below, as expected for a two-phase VoF interface. Right, circular
+hole, still in progress: co-moving FEM at `Oh_SB = 0.035` and `0.05`, a short
+fixed-wall FEM comparison, and Basilisk at the same two viscosity ratios.*
 
 ## What closed means for planar
 
