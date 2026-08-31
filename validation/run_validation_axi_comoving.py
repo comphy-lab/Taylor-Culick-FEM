@@ -80,7 +80,8 @@ WINDOW_LENGTH_DEFAULT = 40.0
 def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
              x0: float = X0_DEFAULT, window_length: float = WINDOW_LENGTH_DEFAULT,
              temporal_error: float = 1e-3, restart_from: Path | None = None,
-             checkpoint_every: int = 0, n_outputs: int = 400) -> dict:
+             checkpoint_every: int = 0, n_outputs: int = 400,
+             max_newton: int | None = None) -> dict:
     mu = viscosity(oh_sb)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
@@ -97,6 +98,7 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
         "resolution": resolution,
         "temporal_error": temporal_error,
         "V_TC": V_TC,
+        "max_newton_iterations": max_newton,
     }
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "case.json").write_text(json.dumps(meta, indent=2))
@@ -113,6 +115,8 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
         problem.X0 = x0
         problem.window_length = window_length
         problem.resolution = resolution
+        if max_newton is not None:
+            problem.max_newton_iterations = max_newton
         if restart_from is not None:
             # Same trap as run_validation.py: pyoomph's runmode defaults to
             # "delete", which empties every subdirectory of the output
@@ -171,8 +175,14 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
             # Same startstep/maxstep reasoning as run_validation_axi.py: the
             # planar driver's 1e-9 floor does not converge for this ALE
             # geometry's mesh-position dofs at the first (t_end*1e-4) output.
-            problem.run(t, startstep=max((t - prev) * 1e-2, 1e-6),
-                        maxstep=max(t - prev, 1e-9), temporal_error=temporal_error)
+            run_kw = dict(
+                startstep=max((t - prev) * 1e-2, 1e-6),
+                maxstep=max(t - prev, 1e-9),
+                temporal_error=temporal_error,
+            )
+            if max_newton is not None:
+                run_kw["max_newton_iterations"] = max_newton
+            problem.run(t, **run_kw)
             now = float(problem.get_current_time(as_float=True))
             R = problem.window_position()
             dt_row = now - t_prev_row
@@ -231,6 +241,10 @@ def main() -> None:
                          "both the cost and the temporal accuracy of the run.")
     ap.add_argument("--restart-from", type=Path, default=None,
                     help="pyoomph state dump to continue from")
+    ap.add_argument("--max-newton", type=int, default=None,
+                    help="Newton iteration cap (pyoomph default is 10). "
+                         "40 matches the lab/1D drivers and avoids dt-halving "
+                         "when the last residual is just above 1e-8.")
     args = ap.parse_args()
     # See run_validation_axi.py: the schedule divides by (n_outputs - 1).
     if args.n_outputs < 2:
@@ -250,7 +264,8 @@ def main() -> None:
         name = f"Oh_SB_{oh:g}" + (f"_{args.tag}" if args.tag else "")
         run_case(oh, root / name, args.resolution, args.tstar_end,
                  args.x0, args.window_length, args.temporal_error,
-                 args.restart_from, args.checkpoint_every, args.n_outputs)
+                 args.restart_from, args.checkpoint_every, args.n_outputs,
+                 args.max_newton)
 
 
 if __name__ == "__main__":
