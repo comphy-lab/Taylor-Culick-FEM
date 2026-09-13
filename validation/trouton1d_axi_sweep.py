@@ -113,7 +113,7 @@ def _advance_h_tip(h: float, t0: float, t1: float, mu: float,
     return h
 
 
-def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
+def run_case(oh: float, tstar_end: float, nsteps: int, n_outputs: int,
              outroot: Path, r0: float = 5.0, mass: float | None = None,
              nelem: int | None = None, grade: float = 2.0,
              temporal_error: float = 1e-3, drift_tol: float = 1e-4,
@@ -150,7 +150,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         # the first case's tables. Refuse the command line here: everything
         # this driver needs is set programmatically.
         p.ignore_command_line = True
-        p.Oh_SB = oh_sb
+        p.Oh = oh
         p.r0 = r0
         p.grade = grade
         p.tip_azimuthal_correction = tip_azimuthal_correction
@@ -167,7 +167,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         r_max = math.sqrt(r0 * r0 + 2.0 * p.mass)
         meta = {
             "tag": tag,
-            "Oh_SB": oh_sb, "mu": p.mu, "tau_vis": p.tau_vis,
+            "Oh": oh, "mu": p.mu, "tau_vis": p.tau_vis,
             "r0": r0, "r0_star": p.r0_star, "r_max": r_max,
             "tstar_end": tstar_end, "t_end": t_end,
             "mass": p.mass, "nelem": p.nelem, "grade": p.grade,
@@ -179,7 +179,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             "scheme": p.default_timestepping_scheme,
             "V_TC": V_TC,
         }
-        label = f"oh={oh_sb:g},r0={r0:g}" + (f",{tag}" if tag else "")
+        label = f"oh={oh:g},r0={r0:g}" + (f",{tag}" if tag else "")
         print(f"[{label}] mu={p.mu:.6g} tau_vis={p.tau_vis:.6g} "
               f"t_end={t_end:.6g} M={p.mass:.6g} r_max={r_max:.6g} "
               f"N={p.nelem} dt={dt:.6g} R0*={p.r0_star:.4g}", flush=True)
@@ -253,7 +253,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--oh", type=float, required=True, help="Oh_SB (Savva-Bush)")
+    ap.add_argument("--oh", type=float, required=True, help="Oh (Savva-Bush)")
     ap.add_argument("--r0", type=float, default=5.0,
                     help="initial hole radius in h0; R0 = 0 is excluded and "
                          "R0 >= 5 is the production floor (default 5)")

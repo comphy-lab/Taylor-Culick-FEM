@@ -14,7 +14,7 @@ viscous liquid sheet*, arXiv:2507.04603 / Phys. Rev. Fluids
 (`../literature/ahsan_brandao_davidovitch_stone_arXiv2507.04603.pdf`). This is
 the most rigorous treatment of the high-`Oh` limit and the one that makes the
 structure of the solution explicit. Savva & Bush (2009) supply the digitised
-`u*(t*)` curves at `Oh_SB = 1, 5, 10, 100/1000`.
+`u*(t*)` curves at `Oh = 1, 5, 10, 100/1000`.
 
 ## The structure worth testing
 
@@ -64,5 +64,5 @@ the comparison.
 (`Oh100` is the collapsed "Oh > 100" / "Oh = 100, 1000" curve).
 
 Their high-`Oh` curves become indistinguishable from one another, so
-`Oh_SB = 100/1000` is a single digitised curve — do not read agreement with it
+`Oh = 100/1000` is a single digitised curve — do not read agreement with it
 as resolving `Oh` dependence in that limit.

@@ -2,9 +2,9 @@
 """1D Trouton sheet: u*(t) at arbitrary Oh, sized and dt-controlled per case.
 
 WHY THIS EXISTS. ``trouton1d_convergence.py`` answers "is the solver converged
-at Oh_SB = 1, t* = 30" and returns a single scalar per run. It cannot produce
+at Oh = 1, t* = 30" and returns a single scalar per run. It cannot produce
 the quantity the campaign actually wants, which is the whole curve u*(t) at the
-eight Oh_SB values the 2D co-moving FEM sweep covers, on a domain and timestep
+eight Oh values the 2D co-moving FEM sweep covers, on a domain and timestep
 sized for each one.
 
 THE TIMESTEP IS THE WHOLE PROBLEM, AND IT IS NOT SELF-DIAGNOSING. On this
@@ -72,7 +72,7 @@ def auto_nelem(mass: float) -> int:
     return int(min(3000, max(400, round(math.sqrt(mass / TIP_CELL)))))
 
 
-def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
+def run_case(oh: float, tstar_end: float, nsteps: int, n_outputs: int,
              temporal_error: float, outroot: Path, mass: float | None,
              nelem: int | None, drift_tol: float,
              max_newton: int | None = None, gcn: bool = False,
@@ -92,7 +92,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
     with Trouton1DProblem() as p:
         p.ignore_command_line = True
-        p.Oh_SB = oh_sb
+        p.Oh = oh
         # Both default in the problem class; overriding here is what makes an
         # h-form vs f-form regression a one-flag re-run of the same driver
         # rather than a second script that can drift out of step with this one.
@@ -113,7 +113,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
         dt = t_end / nsteps
         meta = {
-            "Oh_SB": oh_sb, "mu": p.mu, "tau_vis": p.tau_vis,
+            "Oh": oh, "mu": p.mu, "tau_vis": p.tau_vis,
             "tstar_end": tstar_end, "t_end": t_end,
             "mass": p.mass, "nelem": p.nelem, "grade": p.grade,
             "nsteps": nsteps, "dt": dt, "n_outputs": n_outputs,
@@ -123,7 +123,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             "scheme": p.default_timestepping_scheme,
             "V_TC": V_TC,
         }
-        print(f"[oh={oh_sb:g}] mu={p.mu:.6g} tau_vis={p.tau_vis:.6g} "
+        print(f"[oh={oh:g}] mu={p.mu:.6g} tau_vis={p.tau_vis:.6g} "
               f"t_end={t_end:.6g} M={p.mass:.6g} N={p.nelem} dt={dt:.6g}",
               flush=True)
 
@@ -150,7 +150,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             # concurrent cases, against 382 GB free on reynolds. Suppress it and
             # call output() once per leg instead, giving exactly n_outputs
             # profiles at the times the series records.
-            # LATE-TIME NEWTON FAILURE. Runs at Oh_SB = 0.035 and 0.09121 died
+            # LATE-TIME NEWTON FAILURE. Runs at Oh = 0.035 and 0.09121 died
             # with the residual stalled near 1.4e-3 after the default 10 Newton
             # steps, at h_tip = 337 and 215 -- a rim two orders of magnitude
             # thicker than the sheet, which is far outside the long-wave model's
@@ -194,12 +194,12 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         # say so loudly rather than filing it silently alongside clean cases.
         meta["domain_ok"] = bool(worst_drift <= drift_tol)
         if not meta["domain_ok"]:
-            print(f"[oh={oh_sb:g}] WARNING: far-field drift {worst_drift:.3e} "
+            print(f"[oh={oh:g}] WARNING: far-field drift {worst_drift:.3e} "
                   f"exceeds {drift_tol:g}; the disturbance reached the clamped "
                   f"end and u* is contaminated. Re-run with a larger --mass.",
                   flush=True)
         (outdir / "case1d.json").write_text(json.dumps(meta, indent=2))
-        print(f"[oh={oh_sb:g}] done: u*({tstar_end:g}) = {meta['ustar_final']:.10f} "
+        print(f"[oh={oh:g}] done: u*({tstar_end:g}) = {meta['ustar_final']:.10f} "
               f"drift={worst_drift:.2e} ok={meta['domain_ok']}", flush=True)
         return meta
 
@@ -207,7 +207,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--oh", type=float, required=True, help="Oh_SB (Savva-Bush)")
+    ap.add_argument("--oh", type=float, required=True, help="Oh (Savva-Bush)")
     ap.add_argument("--tstar-end", type=float, required=True)
     ap.add_argument("--nsteps", type=int, required=True,
                     help="fixed dt = t_end/nsteps; run twice with 2x for Richardson")

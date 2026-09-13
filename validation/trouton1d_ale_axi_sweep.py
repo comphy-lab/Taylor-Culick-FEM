@@ -14,7 +14,7 @@ timestep.
 
 COLUMN LAYOUT, AND WHY IT IS NOT PLANAR'S WITH ONE COLUMN RENAMED. Planar's
 table carries ``xc``/``Xc``/``Xc_pred``/``Xc_int`` (Ahsan et al.'s nondim
-variables, ``X = x/l_I`` with ``l_I = 4 Oh_SB``) and a column named ``R``
+variables, ``X = x/l_I`` with ``l_I = 4 Oh``) and a column named ``R``
 holding the LATE-TIME COEFFICIENT ``(1+T)^2 (1 - u*)``. Two things do not
 carry over to axi: there is no published axisymmetric analogue of Ahsan et
 al.'s stretching map, so the ``l_I``-based columns have nothing to convert
@@ -52,7 +52,7 @@ orders of magnitude tighter than the ``O(1)`` physical scale of the problem.
 
 DOMAIN SIZING. Two growth regimes bound the edge displacement beyond ``r0``
 (``docs/axi-design.md`` checks 6 and 8): the small-hole exponential
-``R(t*) = R0 exp(t*/2)`` (S&B 3.30, valid for ``R0* = R0/Oh_SB << 1``) and the
+``R(t*) = R0 exp(t*/2)`` (S&B 3.30, valid for ``R0* = R0/Oh << 1``) and the
 planar-limit asymptote ``dR/dt -> V_TC``, i.e. a linear displacement
 ``V_TC * t = mu * t*/sqrt(2)`` (valid for ``R0* >> 1``). The default ``--l0``
 takes the larger of the two estimates plus headroom, exactly as planar takes
@@ -116,7 +116,7 @@ def run_case(*args, **kwargs) -> dict:
         os.chdir(prev_cwd)
 
 
-def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
+def _run_case(oh: float, tstar_end: float, nsteps: int, n_outputs: int,
               outroot: Path, r0: float, l0: float | None, nelem: int,
               grade: float, temporal_error: float = 1e-3, drift_tol: float = 1e-4,
               max_newton: int | None = None, gcn: bool = False,
@@ -153,7 +153,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         # directory. trouton1d_axi_sweep.py refuses the command line for this
         # reason and the ALE sibling must do the same.
         p.ignore_command_line = True
-        p.Oh_SB = oh_sb
+        p.Oh = oh
         p.r0 = r0
         p.nelem = nelem
         p.grade = grade
@@ -176,7 +176,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             disp_exp_bound = max(0.0, math.sqrt(2.0) * p.mu - r0)
             # Planar-limit linear estimate: dR/dt -> V_TC, i.e. displacement
             # V_TC * t = mu * t*/sqrt(2) (dimension-consistent with planar's
-            # own xc_end = l_I * tstar_end/4 = Oh_SB * tstar_end).
+            # own xc_end = l_I * tstar_end/4 = Oh * tstar_end).
             disp_lin = p.mu * tstar_end / math.sqrt(2.0)
             disp_est = max(disp_lin, min(disp_exp, disp_exp_bound + disp_lin))
             l0 = disp_est + max(0.2 * disp_est, 30.0 * max(1.0, p.mu))
@@ -187,7 +187,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
         dt = t_end / nsteps
         meta = {
-            "code": "TC1D-ALE-AXI", "Oh_SB": oh_sb, "mu": p.mu,
+            "code": "TC1D-ALE-AXI", "Oh": oh, "mu": p.mu,
             "tau_vis": p.tau_vis, "R0": r0, "R0_star": p.r0_star,
             "tstar_end": tstar_end, "t_end": t_end,
             "l0": p.l0, "nelem": p.nelem, "grade": p.grade,
@@ -199,7 +199,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             "mass_initial": p.total_mass(),
             "V_TC": V_TC,
         }
-        print(f"[ale-axi oh={oh_sb:g} R0={r0:g}] mu={p.mu:.6g} R0*={p.r0_star:.4g} "
+        print(f"[ale-axi oh={oh:g} R0={r0:g}] mu={p.mu:.6g} R0*={p.r0_star:.4g} "
               f"l0={p.l0:.6g} N={p.nelem} grade={p.grade:g} t_end={t_end:.6g} "
               f"dt={dt:.6g} tip_cell={meta['tip_cell_initial']:.3e}", flush=True)
 
@@ -265,7 +265,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             # collapses. Record it instead of letting it disappear.
             if not all(np.isfinite(v) for v in (dh, du, aff, rough)):
                 diagnostics_finite = False
-                print(f"[ale-axi oh={oh_sb:g} R0={r0:g}] WARNING: non-finite "
+                print(f"[ale-axi oh={oh:g} R0={r0:g}] WARNING: non-finite "
                       f"diagnostic at t*={tstar:.4f}: dh={dh} du={du} "
                       f"aff={aff} rough={rough}", flush=True)
             worst_drift = max(worst_drift, abs(dh), abs(du))
@@ -297,7 +297,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         # healthy domain, whatever the surviving finite maxima say.
         meta["domain_ok"] = bool(diagnostics_finite and worst_drift <= drift_tol)
         if not meta["domain_ok"]:
-            print(f"[ale-axi oh={oh_sb:g} R0={r0:g}] WARNING: far-field drift "
+            print(f"[ale-axi oh={oh:g} R0={r0:g}] WARNING: far-field drift "
                   f"{worst_drift:.3e} exceeds {drift_tol:g}; the disturbance "
                   f"reached the truncation. Re-run with a larger --l0.",
                   flush=True)
@@ -309,7 +309,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
                       f"u*={tab[i,2]:.7f} h_tip={tab[i,3]:.5f} "
                       f"h_tipode={tab[i,4]:.5f} late_coeff={tab[i,5]:.5f}",
                       flush=True)
-        print(f"[ale-axi oh={oh_sb:g} R0={r0:g}] done: u*({tstar_end:g}) = "
+        print(f"[ale-axi oh={oh:g} R0={r0:g}] done: u*({tstar_end:g}) = "
               f"{meta['ustar_final']:.10f} R={meta['R_final']:.6f} "
               f"affinity={worst_affinity:.2e} rough={worst_rough:.2e} "
               f"mass_drift={meta['mass_rel_drift']:.2e} "
@@ -321,7 +321,7 @@ def _run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--oh", type=float, default=1.0, help="Oh_SB (Savva-Bush)")
+    ap.add_argument("--oh", type=float, default=1.0, help="Oh (Savva-Bush)")
     ap.add_argument("--r0", type=float, default=5.0, help="initial hole radius R0")
     ap.add_argument("--tstar-end", type=float, required=True)
     ap.add_argument("--nsteps", type=int, required=True,

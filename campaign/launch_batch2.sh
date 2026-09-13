@@ -2,7 +2,7 @@
 # Batch 2 of the u995 sweep restart. Run this only once batch 1 has finished and
 # released its memory -- all eight cases cannot fit in 246 GiB to completion.
 #
-# Batch 1 (Oh_SB 0.0565, 0.14724, 0.09121) reserves 170 GiB of MemoryMax between
+# Batch 1 (Oh 0.0565, 0.14724, 0.09121) reserves 170 GiB of MemoryMax between
 # them. Check they are gone first:
 #     systemctl --user list-units 'etc-u995-*'
 #
@@ -17,7 +17,7 @@ C=/home/vatsal/CMP-codes/Taylor-Culick-FEM
 
 for u in 0.0565 0.14724 0.09121; do
   if systemctl --user is-active --quiet "etc-u995-oh${u}.service"; then
-    echo "batch 1 case Oh_SB=${u} is still running; refusing to oversubscribe" >&2
+    echo "batch 1 case Oh=${u} is still running; refusing to oversubscribe" >&2
     exit 1
   fi
 done
@@ -25,7 +25,7 @@ done
 launch() {
   local oh=$1 dir=$2 ts=$3 L=$4 ck=$5 hi=$6 mx=$7
   systemd-run --user --unit="etc-u995-oh${oh}" \
-    --description="elastic-taylor-culick u995 sweep Oh_SB=${oh} restart" \
+    --description="elastic-taylor-culick u995 sweep Oh=${oh} restart" \
     --working-directory="$C" \
     --property=MemoryHigh="$hi" --property=MemoryMax="$mx" \
     --property=AllowedCPUs=8-31 \

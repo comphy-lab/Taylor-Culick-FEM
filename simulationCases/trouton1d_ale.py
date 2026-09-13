@@ -27,7 +27,7 @@ mesh motion) -> TC1D-ALE (1D, moving physical mesh) -> 2D co-moving DNS
 THE MODEL.
 ----------
 Planar sheet of FULL thickness ``h``, physical coordinate ``x``, with
-``rho = gamma = h0 = 1`` and ``mu = Oh_SB sqrt(2)``:
+``rho = gamma = h0 = 1`` and ``mu = Oh sqrt(2)``:
 
     h_t + (h u)_x = 0
     u_t + u u_x   = (4 mu / h) (h u_x)_x
@@ -51,7 +51,7 @@ The factor 2 on gamma is the sheet's TWO surfaces. Hence
     4 mu h u_x|_{x_c} = -2 gamma   <=>   h u_x|_{x_c} = -1/(2 mu).
 
 Ahsan et al.'s (2.18a) ``H V_X = -1`` is written on the HALF thickness, so it
-maps to the same thing: with ``X = x/l_I``, ``l_I = 4 Oh_SB``, ``V = u/sqrt(2)``
+maps to the same thing: with ``X = x/l_I``, ``l_I = 4 Oh``, ``V = u/sqrt(2)``
 and ``H = h``, ``H V_X = 2 mu h u_x``, and ``= -1`` gives ``h u_x = -1/(2 mu)``.
 Both routes agree, and both agree with what TC1D-FEM imposes in the mass
 coordinate, ``h^2 u_m|_0 = -1/(2 mu)``, because ``d/dm = (1/h) d/dx``.
@@ -129,7 +129,7 @@ carries ``(u - w) h_x`` with ``u - w`` of order ``u_tip``, so a cell-constant
 ``h`` would need an upwind numerical flux to say anything at all. Continuous
 Galerkin is used instead, which for a pure advection equation is a real risk,
 so the result is checked for the checkerboard that would signal it was the wrong
-call (``thickness_roughness`` below). Measured at Oh_SB = 1, t* = 30, the
+call (``thickness_roughness`` below). Measured at Oh = 1, t* = 30, the
 indicator is 0.117, 0.0333, 8.68e-3, 2.19e-3, 5.49e-4 and 1.37e-4 at N = 100 to
 3200, i.e. it falls as dx^2 with no floor. That is truncation error, not a mode:
 a checkerboard would be mesh-independent and would drive the indicator towards
@@ -156,7 +156,7 @@ TRAPS HIT WHILE WRITING THIS, recorded because none of them announce themselves.
      real property of the coordinate, not of the implementation, and it is the
      reason Ahsan et al. use an algebraic stretching map in the same coordinate.
 
-VERIFICATION, Oh_SB = 1. Reproduce with ``validation/trouton1d_ale_sweep.py``
+VERIFICATION, Oh = 1. Reproduce with ``validation/trouton1d_ale_sweep.py``
 and read with ``validation/trouton1d_ale_report.py``.
 ------------------------------------------------------------------------------
 1. CONVERGENCE ORDERS, measured with the two discretisations varied
@@ -345,7 +345,7 @@ class TipClosure(Equations):
 class Trouton1DALEProblem(Problem):
     def __init__(self):
         super().__init__()
-        self.Oh_SB = 1.0
+        self.Oh = 1.0
         self.l0 = 500.0            # truncation length of the semi-infinite sheet
         self.nelem = 800
         self.grade = 2.0           # x = l0 (j/N)^grade; 1 = uniform
@@ -354,7 +354,7 @@ class Trouton1DALEProblem(Problem):
 
     @property
     def mu(self) -> float:
-        return self.Oh_SB * math.sqrt(2.0)
+        return self.Oh * math.sqrt(2.0)
 
     @property
     def tau_vis(self) -> float:
@@ -362,13 +362,13 @@ class Trouton1DALEProblem(Problem):
 
     @property
     def l_I(self) -> float:
-        """Ahsan et al.'s inertial-viscous length, l_I = 4 h0 Oh_paper = 4 Oh_SB.
+        """Ahsan et al.'s inertial-viscous length, l_I = 4 h0 Oh_paper = 4 Oh.
 
         The conversion to their variables is X = x/l_I, T = t*/4, V = u*; see
         ``validation/ahsan_thinfilm.py`` for the full mapping and its
         independent confirmation from h_tip = 1 + t*/4.
         """
-        return 4.0 * self.Oh_SB
+        return 4.0 * self.Oh
 
     def define_problem(self):
         self.set_coordinate_system("cartesian")

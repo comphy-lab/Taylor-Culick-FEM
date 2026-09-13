@@ -8,7 +8,7 @@
 
 ## Regime
 
-`Oh_SB <~ 0.1`. A bulbous, roughly circular rim forms and **capillary waves are
+`Oh <~ 0.1`. A bulbous, roughly circular rim forms and **capillary waves are
 shed ahead of it** (Brenner & Gueyffier 1999; Savva & Bush 2009 quote the same
 `Oh < 0.1` threshold). Both are visible in our runs — see the animation in
 `postProcess/` — so they are physics, not artefacts.
@@ -27,14 +27,14 @@ speed.
 ## Reference data
 
 `../data/savva_bush_2009_fig5_Oh0.5.csv`, `..._fig6_Oh0.5.csv` — their lowest
-plotted `Oh`. Note that `Oh_SB = 0.5` is already past the `Oh < 0.1` wave
+plotted `Oh`. Note that `Oh = 0.5` is already past the `Oh < 0.1` wave
 threshold, so **the published curves do not reach the strongly inertial
-regime**. For `Oh_SB <~ 0.1` there is no digitised comparator here and the check
+regime**. For `Oh <~ 0.1` there is no digitised comparator here and the check
 is against `V_TC` itself plus internal convergence.
 
 ## The `tau_vis` trap
 
-`t* = t/tau_vis` is the **viscous** clock. At `Oh_SB = 0.035` it gives
+`t* = t/tau_vis` is the **viscous** clock. At `Oh = 0.035` it gives
 `tau_vis = 0.025`, so `t* = 30` is `t = 0.75` — the very start of the transient.
 In this regime the approach is inertial, set by rim growth in capillary time
 `sqrt(rho h0^3/gamma)`, and `t*` is not a meaningful target. Report low-`Oh`
@@ -42,7 +42,7 @@ results against capillary time.
 
 ## Cross-method check
 
-The planar FEM–Basilisk comparison at `Oh_SB < 0.1` is closed. The write-up
+The planar FEM–Basilisk comparison at `Oh < 0.1` is closed. The write-up
 is `docs/validation-inertial/`. The oscillation question below is about
 mechanism, not about whether `u*` approaches 1.
 

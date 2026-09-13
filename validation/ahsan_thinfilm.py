@@ -72,14 +72,14 @@ Ahsan et al. use the HALF-thickness ``h0`` (their fig. 1: the sheet is
     X = x/lI,  T = t/tI,  H = h/h0,  V = v/uTC,  L = l0/lI.
 
 Our solver (``simulationCases/trouton1d_pyoomph.py``) uses the FULL thickness
-``H_full`` with ``rho = gamma = H_full = 1``, ``mu = Oh_SB sqrt(2)``,
+``H_full`` with ``rho = gamma = H_full = 1``, ``mu = Oh sqrt(2)``,
 ``tau_vis = mu H_full / (2 gamma) = mu/2``, ``t* = t/tau_vis``,
 ``V_TC = sqrt(2 gamma/(rho H_full)) = sqrt(2)``, ``u* = u/V_TC``. Hence
 ``h0 = H_full/2``.
 
     uTC      = sqrt(gamma/(rho H_full/2)) = sqrt(2 gamma/(rho H_full)) = V_TC
                -> their V IS our u*, with no factor.
-    Oh_paper = mu / sqrt(rho gamma H_full/2) = mu sqrt(2) = 2 Oh_SB.
+    Oh_paper = mu / sqrt(rho gamma H_full/2) = mu sqrt(2) = 2 Oh.
     tI       = 4 mu (H_full/2)/gamma = 2 mu H_full/gamma = 4 tau_vis
                -> T = t/tI = t*/4.
     H        = h_half/h0 = h_full/H_full -> their H IS our h, both 1 when flat.
@@ -105,7 +105,7 @@ prove it negligible at ``Oh >> 1`` (their eq. 2.11), not because they dropped it
 for convenience.
 
 A COROLLARY WORTH STATING: the reduced problem has NO parameter except ``L``.
-So ``u*(t*)`` from our solver must be independent of ``Oh_SB`` when capillarity
+So ``u*(t*)`` from our solver must be independent of ``Oh`` when capillarity
 is off, and at ``L = infinity`` it must equal one single universal curve. That
 is a check both codes can be held to.
 
@@ -157,9 +157,9 @@ import numpy as np
 # written down, so a comparison script cannot quietly use a different one.
 # ---------------------------------------------------------------------------
 
-def oh_paper_from_oh_sb(oh_sb: float) -> float:
-    """Oh_paper = mu/sqrt(rho h0 gamma) with h0 = H_full/2, i.e. 2 Oh_SB."""
-    return 2.0 * oh_sb
+def oh_paper_from_oh_sb(oh: float) -> float:
+    """Oh_paper = mu/sqrt(rho h0 gamma) with h0 = H_full/2, i.e. 2 Oh."""
+    return 2.0 * oh
 
 
 def T_from_tstar(tstar):
@@ -1087,7 +1087,7 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=None)
 
     p = sub.add_parser("full", help="thin_film.m", parents=[common])
-    p.add_argument("--oh", type=float, default=10.0, help="Oh_paper = 2*Oh_SB")
+    p.add_argument("--oh", type=float, default=10.0, help="Oh_paper = 2*Oh")
     p.add_argument("--epsilon", type=float, default=10.0, help="l0/h0")
     p.add_argument("--N", type=int, default=2000)
     p.add_argument("--T", type=float, default=None, help="default 0.5*(4*Oh)")
@@ -1104,7 +1104,7 @@ def main() -> None:
     p.add_argument("--Lhat", type=float, default=40.0,
                    help="Xhat truncation for the L=infinity solver")
     p.add_argument("--oh-full", type=str, default=None,
-                   help="comma list of Oh_paper (= 2 Oh_SB) for thin_film.m")
+                   help="comma list of Oh_paper (= 2 Oh) for thin_film.m")
     p.add_argument("--full-L", type=float, default=20.0)
     p.add_argument("--full-N", type=int, default=8000)
     p.add_argument("--full-Tmax", type=float, default=5.0)

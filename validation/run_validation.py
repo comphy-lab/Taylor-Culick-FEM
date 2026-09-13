@@ -7,12 +7,13 @@ and compared against the digitised curves by ``compare_savva_bush.py``.
 
 Conventions, which differ from ours and are the usual source of error:
 
-    Oh_SB    = mu / sqrt(2 H rho gamma)        (ours omits the sqrt(2))
+    Oh       = mu / sqrt(2 H rho gamma)         (the project's only Oh; the
+                                                 coded mu omits the sqrt(2))
     u_c      = sqrt(2 gamma / (rho H))         (identical to our V_TC = sqrt(2))
     tau_vis  = mu H / (2 gamma)                (the *viscous* clock)
 
 with ``H`` the FULL sheet thickness. In our units (rho = gamma = H = 1) this
-gives ``mu = sqrt(2) Oh_SB`` and ``tau_vis = mu/2``.
+gives ``mu = sqrt(2) Oh`` and ``tau_vis = mu/2``.
 
 DOMAIN LENGTH. The co-moving window must contain the region the tip disturbs.
 Deka & Pierson (PRF 5, 093603, 2020) state it directly -- "the region of
@@ -69,7 +70,7 @@ def window_length(mu: float, t_end: float) -> float:
 
     The second dominates for any long run and was missing from the first
     version of this function, which sized windows from (1) alone. That is why
-    an Oh_SB = 1 run at L = 12 gave u*(t*=30) = 0.819 while L = 25 gave 0.949:
+    an Oh = 1 run at L = 12 gave u*(t*=30) = 0.819 while L = 25 gave 0.949:
     the window was shorter than the diffusive footprint and the inlet clamp
     was doing work it should not have been.
 
@@ -82,17 +83,21 @@ def window_length(mu: float, t_end: float) -> float:
     return max(MIN_WINDOW, SAFETY * max(influence_length(mu), diffusive))
 
 
-def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
+def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
              length: float | None = None, temporal_error: float = 1e-3,
              restart_from: Path | None = None,
              checkpoint_every: int = 0, n_outputs: int = 400) -> dict:
-    mu = viscosity(oh_sb)
+    mu = viscosity(oh)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
     L = length if length is not None else window_length(mu, t_end)
 
     meta = {
-        "Oh_savva_bush": oh_sb,
+        # `Oh` is canonical (Savva & Bush convention). `Oh_savva_bush` and
+        # `Oh_ours` are retained verbatim so archived post-processing and the
+        # SHA-256-manifested run roots written before 2026-09-13 keep working.
+        "Oh": oh,
+        "Oh_savva_bush": oh,
         "Oh_ours": mu,  # mu/sqrt(rho*gamma*h0) with rho=gamma=h0=1
         "mu_coded": mu,
         "tau_vis": tau,
@@ -109,14 +114,14 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
     (outdir / "case.json").write_text(json.dumps(meta, indent=2))
 
     print(
-        f"[Oh_SB={oh_sb}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
+        f"[Oh={oh}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
         f"L={L:.1f} (L/Oh={L / mu:.1f})",
         flush=True,
     )
 
     os.chdir(outdir)
     with PlanarTaylorCulickProblem() as problem:
-        problem.Oh = mu
+        problem.mu = mu
         problem.domain_length = L
         problem.resolution = resolution
         if restart_from is not None:
@@ -215,7 +220,7 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--oh", type=float, nargs="*", default=None,
-                    help="Ohnesorge numbers in the Savva-Bush convention")
+                    help="Ohnesorge numbers, Oh = mu/sqrt(2 h0 rho sigma). The coded viscosity is mu = sqrt(2) Oh.")
     ap.add_argument("--results", type=Path,
                     default=Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
                                  "newtonian-comoving-pyoomph/validation"))

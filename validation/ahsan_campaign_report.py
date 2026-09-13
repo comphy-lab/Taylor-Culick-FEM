@@ -381,7 +381,7 @@ for oh in ("0p25", "4"):
         continue
     mm = (base["T"] > 0.1) & (base["T"] <= x["T"].max())
     dd = np.abs(base["V"][mm] - np.interp(base["T"][mm], x["T"], x["V"]))
-    print(f"  Oh-independence at L=5, Oh_SB={oh.replace('p','.')} vs 1: "
+    print(f"  Oh-independence at L=5, Oh={oh.replace('p','.')} vs 1: "
           f"max |dV| = {dd.max():.3e}, max rel = "
           f"{np.max(dd/base['V'][mm]):.3e}")
     S.setdefault("oh_independence", {})[oh] = float(dd.max())

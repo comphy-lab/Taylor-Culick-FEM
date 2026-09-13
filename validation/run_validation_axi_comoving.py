@@ -43,7 +43,8 @@ a column that is meant to line up with the lab driver's.
 
 Conventions carried over unchanged from run_validation.py / savva_bush.py:
 
-    Oh_SB    = mu / sqrt(2 H rho gamma)        (ours omits the sqrt(2))
+    Oh       = mu / sqrt(2 H rho gamma)         (the project's only Oh; the
+                                                 coded mu omits the sqrt(2))
     u_c      = sqrt(2 gamma / (rho H))          (identical to our V_TC = sqrt(2))
     tau_vis  = mu H / (2 gamma)                 (the *viscous* clock)
 """
@@ -77,17 +78,21 @@ X0_DEFAULT = 1.0
 WINDOW_LENGTH_DEFAULT = 40.0
 
 
-def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
+def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
              x0: float = X0_DEFAULT, window_length: float = WINDOW_LENGTH_DEFAULT,
              temporal_error: float = 1e-3, restart_from: Path | None = None,
              checkpoint_every: int = 0, n_outputs: int = 400,
              max_newton: int | None = None) -> dict:
-    mu = viscosity(oh_sb)
+    mu = viscosity(oh)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
 
     meta = {
-        "Oh_savva_bush": oh_sb,
+        # `Oh` is canonical (Savva & Bush convention). `Oh_savva_bush` and
+        # `Oh_ours` are retained verbatim so archived post-processing and the
+        # SHA-256-manifested run roots written before 2026-09-13 keep working.
+        "Oh": oh,
+        "Oh_savva_bush": oh,
         "Oh_ours": mu,
         "mu_coded": mu,
         "tau_vis": tau,
@@ -104,14 +109,14 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
     (outdir / "case.json").write_text(json.dumps(meta, indent=2))
 
     print(
-        f"[Oh_SB={oh_sb}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
+        f"[Oh={oh}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
         f"X0={x0:.2f} L={window_length:.1f}",
         flush=True,
     )
 
     os.chdir(outdir)
     with AxisymmetricComovingProblem() as problem:
-        problem.Oh = mu
+        problem.mu = mu
         problem.X0 = x0
         problem.window_length = window_length
         problem.resolution = resolution
@@ -214,7 +219,7 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--oh", type=float, nargs="*", default=None,
-                    help="Ohnesorge numbers in the Savva-Bush convention")
+                    help="Ohnesorge numbers, Oh = mu/sqrt(2 h0 rho sigma). The coded viscosity is mu = sqrt(2) Oh.")
     # No committed default; see the note in run_validation_axi.py.
     ap.add_argument("--results", type=Path, required=True,
                     help="directory to write case output into, on the compute "

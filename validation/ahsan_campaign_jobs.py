@@ -146,9 +146,9 @@ tcfem("tcfem_Linf_dt2", SEC3, 200.0, 50.0, nout=400, dT=DT_TC / 2)
 # mesh refinement twin
 tcfem("tcfem_Linf_mesh2", SEC3, 200.0, 50.0, nout=400, nelem=2066)
 # Oh-independence: the reduced problem has NO parameter but L, so u*(t*) from
-# TC1D-FEM must be independent of Oh_SB at fixed L. Oh_SB = 0.25 and 4 against
+# TC1D-FEM must be independent of Oh at fixed L. Oh = 0.25 and 4 against
 # the baseline 1, i.e. a factor of 16 (1.2 decades), which moves the code-unit
-# mass M = 4 Oh_SB L, the viscosity and the timescale together.
+# mass M = 4 Oh L, the viscosity and the timescale together.
 for oh in (0.25, 4.0):
     tcfem(f"tcfem_L5_oh{oh:g}".replace(".", "p"), SEC3, 5.0, 40.0,
           spacing="uniform", nout=4000, oh=oh)

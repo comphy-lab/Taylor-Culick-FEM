@@ -11,8 +11,8 @@ recorded in the project tracker.
 
 | script | what it does |
 |---|---|
-| `launch_batch2.sh` | Restarts `Oh_SB` 0.38372, 0.2377, 0.61945, 1.0 from their checkpoints. |
-| `launch_batch3.sh` | Re-runs `Oh_SB = 0.035` from `t = 0` (its field output was lost; see below). |
+| `launch_batch2.sh` | Restarts `Oh` 0.38372, 0.2377, 0.61945, 1.0 from their checkpoints. |
+| `launch_batch3.sh` | Re-runs `Oh = 0.035` from `t = 0` (its field output was lost; see below). |
 | `launch_batch4_dtstudy.sh` | The timestep study of `docs/planar-campaign/planar-campaign.tex` (`sec:timestep`). |
 
 ## Conventions these encode
@@ -29,7 +29,7 @@ not an output preference. See `docs/planar-campaign/planar-campaign.tex`
 must be scaled down to preserve the original cadence; `run_validation.py` warns
 and prints the matched count.
 
-**`Oh_SB = 0.035` lost its field output.** A restart run made before the
+**`Oh = 0.035` lost its field output.** A restart run made before the
 `--restart-from` defect was understood (fixed in `fc1ab41`) deleted that case's
 `liquid/*.vtu` tree and its `_gmsh` remesh files. Its `control.txt` and
 checkpoints survive, so the `u*(t)` series is intact and only the field output

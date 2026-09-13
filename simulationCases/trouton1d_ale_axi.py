@@ -10,7 +10,7 @@ THE MODEL.
 ----------
 Radial coordinate ``r``, hole edge (per-radian, membrane) ``R(t)``, film on
 ``r > R``. Depth-averaged radial velocity ``u(r,t)``, full thickness
-``h(r,t)``, ``rho = sigma = h0 = 1``, coded viscosity ``mu = sqrt(2) Oh_SB``:
+``h(r,t)``, ``rho = sigma = h0 = 1``, coded viscosity ``mu = sqrt(2) Oh``:
 
     h_t + (1/r)(r h u)_r = 0                                    (= S&B 3.15)
     h(u_t + u u_r) = (r N_rr)_r/r - N_thth/r
@@ -148,7 +148,7 @@ nodes, which this mesh does not have.
 TRAP HIT WHILE WRITING THIS: pyoomph's default ``newton_solver_tolerance``
 (1e-8, an ABSOLUTE residual tolerance, ``pyoomph/generic/problem.py:564``) is
 unreachable here at exactly the settings that work perfectly in planar --
-``Oh_SB=1, R0=5``, the same tiny relative first step
+``Oh=1, R0=5``, the same tiny relative first step
 (``startstep = t_end*1e-6``) planar's own sweep driver uses. Newton does not
 diverge; it lands on a genuine fixed point (bit-identical residual, or a
 2-cycle between two bit-identical values, for 50+ iterations) at a residual
@@ -304,7 +304,7 @@ class TipClosure(Equations):
 class Trouton1DALEAxiProblem(Problem):
     def __init__(self):
         super().__init__()
-        self.Oh_SB = 1.0
+        self.Oh = 1.0
         self.r0 = 5.0               # initial hole radius R0, units of h0
         self.l0 = 500.0             # radial extent of film beyond r0
         self.nelem = 800
@@ -315,7 +315,7 @@ class Trouton1DALEAxiProblem(Problem):
 
     @property
     def mu(self) -> float:
-        return self.Oh_SB * math.sqrt(2.0)
+        return self.Oh * math.sqrt(2.0)
 
     @property
     def tau_vis(self) -> float:
@@ -323,13 +323,13 @@ class Trouton1DALEAxiProblem(Problem):
 
     @property
     def r0_star(self) -> float:
-        """Savva-Bush small-hole parameter R0* = R0/(Oh_SB h0), h0 = 1.
+        """Savva-Bush small-hole parameter R0* = R0/(Oh h0), h0 = 1.
 
         R0* << 1 is the regime where R(t) = R0 exp(t*/2) (their 3.30); R0* >>
         1 is the planar-limit regime (docs/axi-design.md, "Internal exact
         checks" #6).
         """
-        return self.r0 / self.Oh_SB
+        return self.r0 / self.Oh
 
     def define_problem(self):
         # THE ONE LINE THAT MAKES THIS SOLVER AXISYMMETRIC. Every weak()

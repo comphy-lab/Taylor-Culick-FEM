@@ -30,7 +30,7 @@
 # first order the way the 1D case did, the campaign needs a resolved dt before
 # any u* is quoted.
 #
-# Oh_SB = 1.0 is chosen deliberately: it is the case with published data to
+# Oh = 1.0 is chosen deliberately: it is the case with published data to
 # check against (Savva & Bush fig 6) and the stiffest viscous solve, so it is
 # where a temporal problem shows up first.
 set -euo pipefail

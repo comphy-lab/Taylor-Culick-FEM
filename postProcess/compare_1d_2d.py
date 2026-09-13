@@ -2,7 +2,7 @@
 """Compare the 1D long-wave model against the 2D co-moving FEM, at matched Oh.
 
 WHAT THIS ANSWERS. The 2D sweep established that the velocity deficit decays as
-``1 - u* = C sqrt(Oh_SB / t*)`` with ``C -> 1/(2 sqrt(pi))``. The obvious next
+``1 - u* = C sqrt(Oh / t*)`` with ``C -> 1/(2 sqrt(pi))``. The obvious next
 question is whether the reduced-order long-wave model reproduces that. It turns
 out it cannot be asked directly, because the 1D solver does not survive to the
 asymptotic regime -- see the breakdown discussion below -- so this script does
@@ -18,14 +18,14 @@ temporal error estimator under-reports by about nine orders, so dt sits on
 maxstep every step and every u* is a function of it. Each Oh was therefore run
 at two or three fixed dt. This script interpolates each dt level onto a common
 t* grid and Richardson-extrapolates to dt -> 0 assuming the first-order rate
-that the Oh_SB = 1 ladder measured directly (successive ratios 1.97/1.99/1.99).
+that the Oh = 1 ladder measured directly (successive ratios 1.97/1.99/1.99).
 Raw single-dt 1D numbers are never compared against 2D here; only extrapolated
 ones, with the extrapolation size reported so the reader can judge it.
 
 THE 1D BREAKDOWN. Every 1D run terminated with Newton stalled at its iteration
-cap, at a tip thickness of 62 (Oh_SB = 1) to 337 (Oh_SB = 0.035) times the
+cap, at a tip thickness of 62 (Oh = 1) to 337 (Oh = 0.035) times the
 initial sheet thickness. The termination time is essentially independent of dt
--- at Oh_SB = 0.38372, nsteps 169242/338485/676971 stopped at t* = 431/405/405
+-- at Oh = 0.38372, nsteps 169242/338485/676971 stopped at t* = 431/405/405
 -- and a retry with a 40-iteration cap and line-search Newton stopped in the
 same place. That is a property of the model and its formulation, not of the
 timestep or the nonlinear solver, so the 1D curves simply end where they end.
@@ -44,10 +44,10 @@ import numpy as np
 V_TC = math.sqrt(2.0)
 C_STAR = 1.0 / (2.0 * math.sqrt(math.pi))
 
-# The full-range 1D runs, per Oh_SB, coarsest last. Named explicitly because the
+# The full-range 1D runs, per Oh, coarsest last. Named explicitly because the
 # sweep directory also holds superseded shorter runs (nsteps 360000/180000/
 # 353553) from an earlier t*-capped sizing, and one of those falls BETWEEN two
-# valid levels at Oh_SB = 0.09121, so "take the largest few" silently picks
+# valid levels at Oh = 0.09121, so "take the largest few" silently picks
 # wrong. rsync had no --delete, which is why they are still on disk.
 RUNS: dict[float, list[int]] = {
     0.035:   [1019351, 509675],
@@ -138,7 +138,7 @@ def collapse_const(ts, u, oh, frac=0.5):
     This is the collapse constant the 2D sweep is testing against
     1/(2 sqrt(pi)), and it is a different number from the free-fit prefactor
     above whenever the measured exponent is not -1/2. Reporting one as the other
-    is how the 2D constants first came out wrong here: at Oh_SB = 0.035 the free
+    is how the 2D constants first came out wrong here: at Oh = 0.035 the free
     fit gives a = -0.43 and a prefactor of 0.194, against 0.407 for the
     constrained form. Quote the constrained one only alongside the measured
     exponent, so a case that is not yet on the -1/2 law cannot masquerade as one
@@ -164,7 +164,7 @@ def main() -> None:
     summary = {}
     print("Asymptotic behaviour.  2D C*sqrt(Oh) has the exponent constrained to")
     print(f"-1/2 and is meaningful only where 2D a is close to it; target {C_STAR:.5f}.\n")
-    print(f"{'Oh_SB':>8} {'t*end_1D':>9} {'h_tip':>6} | {'1D a':>7} | "
+    print(f"{'Oh':>8} {'t*end_1D':>9} {'h_tip':>6} | {'1D a':>7} | "
           f"{'2D a':>7} {'2D C√Oh':>8} | {'Rich.corr':>9} {'1-u* @end':>10}")
     for oh in sorted(RUNS):
         r = richardson(args.oned, oh)
@@ -197,7 +197,7 @@ def main() -> None:
     print("\nEarly time, u* at matched t* (1D Richardson vs 2D):")
     probes = [1.0, 3.0, 10.0, 30.0, 100.0]
     hdr = "  ".join(f"t*={p:g}".rjust(9) for p in probes)
-    print(f"{'Oh_SB':>8}  {'':4}{hdr}")
+    print(f"{'Oh':>8}  {'':4}{hdr}")
     for oh in sorted(RUNS):
         r = richardson(args.oned, oh)
         if r is None:
@@ -246,7 +246,7 @@ def make_figure(args, summary) -> None:
         # Draw the extrapolation only where it means something. Once the
         # Richardson correction exceeds the deficit it is correcting, the
         # extrapolated curve is dominated by the correction and bends upward --
-        # visible at Oh_SB = 0.035, where it would read as a spurious rise in
+        # visible at Oh = 0.035, where it would read as a spurious rise in
         # 1 - u* at late time. Plot the finest measured level there instead.
         ok = corr < (1.0 - ext)
         if ok.sum() > 5:
@@ -267,7 +267,7 @@ def make_figure(args, summary) -> None:
     ax[1].set_xlabel(r"$t^*$"); ax[1].set_ylabel(r"$1-u^*$")
     ax[1].set_title(r"(b)  deficit;  dotted $=\frac{1}{2\sqrt{\pi}}\sqrt{Oh/t^*}$",
                     loc="left", fontsize=9)
-    leg = ax[0].legend(title=r"$Oh_{SB}$", fontsize=6.5, title_fontsize=7,
+    leg = ax[0].legend(title=r"$Oh$", fontsize=6.5, title_fontsize=7,
                        ncol=2, loc="lower right", frameon=False)
     ax[0].text(0.03, 0.93, "solid: 2D FEM\ndashed: 1D long-wave ($dt\\to0$)\n"
                r"$\times$: 1D breakdown", transform=ax[0].transAxes,

@@ -36,13 +36,13 @@ downstream consumer has to re-derive them.
 Re-verified symbolically at the start of this campaign by
 `validation/ahsan_campaign.py check-units`, which passes all six checks:
 
-    Oh_paper = 2 Oh_SB                  their Oh is built on the HALF thickness h0 = H_full/2
+    Oh_paper = 2 Oh                  their Oh is built on the HALF thickness h0 = H_full/2
     T        = t*/4                     tI = 4 mu h0/gamma = 4 tau_vis
     V        = u* = u/V_TC              their V and our u* are the same number, no factor
     H        = h                        their H is h_half/h0, ours h_full/H_full: same number
-    lI       = 4 h0 Oh_paper = 4 Oh_SB  in our code units, where rho = gamma = H_full = 1
-    L        = l0/lI = M/(4 Oh_SB)      M is our Lagrangian mass domain
-    X - X_c  = (x - x_tip)/(4 Oh_SB)
+    lI       = 4 h0 Oh_paper = 4 Oh  in our code units, where rho = gamma = H_full = 1
+    L        = l0/lI = M/(4 Oh)      M is our Lagrangian mass domain
+    X - X_c  = (x - x_tip)/(4 Oh)
 
 Pushing our momentum equation `u_t + u u_x = (4 mu/(rho h))(h u_x)_x` through
 this substitution returns their (2.16) `H V_T + H V V_X = (H V_X)_X` with
@@ -53,10 +53,10 @@ residual exactly zero.
 Their finite-L problem imposes `V(L,T) = 0` and `H_X(L,T) = 0` (their 2.19a,b).
 Our staggered scheme imposes `DirichletBC(u=0)` at `m = M` with `h`
 cell-constant and therefore Neumann. These are the same conditions, so a
-TC1D-FEM run with mass `M` **is** their sheet of `L = M/(4 Oh_SB)`; there is no
+TC1D-FEM run with mass `M` **is** their sheet of `L = M/(4 Oh)`; there is no
 structural obstacle and no theory-only panel anywhere in this tree. The mapping
 was checked before the campaign was launched rather than assumed: at
-`Oh_SB = 1, M = 20` the deceleration lands at `T_c = 4.97` against `L = 5`.
+`Oh = 1, M = 20` the deceleration lands at `T_c = 4.97` against `L = 5`.
 
 `drift_H_far` in the TC1D-FEM series is `|h - 1|` at `m = M`. In the finite-L
 sections it is LARGE by design -- it is the disturbance arriving at the far end,
@@ -202,7 +202,7 @@ def main() -> None:
                     j = json.loads(meta.read_text())
                 except json.JSONDecodeError:
                     j = {}
-                keys = [k for k in ("code", "L", "L_reported", "Oh_SB",
+                keys = [k for k in ("code", "L", "L_reported", "Oh",
                                     "Oh_paper", "mass", "nelem", "Tend",
                                     "dT", "nsteps", "N", "NT", "dx", "dt",
                                     "Lhat", "dX_wall", "tip_cell_mass",

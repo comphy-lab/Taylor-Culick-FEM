@@ -3,7 +3,7 @@
 Three panels, each answering one question the campaign was set up to ask:
 
   (a) DOMAIN CONVERGENCE -- is the answer numerically converged?
-      u*(t*=30) against the co-moving window length L at Oh_SB = 1, with the
+      u*(t*=30) against the co-moving window length L at Oh = 1, with the
       digitised Savva & Bush value marked. This is the panel that shows the
       window, not the mesh, was the controlling parameter.
 
@@ -68,7 +68,7 @@ def main() -> None:
     ax1.axhline(1.0, color="0.5", ls=":", lw=2, label=r"$V_{\mathrm{TC}}$")
     ax1.set_xlabel(r"co-moving window length $L/h_0$", fontsize=24, labelpad=8)
     ax1.set_ylabel(r"$u^*(t^*=30)$", fontsize=24, labelpad=8)
-    ax1.set_title(r"(a) domain convergence, $Oh_{SB}=1$", fontsize=22, pad=10)
+    ax1.set_title(r"(a) domain convergence, $Oh=1$", fontsize=22, pad=10)
     ax1.set_ylim(0.78, 1.02)
     ax1.legend(fontsize=15, loc="lower right")
     if len(us) >= 2:
@@ -105,8 +105,8 @@ def main() -> None:
 
     # ---- (c) approach to V_TC --------------------------------------------
     for tag, lab, c, clock in [
-        ("Oh_SB_1_t100_L60", r"$Oh_{SB}=1$ (viscous clock $t^*$)", "#D55E00", 1),
-        ("Oh_SB_0.035_inertial_log", r"$Oh_{SB}=0.035$ (capillary clock $t$)",
+        ("Oh_SB_1_t100_L60", r"$Oh=1$ (viscous clock $t^*$)", "#D55E00", 1),
+        ("Oh_SB_0.035_inertial_log", r"$Oh=0.035$ (capillary clock $t$)",
          "#009E73", 0),
     ]:
         a = load(tag)
