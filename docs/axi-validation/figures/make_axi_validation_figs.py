@@ -87,7 +87,7 @@ C_MASS = "#0072B2"              # 1D mass-coordinate ladder
 C_ALE = "#009E73"               # 1D ALE ladder
 
 # --------------------------------------------------------------- ladder ----
-# Planar-limit ladder, Oh_SB = 1, deviation = max |u*_axi - u*_planar| over a
+# Planar-limit ladder, Oh = 1, deviation = max |u*_axi - u*_planar| over a
 # matched output grid.  Mass coordinate: comparison over the whole record to
 # t* = 10.  ALE: at t* = 10.  Both suites match the tip cell in RADIUS rather
 # than the element count, so the difference carries no discretisation offset.
@@ -100,7 +100,7 @@ LADDER_ALE = np.array([[50.0, 3.3565e-3],
                        [100.0, 2.7180e-3],
                        [200.0, 1.6749e-3]])
 
-DNS_PLANAR_TARGET = 0.9297      # validated planar solver, Oh_SB = 0.5, t* = 30
+DNS_PLANAR_TARGET = 0.9297      # validated planar solver, Oh = 0.5, t* = 30
 
 
 def axstyle(ax, square=True):
@@ -171,17 +171,17 @@ def refresh(args):
         d = np.loadtxt(args.dns)          # t tstar R Rdot ustar volume
         _write_cache("dns_oh0707_r0_1", (d[:, 1], d[:, 4], d[:, 2]),
                      "tstar,ustar,R -- 2D axisymmetric DNS, lab frame, "
-                     "Oh_SB = 0.707107, R0 = 1")
+                     "Oh = 0.707107, R0 = 1")
     if args.ale_default:
         d = np.loadtxt(args.ale_default)  # t tstar R u_tip ustar ...
         _write_cache("ale1d_default", (d[:, 1], d[:, 4], d[:, 2]),
                      "tstar,ustar,R -- 1D axi ALE, default tip closure, "
-                     "Oh_SB = 0.707107, R0 = R_eq = 1.1129")
+                     "Oh = 0.707107, R0 = R_eq = 1.1129")
     if args.ale_tipcorr:
         d = np.loadtxt(args.ale_tipcorr)
         _write_cache("ale1d_tipcorr", (d[:, 1], d[:, 4], d[:, 2]),
                      "tstar,ustar,R -- 1D axi ALE, toroidal tip correction, "
-                     "Oh_SB = 0.707107, R0 = R_eq = 1.1129")
+                     "Oh = 0.707107, R0 = R_eq = 1.1129")
     if args.basilisk:
         d = np.loadtxt(args.basilisk, delimiter=",", skiprows=1)  # t rTip vTip
         # tau_vis = mu/2 and the reference carries mu = 1, so t* = 2t; the
@@ -189,17 +189,17 @@ def refresh(args):
         _write_cache("basilisk2024_oh1", (2.0 * d[:, 0],
                                           d[:, 2] / np.sqrt(2.0), d[:, 1]),
                      "tstar,ustar,rTip -- Basilisk volume-of-fluid, 2024 "
-                     "campaign, coded Oh = 1 (Oh_SB = 0.707107), R0 = 1")
+                     "campaign, coded mu = 1 (Oh = 0.707107), R0 = 1")
     if args.planar_reduction:
         d = np.loadtxt(args.planar_reduction)
         _write_cache("dns_planar_reduction_r0_100", (d[:, 1], d[:, 4]),
-                     "tstar,ustar -- 2D axisymmetric DNS, Oh_SB = 0.5, "
+                     "tstar,ustar -- 2D axisymmetric DNS, Oh = 0.5, "
                      "R0 = 100 (planar-reduction gate)")
     if args.dns_matched:
         d = np.loadtxt(args.dns_matched)   # t tstar R Rdot ustar volume
         _write_cache("dns_oh0354_r0_1", (d[:, 1], d[:, 2], d[:, 4]),
                      "tstar,R,ustar -- 2D axisymmetric DNS, lab frame, "
-                     "Oh_SB = 0.0353553 (mu = 0.05), R0 = 1; matched leg for "
+                     "Oh = 0.0353553 (mu = 0.05), R0 = 1; matched leg for "
                      "the fresh volume-of-fluid rerun")
     if args.basilisk_fresh:
         d = np.loadtxt(args.basilisk_fresh)   # t R_tip R_tip_vof R_tip_global
@@ -211,7 +211,7 @@ def refresh(args):
                                                d[:, 1], d[:, 2]),
                      "tstar,R_tip,R_tip_vof -- Basilisk volume-of-fluid, fresh "
                      "Newtonian axisymmetric rerun, mu = 0.05 "
-                     "(Oh_SB = 0.0353553), R0 = 1, MAXlevel 12")
+                     "(Oh = 0.0353553), R0 = 1, MAXlevel 12")
 
 
 # -------------------------------------------------------------- figure 1 ---

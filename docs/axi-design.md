@@ -22,10 +22,10 @@ and `trouton1d_ale.py` exactly.
 ## Non-dimensionalisation
 
 Unchanged from planar: `rho = sigma = h0 = 1` with `h0` the FULL thickness,
-`V_TC = sqrt(2)`, coded viscosity `mu = sqrt(2) * Oh_SB`, viscous clock
+`V_TC = sqrt(2)`, coded viscosity `mu = sqrt(2) * Oh`, viscous clock
 `tau_vis = mu/2`, `t* = t/tau_vis`. One new parameter enters: the initial hole
 radius `R0` (in units of `h0`). The Savva-Bush axisymmetric self-similarity
-variable at high Oh is `R0* = R0/(Oh_SB h0)` — curves with equal `H Oh/R0`
+variable at high Oh is `R0* = R0/(Oh h0)` — curves with equal `H Oh/R0`
 collapse (their section 3.3.1), which is a validation lever.
 
 ## Governing equations (Eulerian, membrane form)
@@ -182,15 +182,15 @@ safe (no midside nodes on a linear line mesh).
    (eigenvalues 1/2, 3/2); assemble it as a diagnostic — any hoop-term sign
    error makes it go negative immediately.
 6. **High-Oh early growth**: `R(t) = R0 exp(t / (2 tau_vis))` (S&B 3.30) at
-   `Oh_SB >> 1` — valid only in the small-hole regime
-   `R0* = R0/(Oh_SB h0) << 1`. The opposite regime `R0* >> 1` follows the
+   `Oh >> 1` — valid only in the small-hole regime
+   `R0* = R0/(Oh h0) << 1`. The opposite regime `R0* >> 1` follows the
    planar `sqrt(t*/pi)` start instead; note the Basilisk-matching DNS point
-   (`Oh_SB = 0.035`, `R0 = 1`) has `R0* = 28` — neither closed form is a
+   (`Oh = 0.035`, `R0 = 1`) has `R0* = 28` — neither closed form is a
    clean target there, so use `R0*` as a regime label when choosing tests.
 7. **Self-similarity**: matched `Oh h0/R0` at high Oh collapses `u*(t*)`
    (S&B section 3.3.1).
 8. **Late-time**: `dR/dt -> sqrt(2)` with a correction decaying like
-   `ell/R`, `ell = max(h0, Oh_SB h0)` — i.e. `1/t`, which DOMINATES the
+   `ell/R`, `ell = max(h0, Oh h0)` — i.e. `1/t`, which DOMINATES the
    planar `t^-2` deficit. Test `(1 - u*) R -> const`. The planar late-time
    coefficients (3/2, `sqrt(Oh/t*)` law, 0.98073) are planar-only and must
    never be fitted to axi data.
@@ -278,11 +278,11 @@ Smoke ladder before any long run (in order, all must pass):
 - 2024 campaign CSV `Ec0.000_v1202_2024.csv` (t, rTip, vTip to t = 300,
   plateau 1.4134): direct vTip(t) comparison for the DNS.
 - Sanjay, Sen, Kant & Lohse, JFM 948 (2022) / arXiv:2202.13400 (axisymmetric,
-  `We_f -> 1` plateau; note their `Oh` carries the `2 gamma` convention:
-  `Oh_paper = Oh_code/sqrt(2)`).
+  `We_f -> 1` plateau; note their `Oh` carries the `2 gamma` convention,
+  so it is this project's `Oh`: `Oh_paper = mu/sqrt(2)`).
 - Savva & Bush axisymmetric figures (section 3.3) — to be digitised; no
   axisymmetric digitised curves exist in `validation/data/` yet.
-- 1D-vs-DNS: matched `R0 = 1`, matched `Oh_SB`, compare `R(t)` and
+- 1D-vs-DNS: matched `R0 = 1`, matched `Oh`, compare `R(t)` and
   `u*(t*)`; expect the leading early-time discrepancy to be the O(h/R)
   azimuthal edge correction, measurable via its flag.
 

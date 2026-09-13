@@ -117,7 +117,7 @@ that rendered them in red are gone.
 
 Two measurements the note names as wanted but does not contain:
 
-- the **like-for-like volume-of-fluid rerun at `Oh_SB = 0.7071`**, which is what
+- the **like-for-like volume-of-fluid rerun at `Oh = 0.7071`**, which is what
   would settle whether the 1.6%/1.8% disagreement with the 2024 campaign belongs
   to that campaign or to a method (§5.2 says so in print);
 - the **window-length ladder `L = 20/40/80`** for the co-moving solver, whose

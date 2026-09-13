@@ -20,7 +20,7 @@
 \newcommand{\ALE}{\textsf{TC1D-AXI-ALE}}
 \newcommand{\LAB}{\textsf{AXI-LAB}}
 \newcommand{\COM}{\textsf{AXI-COMOVING}}
-\newcommand{\Ohsb}{\mathrm{Oh}}
+\newcommand{\Oh}{\mathrm{Oh}}
 \newcommand{\Vtc}{V_{TC}}
 
 \title{Verification and validation of axisymmetric solvers for
@@ -80,7 +80,7 @@ discovered in \S\ref{sec:validation}. First, the comparisons in
 \S\ref{sec:validation} are one end-to-end run per question. This strand exists
 to establish that the axisymmetric machinery is correct and that its answers
 are not obviously wrong, not to benchmark it exhaustively; a sweep in
-$\Ohsb$ and $R_{0}$ is deliberately out of scope. Second, the internal checks
+$\Oh$ and $R_{0}$ is deliberately out of scope. Second, the internal checks
 of \S\ref{sec:verification} test discretisations against the equations and
 against each other. They are not evidence that the depth-averaged model
 describes a real opening hole, and \S\ref{sec:validation} shows a case in which
@@ -91,15 +91,15 @@ it plainly does not.
 The non-dimensionalisation is unchanged from the planar work: $\rho = \sigma =
 h_{0} = 1$ with $h_{0}$ the \emph{full} sheet thickness, so the half-thickness
 is $1/2$ and the Taylor--Culick speed \cite{taylor1959,culick1960} is
-$\Vtc = \sqrt{2\sigma/\rho h_{0}} = \sqrt{2}$. Throughout, $\Ohsb =
+$\Vtc = \sqrt{2\sigma/\rho h_{0}} = \sqrt{2}$. Throughout, $\Oh =
 \mu/\sqrt{2 h_{0}\rho\gamma}$ is the Savva \& Bush Ohnesorge number
-\cite{savva2009}, the coded viscosity is $\mu = \sqrt{2}\,\Ohsb$, the viscous
+\cite{savva2009}, the coded viscosity is $\mu = \sqrt{2}\,\Oh$, the viscous
 clock is $\tau_{\mathrm{vis}} = \mu/2$ and $t^{*} = t/\tau_{\mathrm{vis}}$. The
 reported speed is $u^{*} = \dot{R}/\Vtc$, which tends to unity.
 
 One parameter is new: the initial hole radius $R_{0}$, in units of $h_{0}$.
 The combination that governs the early behaviour is
-$R_{0}^{*} = R_{0}/(\Ohsb\,h_{0})$, the Savva \& Bush similarity variable
+$R_{0}^{*} = R_{0}/(\Oh\,h_{0})$, the Savva \& Bush similarity variable
 \cite{savva2009}; $R_{0}^{*}\ll 1$ is the small-hole regime in which the hole
 grows exponentially and $R_{0}^{*}\gg 1$ is the regime that starts like the
 planar sheet. It is worth computing before choosing a test, because neither
@@ -474,7 +474,7 @@ $h_{\mathrm{tip}}\to t^{*}/6$, azimuthal stretching thinning the rim by exactly
 $2/3$ relative to planar. That last result was derived independently twice and
 is the headline non-planar prediction of the reduced model.
 
-\emph{Early exponential growth.} In the small-hole regime, at $\Ohsb = 100$ and
+\emph{Early exponential growth.} In the small-hole regime, at $\Oh = 100$ and
 $R_{0}=5$ so that $R_{0}^{*}=0.05\ll1$, the fitted logarithmic growth rate of
 $R(t)$ is within $1.04\%$ of $1/(2\tau_{\mathrm{vis}})$, which is Savva \&
 Bush's (3.30). The check reports the rate over four fit windows rather than one,
@@ -505,12 +505,12 @@ $5.8\times10^{-9}$ at $800$, $1600$ and $2000$ elements.
 solution is verified rather than assumed.
 
 \emph{Early exponential growth.} As above, within $3\%$ of $1/\mu$ over
-$t^{*}\le2$ at $\Ohsb=100$, $R_{0}=5$ ($R_{0}^{*}=0.05$). The window is
+$t^{*}\le2$ at $\Oh=100$, $R_{0}=5$ ($R_{0}^{*}=0.05$). The window is
 justified by where the regime ends: the exponential law breaks down once $R$
-approaches $\Ohsb\,h_{0}$, here at $t^{*}\approx6$, and $R(t^{*}=2)\approx13.6$
+approaches $\Oh\,h_{0}$, here at $t^{*}\approx6$, and $R(t^{*}=2)\approx13.6$
 is comfortably inside it.
 
-\emph{Cross-solver.} At $\Ohsb=1$, $R_{0}=5$, the two depth-averaged solvers
+\emph{Cross-solver.} At $\Oh=1$, $R_{0}=5$, the two depth-averaged solvers
 agree to $\max|\Delta u^{*}| = 7.3\times10^{-6}$. They share the equations and
 nothing else: a Lagrangian mass coordinate with a carried metric against a
 physical radius on a moving mesh, a cell-constant thickness against a continuous
@@ -521,7 +521,7 @@ agreement is the strongest internal evidence available for either of them.
 \label{sec:planarlimit}
 
 Both depth-averaged solvers are compared against the validated planar solver at
-matched $\Ohsb$, matched end time, matched timestep and matched output
+matched $\Oh$, matched end time, matched timestep and matched output
 schedule, so the comparison is row by row with no interpolation. The meshes are
 matched by \emph{tip cell in radius} and not by element count: the axisymmetric
 domain is a mass, so an equal element count would place a systematically
@@ -566,9 +566,9 @@ metric terms.
   \centering
   \includegraphics[width=\textwidth]{figures/fig2_planar_reduction.pdf}
   \caption{The planar-reduction gate. (a) The direct solver at $R_{0}=100$,
-  $\Ohsb=0.5$, against the validated planar value $u^{*}(t^{*}=30)=0.9297$; the
+  $\Oh=0.5$, against the validated planar value $u^{*}(t^{*}=30)=0.9297$; the
   inset resolves the $0.13\%$ gap that the main axes cannot show. (b) The
-  depth-averaged planar-limit ladder at $\Ohsb=1$: squares \MASS, triangles
+  depth-averaged planar-limit ladder at $\Oh=1$: squares \MASS, triangles
   \ALE, dotted the $2/R_{0}$ admission bound, grey the line $0.37/R_{0}$. The
   two depth-averaged solvers are indistinguishable at this scale --- they agree
   to four significant figures at every rung --- so the two symbols overlie each
@@ -645,7 +645,7 @@ Three external comparisons, one end-to-end run each.
 
 \subsection{Reduction to the planar problem}
 
-At $R_{0}=100$ and $\Ohsb=0.5$ the direct axisymmetric solver returns
+At $R_{0}=100$ and $\Oh=0.5$ the direct axisymmetric solver returns
 $u^{*}(t^{*}=30) = 0.9309$ against the validated planar value $0.9297$, a
 difference of $0.13\%$ (figure~\ref{fig:planar}(a)). The expected residual
 curvature effect at this radius is $O(h_{0}/R)\approx 1\%$ at the start and
@@ -658,8 +658,9 @@ tolerance law of \S\ref{sec:trap-newton}.
 \subsection{Against a volume-of-fluid campaign}
 \label{sec:basilisk}
 
-At coded $\Ohsb = 0.7071$ and $R_{0}=1$ the initial condition matches that of
-the 2024 volume-of-fluid campaign exactly, so no parameter matching is required.
+At $\Oh = 0.7071$ (coded $\mu = 1$) and $R_{0}=1$ the initial condition
+matches that of the 2024 volume-of-fluid campaign exactly, so no parameter
+matching is required.
 Over the record the two agree to $1.6\%$ in the hole radius and $1.8\%$ in the
 tip speed. The discrepancy is systematic rather than scattered, and it is quoted
 at face value: the reference's own resolution study is not recorded, so it
@@ -674,8 +675,8 @@ code was therefore rerun from scratch as a Newtonian axisymmetric case, carrying
 the three defect fixes recorded in \S\ref{sec:traps} and an in-code tip
 diagnostic that the 2024 axisymmetric case never had, and compared against a
 finite-element leg at matched parameters. The rerun is not at the operating
-point of the comparison above: it is at $\mu=0.05$, that is $\Ohsb=0.0354$
-through $\mu=\sqrt{2}\,\Ohsb$, with $R_{0}=h_{0}=1$, carried to $t=40$
+point of the comparison above: it is at $\mu=0.05$, that is $\Oh=0.0354$
+through $\mu=\sqrt{2}\,\Oh$, with $R_{0}=h_{0}=1$, carried to $t=40$
 ($t^{*}=1600$, $R\simeq52$) at \texttt{MAXlevel}~12.
 
 Over that record the two methods agree to $0.51\%$ in the hole radius, the
@@ -695,14 +696,14 @@ to that tolerance, the larger offset is unlikely to be a property of the method.
 The evidence therefore points at the 2024 campaign rather than at either code.
 It does not close the question: the rerun is an order of magnitude lower in
 Ohnesorge number than the case it is being used to argue about, and a
-like-for-like rerun at $\Ohsb=0.7071$ is what would settle it. That run is
+like-for-like rerun at $\Oh=0.7071$ is what would settle it. That run is
 cheap, and it is the obvious next measurement.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig3_vof_rerun.pdf}
   \caption{The fresh Newtonian axisymmetric rerun of the volume-of-fluid code
-  against a finite-element leg at matched parameters, $\Ohsb=0.0354$
+  against a finite-element leg at matched parameters, $\Oh=0.0354$
   ($\mu=0.05$), $R_{0}=h_{0}=1$. (a) The hole radius over the whole retraction,
   from the cap-dominated start to the linear late-time growth. The
   volume-of-fluid record is written on a uniform $t=1$ output grid, so its first
@@ -750,7 +751,7 @@ $\dot{R}$ and not $R$: the depth-averaged tip is the matched edge of an
 asymptotic construction while the direct hole radius is the innermost interface
 point, and the offset between them is an irreducible $O(h/2)$.
 
-At $\Ohsb = 0.7071$ and $t^{*} = 100$,
+At $\Oh = 0.7071$ and $t^{*} = 100$,
 
 \begin{center}
 \begin{tabular}{@{}lc@{}}
@@ -778,7 +779,7 @@ planar geometry, so it is inherited rather than new.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/fig1_closure_bracket.pdf}
-  \caption{The two tip closures bracket the direct solution at $\Ohsb=0.7071$,
+  \caption{The two tip closures bracket the direct solution at $\Oh=0.7071$,
   $R_{0}=1$. (a) Retraction speed: solid, direct solver in the laboratory
   frame; dashed, \ALE\ with the default closure $N_{rr}(R)=-2$; dash-dot, \ALE\
   with the toroidal correction \eqref{eq:tipcorr}; circles, the 2024
@@ -808,16 +809,16 @@ on it.
 Two of Savva \& Bush's axisymmetric curves were digitised with the same
 calibrated workflow as the planar figures (\texttt{validation/data/}, with
 per-figure calibration overlays): their figure~16 inset curve~C
-($\mathrm{Oh}_{\rm SB} = 1$, $R_{0} = 50H$ --- at this Ohnesorge number their
+($\Oh = 1$, $R_{0} = 50H$ --- at this Ohnesorge number their
 viscous and inertial clocks coincide, so the comparison is
-convention-proof) and figure~10 curve~G ($\mathrm{Oh}_{\rm SB} = 10$,
+convention-proof) and figure~10 curve~G ($\Oh = 10$,
 $R_{0} = 50H$, viscous clock). Against the mass-coordinate solver at matched
-$R_{0}$: at $\mathrm{Oh}_{\rm SB} = 1$ over $t^{*} \in [2, 10]$ the default
+$R_{0}$: at $\Oh = 1$ over $t^{*} \in [2, 10]$ the default
 closure agrees to $1.9\%$ rms ($u^{*}(10) = 0.9133$ against their $0.8985$),
 and the toroidal tip correction \emph{improves} this to $1.3\%$ rms --- their
 model resolves the smoothed rim cap with full capillarity, which is exactly
 the physics the correction reinstates at leading order. At
-$\mathrm{Oh}_{\rm SB} = 10$ over $t^{*} \in [2, 34.5]$ the agreement is
+$\Oh = 10$ over $t^{*} \in [2, 34.5]$ the agreement is
 $3.5\%$ rms with the deviation concentrated in the early transient
 (where their published sensitivity to the initial tip-smoothing parameter
 $\alpha$ is strongest, their figure~14) and narrowing to $1.8\%$ by
@@ -826,7 +827,7 @@ third digitised curve (their figure~16 main panel, curve~D) is retained in
 the data directory but excluded here: its time-axis normalisation in the
 moderate-Oh section could not be established beyond doubt, and a comparison
 built on a guessed clock would be worse than none. The self-similar collapse
-at matched $\Ohsb\,h_{0}/R_{0}$ remains the natural test to build on these
+at matched $\Oh\,h_{0}/R_{0}$ remains the natural test to build on these
 curves.
 
 \section{Four numerical traps}
@@ -1025,7 +1026,7 @@ the more interesting because it is a statement about the model rather than about
 its constant.
 
 \emph{The comparison set is thin by design.} One run per question, no sweep in
-$\Ohsb$ or $R_{0}$, and no digitised axisymmetric literature curves. The
+$\Oh$ or $R_{0}$, and no digitised axisymmetric literature curves. The
 verification evidence of \S\ref{sec:verification} is meant to carry the weight
 that a sweep would otherwise carry, and it is worth being explicit that it
 cannot carry all of it: internal consistency at high precision is not external

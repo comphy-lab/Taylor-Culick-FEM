@@ -8,7 +8,7 @@ The split is by question, not by geometry.
 | document | remit | status |
 |---|---|---|
 | [`validation-viscous/`](validation-viscous/) | One-dimensional Trouton (long-wave) planar sheet in the viscous limit, checked against Ahsan *et al.* and against independent implementations of the same reduced model, including the solvers written here. Formerly `validation-1d/`. | settled |
-| [`validation-inertial/`](validation-inertial/) | Two-dimensional inertial retraction, `Oh_SB < 0.1`. Planar FEM against Basilisk, and the same comparison for the axisymmetric hole. | planar closed; axi running |
+| [`validation-inertial/`](validation-inertial/) | Two-dimensional inertial retraction, `Oh < 0.1`. Planar FEM against Basilisk, and the same comparison for the axisymmetric hole. | planar closed; axi running |
 | [`planar-campaign/`](planar-campaign/) | Full planar Newtonian write-up at arbitrary Ohnesorge number (`planar-campaign.tex`). Method, co-moving frame, Savva & Bush, 1D versus 2D, and what the Oh sweep does and does not establish. | planar inertial closed; moderate-Oh material as written |
 | [`axi-validation/`](axi-validation/) | Construction and checks of the four axisymmetric solvers (two depth-averaged, two free-surface Navier–Stokes). Solver V&V across viscous and inertial axi formulations. The inertial campaign comparison is [`validation-inertial/`](validation-inertial/). | settled as a solver note |
 | [`axi-design.md`](axi-design.md) | Design authority for the axi formulations. | living design note |

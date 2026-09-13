@@ -1,4 +1,4 @@
-# tstar,ustar,R -- 1D axi ALE, default tip closure, Oh_SB = 0.707107, R0 = R_eq = 1.1129
+# tstar,ustar,R -- 1D axi ALE, default tip closure, Oh = 0.707107, R0 = R_eq = 1.1129
 1.0000029000e-02,5.7571231196e-02,1.1131610738e+00
 1.0637648543e-02,5.9017453808e-02,1.1131871964e+00
 1.1315956653e-02,6.0561082776e-02,1.1132158159e+00

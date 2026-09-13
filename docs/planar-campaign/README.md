@@ -6,7 +6,7 @@ Taylor–Culick velocity. The physics, the conventions, the method and what the
 Oh sweep does and does not establish are in `planar-campaign.tex`. This file
 records what exists and how to build it.
 
-The inertial planar FEM–Basilisk comparison (`Oh_SB < 0.1`) is
+The inertial planar FEM–Basilisk comparison (`Oh < 0.1`) is
 [`../validation-inertial/`](../validation-inertial/). The viscous Trouton/Ahsan
 note is [`../validation-viscous/`](../validation-viscous/). The axisymmetric
 solver-construction note is [`../axi-validation/`](../axi-validation/).

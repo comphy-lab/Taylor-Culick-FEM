@@ -1,4 +1,4 @@
-# tstar,R_tip,R_tip_vof -- Basilisk volume-of-fluid, fresh Newtonian axisymmetric rerun, mu = 0.05 (Oh_SB = 0.0353553), R0 = 1, MAXlevel 12
+# tstar,R_tip,R_tip_vof -- Basilisk volume-of-fluid, fresh Newtonian axisymmetric rerun, mu = 0.05 (Oh = 0.0353553), R0 = 1, MAXlevel 12
 0.0000000000e+00,1.0000155800e+00,1.0003138600e+00
 4.0000000000e+01,1.7078755800e+00,1.7081327000e+00
 8.0000000000e+01,2.8341104000e+00,2.8343133500e+00

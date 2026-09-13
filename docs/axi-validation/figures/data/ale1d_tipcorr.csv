@@ -1,4 +1,4 @@
-# tstar,ustar,R -- 1D axi ALE, toroidal tip correction, Oh_SB = 0.707107, R0 = R_eq = 1.1129
+# tstar,ustar,R -- 1D axi ALE, toroidal tip correction, Oh = 0.707107, R0 = R_eq = 1.1129
 1.0000029000e-02,1.6939994501e-02,1.1129768216e+00
 1.0637648543e-02,1.7365480099e-02,1.1129845080e+00
 1.1315956653e-02,1.7819633213e-02,1.1129929291e+00

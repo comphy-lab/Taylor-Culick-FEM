@@ -1,4 +1,4 @@
-# tstar,R,ustar -- 2D axisymmetric DNS, lab frame, Oh_SB = 0.0353553 (mu = 0.05), R0 = 1; matched leg for the fresh volume-of-fluid rerun
+# tstar,R,ustar -- 2D axisymmetric DNS, lab frame, Oh = 0.0353553 (mu = 0.05), R0 = 1; matched leg for the fresh volume-of-fluid rerun
 1.6000024000e-01,9.9999520135e-01,-8.4828757197e-04
 1.7020239199e-01,9.9999453620e-01,-1.8440623470e-03
 1.8105532272e-01,9.9999377839e-01,-1.9749634060e-03

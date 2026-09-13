@@ -1,4 +1,4 @@
-# tstar,ustar,rTip -- Basilisk volume-of-fluid, 2024 campaign, coded Oh = 1 (Oh_SB = 0.707107), R0 = 1
+# tstar,ustar,rTip -- Basilisk volume-of-fluid, 2024 campaign, coded mu = 1 (Oh = 0.707107), R0 = 1
 0.0000000000e+00,0.0000000000e+00,1.0000000000e+00
 2.0000000000e-01,6.4312760406e-02,1.0045475990e+00
 4.0000000000e-01,1.3833012298e-01,1.0188766150e+00
