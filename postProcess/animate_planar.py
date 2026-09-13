@@ -280,7 +280,8 @@ def main() -> None:
     ap.add_argument("--control", required=True, type=Path)
     ap.add_argument("--out", default=Path("taylor_culick_planar.mp4"), type=Path)
     ap.add_argument("--frames-dir", default=Path("frames"), type=Path)
-    ap.add_argument("--mu", type=float, default=0.05, help="Oh, the dynamic viscosity")
+    ap.add_argument("--mu", type=float, default=0.05,
+                    help="coded dynamic viscosity mu = sqrt(2) Oh; NOT Oh itself")
     ap.add_argument("--nframes", type=int, default=220)
     ap.add_argument("--fps", type=int, default=25)
     # --xmax-domain is the INLET MARKER, not a view setting: free_surface() uses
