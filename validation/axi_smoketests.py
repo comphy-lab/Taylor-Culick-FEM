@@ -297,7 +297,8 @@ def run_s2() -> bool:
 # docs/axi-design.md's "First geometric correction" section notes that the
 # toroidal-rim term opposing opening, `pi*h_tip/(2*R)`, is O(1) relative to
 # the leading `-2` driving term exactly when R ~ h_tip ~ 1 -- i.e. the net
-# driving force is genuinely weak at this radius. At the low Oh = 0.05 used
+# driving force is genuinely weak at this radius. At the low coded mu = 0.05
+# (Oh = 0.035) used
 # here (inertia-dominated), an impulsively-started flow (u(t=0)=0) driven by
 # a weak, spatially non-uniform capillary load is exactly the kind of system
 # that can show a brief transient in the "wrong" direction before the

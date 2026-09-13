@@ -256,7 +256,7 @@ class AxiTipFlux(Equations):
 class Trouton1DAxiProblem(Problem):
     def __init__(self):
         super().__init__()
-        self.Oh_SB = 1.0
+        self.Oh = 1.0
         #: Initial hole radius in units of the full thickness h0. See the
         #: module docstring for why R0 = 0 is excluded and R0 >= 5 is the
         #: production floor.
@@ -287,7 +287,7 @@ class Trouton1DAxiProblem(Problem):
 
     @property
     def mu(self) -> float:
-        return self.Oh_SB * math.sqrt(2.0)
+        return self.Oh * math.sqrt(2.0)
 
     @property
     def tau_vis(self) -> float:
@@ -295,14 +295,14 @@ class Trouton1DAxiProblem(Problem):
 
     @property
     def r0_star(self) -> float:
-        """Savva & Bush's small-hole parameter R0* = R0 / (Oh_SB h0).
+        """Savva & Bush's small-hole parameter R0* = R0 / (Oh h0).
 
         Their high-Oh exponential opening ``R = R0 exp(t/(2 tau_vis))`` holds
         only for ``R0* << 1``; ``R0* >> 1`` follows the planar ``sqrt(t*/pi)``
         start instead. Use it as a regime label when choosing a test, not as a
         prediction.
         """
-        return self.r0 / self.Oh_SB
+        return self.r0 / self.Oh
 
     @property
     def domain_mass(self) -> float:

@@ -1,12 +1,12 @@
 # Validation — planar Newtonian retraction
 
-## Scope: `Oh_SB <= 1`
+## Scope: `Oh <= 1`
 
-The campaign is bounded above at `Oh_SB = 1` (Vatsal, 2026-08-07). The reason is
+The campaign is bounded above at `Oh = 1` (Vatsal, 2026-08-07). The reason is
 the window-sizing rule: the co-moving window must contain the diffusive
 footprint `sqrt(4 nu t)`, which scales with `mu`, so at `t* = 100`
 
-| `Oh_SB` | required `L/h0` |
+| `Oh` | required `L/h0` |
 |---|---|
 | 0.035 | 13 |
 | 0.5 | 52 |
@@ -14,9 +14,9 @@ footprint `sqrt(4 nu t)`, which scales with `mu`, so at `t* = 100`
 | 5 | 300 |
 | 10 | 600 |
 
-Beyond `Oh_SB = 1` the cost grows sharply for the least interesting physics --
+Beyond `Oh = 1` the cost grows sharply for the least interesting physics --
 the strongly viscous limit where no rim forms and the curves collapse onto one
-another. `Oh_SB ~ 1` is where inertia and viscosity are comparable and the
+another. `Oh ~ 1` is where inertia and viscosity are comparable and the
 dynamics are richest.
 
 Consequence for the comparison matrix: the digitised Savva & Bush curves used
@@ -44,7 +44,7 @@ evidence, and the difference matters when they disagree:
 | fresh Basilisk DNS | genuine cross-method agreement | independent: VOF interface capturing, two-phase, different mesh, different code |
 | Wee et al. PRF 9, 103601 (2024) | published low-`Oh` behaviour | **finite drop** (`L0 = 100`, both ends), not semi-infinite; comparable only where `Oh << L0/h0` |
 
-Savva & Bush reach only `Oh_SB = 0.5`, past their own `Oh < 0.1` wave threshold,
+Savva & Bush reach only `Oh = 0.5`, past their own `Oh < 0.1` wave threshold,
 so the strongly inertial regime has **no digitised comparator** -- Q2 there is
 answered against `V_TC` itself plus convergence.
 
@@ -64,7 +64,7 @@ answered against `V_TC` itself plus convergence.
 run under GNU Octave to 5e-10, the precision of Octave's ASCII output.
 
 The load-bearing fact is that **their reduced problem is our model exactly**.
-Their eqs (2.15)-(2.19), with `h0 = H/2`, `Oh_paper = 2 Oh_SB`, `T = t*/4` and
+Their eqs (2.15)-(2.19), with `h0 = H/2`, `Oh_paper = 2 Oh`, `T = t*/4` and
 `U = u*`, are our `h_t + (h u)_x = 0`, `Du/Dt = (4 mu/h)(h u_x)_x` with the
 Savva & Bush tip closure `h u_x = -1/(2 mu)` -- i.e. our solver's DEFAULT
 configuration, `with_capillarity=False`. They drop the bulk capillary term
@@ -72,8 +72,8 @@ because they prove it negligible at `Oh >> 1` (their eq. 2.11), not for
 convenience. Their eq (3.10a) `H(Xc,T) = 1+T` is our `h_tip = 1 + t*/4`.
 
 Consequence, and it is checkable: the reduced problem has **no parameter but
-`L`**, so `u*(t*)` must be independent of `Oh_SB`. Measured across
-`Oh_SB = 0.2, 1, 5`: 4e-5 apart at `t* = 0.1`, 2e-7 by `t* >= 5`.
+`L`**, so `u*(t*)` must be independent of `Oh`. Measured across
+`Oh = 0.2, 1, 5`: 4e-5 apart at `t* = 0.1`, 2e-7 by `t* >= 5`.
 
 Result at `L = infinity`, `T` in `(1e-3, 50]` (`t*` to 200):
 
@@ -107,10 +107,10 @@ upper bound rather than a measurement.
 
 ### Status against the goal
 
-- Q1 answered for `Oh_SB = 1`: mesh and time tolerance converged to 0.06 %;
+- Q1 answered for `Oh = 1`: mesh and time tolerance converged to 0.06 %;
   **domain length is the controlling parameter** and needs the diffusive rule.
-- Q2 for `Oh_SB < 0.1` is closed against `V_TC` and against Basilisk. FEM
-  terminal `u*` is `0.994`–`0.996`; Basilisk at `Oh_SB = 0.035`, `t = 500`
+- Q2 for `Oh < 0.1` is closed against `V_TC` and against Basilisk. FEM
+  terminal `u*` is `0.994`–`0.996`; Basilisk at `Oh = 0.035`, `t = 500`
   is `u* ≈ 0.977`. See `docs/validation-inertial/`. The moderate-Oh approach
   to `V_TC` is the planar-campaign write-up.
 
@@ -151,16 +151,16 @@ Their non-dimensionalisation is not ours. Getting this wrong moves results by
 
 | quantity | Savva & Bush | ours |
 |---|---|---|
-| Ohnesorge | `Oh = mu / sqrt(2 H rho gamma)` | `mu / sqrt(rho gamma h0)` |
+| Ohnesorge | `Oh = mu / sqrt(2 H rho gamma)` | coded `mu = mu / sqrt(rho gamma h0)` |
 | velocity | `u_c = sqrt(2 gamma / (rho H))` | `V_TC = sqrt(2)` — **identical** |
 | time | `tau_vis = mu H / (2 gamma)` | capillary `sqrt(rho h0^3/gamma)` = 1 |
 
-`H` is the **full** sheet thickness. So our coded `Oh = 0.05` is their `0.035`,
-and `mu = sqrt(2) * Oh_SB` in our units.
+`H` is the **full** sheet thickness. So coded `mu = 0.05` is `Oh = 0.035`,
+and `mu = sqrt(2) * Oh` in our units.
 
 `tau_vis` is the **viscous** clock. Their curves collapse onto it only for
 `Oh >~ 0.5`. At low `Oh` the approach to `u_c` is inertial, set by rim growth in
-capillary time, and `t*` is not a meaningful target — `t* = 30` at `Oh_SB=0.035`
+capillary time, and `t*` is not a meaningful target — `t* = 30` at `Oh=0.035`
 is `t = 0.75`, which is the very start of the transient.
 
 ## Domain length
@@ -208,7 +208,7 @@ uv run python validation/compare_savva_bush.py             # compare + plot
 
 ## Status
 
-| `Oh_SB` | `u*` at `t* = 30`, this code | digitised Savva & Bush | difference |
+| `Oh` | `u*` at `t* = 30`, this code | digitised Savva & Bush | difference |
 |---|---|---|---|
 | 0.5 | 0.92966 | 0.9321 | **0.26 %** |
 
@@ -229,7 +229,7 @@ The planar problem is validated in two parts, because the physics and the
 appropriate reference differ:
 
 - `inertial/` — low `Oh`. Rim forms, capillary waves shed ahead of it. Savva &
-  Bush only reach `Oh_SB = 0.5`, so the strongly inertial regime has no
+  Bush only reach `Oh = 0.5`, so the strongly inertial regime has no
   digitised comparator.
 - `viscous/` — high `Oh`. No rim. Ahsan, Brandao, Davidovitch & Stone
   (arXiv:2507.04603) give the quasi-steady-shape / linearly-growing-amplitude

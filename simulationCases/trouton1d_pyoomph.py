@@ -109,9 +109,10 @@ eq. 2.28, a prescribed axial force at the free end. In our units that is
 
 which is exactly the NATURAL boundary condition of the conservative viscous
 operator -- it enters as a boundary term in the weak form, not as a constraint.
-Verified against their non-dimensionalisation: with x = Oh_SB H x*, h = H h*,
-u = u_c u*, their [h* u*_x*] = -1/4 maps to -1/(2 mu) only if Oh_SB = mu/sqrt(2)
-rather than mu. Using our Oh gives a spurious factor of sqrt(2).
+Verified against their non-dimensionalisation: with x = mu H x*, h = H h*,
+u = u_c u*, their [h* u*_x*] = -1/4 maps to -1/(2 mu) only when the length
+scale carries Oh = mu/sqrt(2), NOT the coded mu. Using the coded viscosity in
+place of Oh here gives a spurious factor of sqrt(2).
 """
 
 from __future__ import annotations
@@ -177,7 +178,7 @@ class TroutonSheet(Equations):
         #
         # The co-located C2/C2 arrangement is exactly the one they warn against,
         # and it is NOT merely less accurate -- it is non-convergent. Measured at
-        # Oh_SB = 1, the co-located scheme's failure time is a power law in the
+        # Oh = 1, the co-located scheme's failure time is a power law in the
         # tip cell size, t*_fail = 5561 dm1^0.434 over five meshes spanning a
         # 64x range in dm1 and a 5.7x range in domain length, so a FINER mesh
         # fails SOONER and there is no mesh on which it converges. Staggered runs
@@ -354,7 +355,7 @@ class TipFlux(Equations):
 class Trouton1DProblem(Problem):
     def __init__(self):
         super().__init__()
-        self.Oh_SB = 1.0
+        self.Oh = 1.0
         self.mass = 120.0          # sheet mass per unit width, the domain [0, M]
         self.nelem = 400
         self.grade = 2.0           # tip clustering; 1 = uniform
@@ -376,7 +377,7 @@ class Trouton1DProblem(Problem):
         # all four combinations run.
         #
         # DEFAULT "h", AND THAT IS A MEASURED RESULT RATHER THAN INERTIA. The
-        # f-form was implemented and verified at Oh_SB = 1 on 2026-08-11, and
+        # f-form was implemented and verified at Oh = 1 on 2026-08-11, and
         # the verification says it is the same continuous problem and a
         # slightly worse discretisation of it while with_capillarity is False:
         #
@@ -422,7 +423,7 @@ class Trouton1DProblem(Problem):
         # works co-located, so the staggering is not either. Recorded as
         # unexplained rather than given a tidy cause it has not earned.
         #
-        # Measured, Oh_SB = 1, t* = 30, N = 400, staggered:
+        # Measured, Oh = 1, t* = 30, N = 400, staggered:
         #     nsteps    1600            3200            6400
         #     u*(30)    0.9807275968    0.9807280191    0.9807281257
         #     successive ratio 3.96  ->  observed order 1.99
@@ -450,7 +451,7 @@ class Trouton1DProblem(Problem):
 
     @property
     def mu(self) -> float:
-        return self.Oh_SB * math.sqrt(2.0)
+        return self.Oh * math.sqrt(2.0)
 
     @property
     def tau_vis(self) -> float:

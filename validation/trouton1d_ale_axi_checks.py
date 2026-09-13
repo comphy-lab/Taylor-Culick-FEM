@@ -88,14 +88,14 @@ def check_import() -> bool:
 # ---------------------------------------------------------------------------
 
 def check_mass(outroot: Path, threshold: float = 1e-8) -> bool:
-    _hr("1. mass (2*pi*int h r dr, Oh_SB=1, R0=5, t*=5)")
+    _hr("1. mass (2*pi*int h r dr, Oh=1, R0=5, t*=5)")
     # Resolution ladder measured while writing this check: mass_rel_drift is
     # spatial-error-dominated (doubling nsteps at fixed nelem does not move
     # it), 3.6e-8 at nelem=800, falling to 9.1e-9 at nelem=1600 and 5.8e-9 at
     # nelem=2000/nsteps=4000 -- the setting used here, with margin under the
     # 1e-8 threshold rather than sitting right on it.
     meta = axi_sweep.run_case(
-        oh_sb=1.0, tstar_end=5.0, nsteps=4000, n_outputs=60,
+        oh=1.0, tstar_end=5.0, nsteps=4000, n_outputs=60,
         outroot=outroot / "mass", r0=5.0, l0=None, nelem=2000, grade=2.0)
     drift = meta["mass_rel_drift"]
     ok = drift < threshold
@@ -111,7 +111,7 @@ def check_mass(outroot: Path, threshold: float = 1e-8) -> bool:
 # ---------------------------------------------------------------------------
 
 def check_planar_limit(outroot: Path) -> bool:
-    _hr("2. planar-limit (R0 = 50, 100, 200; Oh_SB=1, t*=10) -- THE GATE")
+    _hr("2. planar-limit (R0 = 50, 100, 200; Oh=1, t*=10) -- THE GATE")
     r0_values = (50.0, 100.0, 200.0)
     l0_matched = 100.0          # SAME l0/nelem/grade for axi and planar, so
     nelem_matched = 600         # the R0-trend below is not contaminated by a
@@ -119,7 +119,7 @@ def check_planar_limit(outroot: Path) -> bool:
     nsteps = 3000
 
     planar_meta = planar_sweep.run_case(
-        oh_sb=1.0, tstar_end=10.0, nsteps=nsteps, n_outputs=40,
+        oh=1.0, tstar_end=10.0, nsteps=nsteps, n_outputs=40,
         outroot=outroot / "planar_limit" / "planar", l0=l0_matched,
         nelem=nelem_matched, grade=grade_matched)
     ustar_planar = planar_meta["ustar_final"]
@@ -128,7 +128,7 @@ def check_planar_limit(outroot: Path) -> bool:
     devs = {}
     for r0 in r0_values:
         axi_meta = axi_sweep.run_case(
-            oh_sb=1.0, tstar_end=10.0, nsteps=nsteps, n_outputs=40,
+            oh=1.0, tstar_end=10.0, nsteps=nsteps, n_outputs=40,
             outroot=outroot / "planar_limit" / f"axi_R0_{r0:g}",
             r0=r0, l0=l0_matched, nelem=nelem_matched, grade=grade_matched)
         dev = abs(axi_meta["ustar_final"] - ustar_planar)
@@ -160,9 +160,9 @@ def check_planar_limit(outroot: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 def check_tipthickness(outroot: Path, threshold: float = 1e-2) -> bool:
-    _hr("4. tipthickness (Oh_SB=100, R0=5, t* to 6: R grows ~20x)")
+    _hr("4. tipthickness (Oh=100, R0=5, t* to 6: R grows ~20x)")
     meta = axi_sweep.run_case(
-        oh_sb=100.0, tstar_end=6.0, nsteps=4000, n_outputs=60,
+        oh=100.0, tstar_end=6.0, nsteps=4000, n_outputs=60,
         outroot=outroot / "tipthickness", r0=5.0, l0=None, nelem=800,
         grade=2.0)
     err = meta["h_tipode_rel_err"]
@@ -182,9 +182,9 @@ def check_tipthickness(outroot: Path, threshold: float = 1e-2) -> bool:
 
 def check_affinity_roughness(outroot: Path, affinity_threshold: float = 1e-10,
                               roughness_threshold: float = 0.05) -> bool:
-    _hr("5. affinity + roughness (Oh_SB=1, R0=5, t*=10)")
+    _hr("5. affinity + roughness (Oh=1, R0=5, t*=10)")
     meta = axi_sweep.run_case(
-        oh_sb=1.0, tstar_end=10.0, nsteps=3000, n_outputs=60,
+        oh=1.0, tstar_end=10.0, nsteps=3000, n_outputs=60,
         outroot=outroot / "affinity_roughness", r0=5.0, l0=None, nelem=800,
         grade=2.0)
     aff = meta["worst_mesh_affinity"]
@@ -209,10 +209,10 @@ def check_affinity_roughness(outroot: Path, affinity_threshold: float = 1e-10,
 # ---------------------------------------------------------------------------
 
 def check_exponential(outroot: Path, threshold: float = 0.03) -> bool:
-    _hr("6. exponential (Oh_SB=100, R0=5 => R0*=0.035<<1; early R(t) growth)")
+    _hr("6. exponential (Oh=100, R0=5 => R0*=0.035<<1; early R(t) growth)")
     rundir = outroot / "exponential"
     meta = axi_sweep.run_case(
-        oh_sb=100.0, tstar_end=3.0, nsteps=3000, n_outputs=120,
+        oh=100.0, tstar_end=3.0, nsteps=3000, n_outputs=120,
         outroot=rundir, r0=5.0, l0=None, nelem=800, grade=2.0)
     mu = meta["mu"]
     data = np.loadtxt(rundir / "control1d_ale_axi.txt")
@@ -220,7 +220,7 @@ def check_exponential(outroot: Path, threshold: float = 0.03) -> bool:
     tstar = data[:, 1]
     R = data[:, 2]
     # Early window: deep in the R0* << 1 regime (R0* = 0.035; the regime
-    # breaks down only once R approaches Oh_SB*h0 = 100, i.e. t* ~ 2 ln(20)
+    # breaks down only once R approaches Oh*h0 = 100, i.e. t* ~ 2 ln(20)
     # ~ 6 -- t* <= 2 stays comfortably inside it, R(t*=2) ~ 5*e ~ 13.6).
     window = tstar <= 2.0
     n = int(window.sum())
@@ -268,10 +268,10 @@ def check_cross_solver(outroot: Path, threshold: float = 1e-3) -> str:
 
     axi_ale_dir = outroot / "cross_solver" / "ale"
     axi_mass_dir = outroot / "cross_solver" / "mass_coordinate"
-    oh_sb, r0, tstar_end, nelem, grade, nsteps = 1.0, 5.0, 10.0, 800, 2.0, 3000
+    oh, r0, tstar_end, nelem, grade, nsteps = 1.0, 5.0, 10.0, 800, 2.0, 3000
 
     ale_meta = axi_sweep.run_case(
-        oh_sb=oh_sb, tstar_end=tstar_end, nsteps=nsteps, n_outputs=60,
+        oh=oh, tstar_end=tstar_end, nsteps=nsteps, n_outputs=60,
         outroot=axi_ale_dir, r0=r0, l0=None, nelem=nelem, grade=grade)
 
     # Best-effort: invoke the sibling's own sweep driver as a subprocess with
@@ -280,7 +280,7 @@ def check_cross_solver(outroot: Path, threshold: float = 1e-3) -> str:
     # differs, this fails cleanly and is reported as SKIP, not a crash --
     # "imports cleanly" is the documented gate, not "has an identical CLI".
     cmd = [sys.executable, str(sibling_sweep),
-          "--oh", str(oh_sb), "--r0", str(r0), "--tstar-end", str(tstar_end),
+          "--oh", str(oh), "--r0", str(r0), "--tstar-end", str(tstar_end),
           "--nsteps", str(nsteps), "--nelem", str(nelem), "--grade", str(grade),
           "--out", str(axi_mass_dir)]
     try:

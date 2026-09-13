@@ -8,7 +8,7 @@ Both figures plot the (normalised) film-edge / tip velocity
 against the (normalised) time
     t* = t / tau_vis ,    tau_vis = mu H / (2 gamma)
 for a family of curves at fixed Ohnesorge number
-    Oh = mu / sqrt(2 H rho gamma)
+    Oh = mu / sqrt(2 H rho gamma)   (the project's only Oh)
 where H is the FULL sheet thickness.
 
 Figure 5 (early stages): t* in [0,1], u* in [0,0.7]. Curves top-to-bottom:

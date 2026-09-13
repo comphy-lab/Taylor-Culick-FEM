@@ -7,7 +7,7 @@ Built on [pyoomph](https://github.com/comphy-lab/pyoomph) (a Python front-end to
 oomph-lib), tracked against the CoMPhy fork's `develop` branch.
 
 > The documentation index is [`docs/README.md`](docs/README.md).
-> Inertial FEM versus Basilisk (`Oh_SB < 0.1`) is
+> Inertial FEM versus Basilisk (`Oh < 0.1`) is
 > [`docs/validation-inertial/`](docs/validation-inertial/) (planar closed).
 > The viscous Trouton/Ahsan note is
 > [`docs/validation-viscous/`](docs/validation-viscous/).
@@ -46,8 +46,9 @@ Non-dimensionalised on the sheet's **full** thickness `h0`, the liquid density
 | time | `sqrt(rho h0^3 / sigma)` |
 
 so `rho = sigma = h0 = 1` and the half-thickness is `0.5`. The single
-dimensionless group is the Ohnesorge number `Oh = mu / sqrt(rho sigma h0)`,
-matched to the Basilisk study at `Oh = 0.05`.
+dimensionless group is the Ohnesorge number `Oh = mu / sqrt(2 h0 rho sigma)`
+(Savva & Bush convention -- the only `Oh` in this repository), matched to the
+Basilisk study at coded viscosity `mu = 0.05`, i.e. `Oh = 0.035`.
 
 The target is the Taylor–Culick velocity
 
@@ -70,15 +71,16 @@ diverges; the driver attempts one only as an optional extra.
 
 Run it first, because it can be checked against published data. Savva & Bush,
 JFM **626** (2009), figure 6 gives the edge velocity against `t* = t/tau_vis`.
-At `Oh_SB = 0.5` this case gives
+At `Oh = 0.5` this case gives
 
 | | `U/V_TC` at `t* = 30` |
 |---|---|
 | this code | **0.9297** |
 | Savva & Bush fig. 6 | ~0.93 |
 
-Two convention traps in that comparison: their `Oh = mu/sqrt(2 H rho gamma)`
-carries a `sqrt(2)` ours does not (our `Oh = 0.05` is their `0.035`), and
+Two convention traps in that comparison: `Oh = mu/sqrt(2 H rho gamma)` carries
+a `sqrt(2)` that the coded viscosity does not (coded `mu = 0.05` is
+`Oh = 0.035`), and
 `tau_vis = mu H/(2 gamma)` is the *viscous* clock, onto which their curves
 collapse only for `Oh >~ 0.5`. At lower `Oh` the approach is inertial and set
 by rim growth in capillary time, so `t*` is not a useful target.

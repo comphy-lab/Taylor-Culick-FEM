@@ -138,7 +138,7 @@ def main() -> None:
         p = profile(t, u, args.t_min)
         rows.append((oh, p))
 
-    print(f"{'Oh_SB':>9} {'Oh_p':>7} {'T_max':>9} {'steepest n':>11} {'at T':>8} "
+    print(f"{'Oh':>9} {'Oh_p':>7} {'T_max':>9} {'steepest n':>11} {'at T':>8} "
           f"{'window T<<Oh_p':>15}")
     for oh, p in sorted(rows):
         print(f"{oh:9.5f} {2 * oh:7.3f} {p['T_max']:9.2f} {p['slope_steepest']:11.3f} "
@@ -154,7 +154,7 @@ def main() -> None:
         print("slope is -2T/(1+T) exactly, so a 2D case must be compared with")
         print("this curve at matched T rather than against -2.\n")
 
-        print(f"{'Oh_SB':>9} {'Oh_p':>7} {'T_start':>8} {'T_dep':>7} {'T_dep/Oh_p':>11}")
+        print(f"{'Oh':>9} {'Oh_p':>7} {'T_start':>8} {'T_dep':>7} {'T_dep/Oh_p':>11}")
         fit_x, fit_y = [], []
         for oh, p in sorted(rows):
             # A case whose record begins after the departure cannot measure it;

@@ -115,13 +115,13 @@ def main() -> None:
     dt_runs = sorted(((m["nsteps"], m["ustar_final"])
                       for n, (m, _, _) in cases.items() if n.startswith("dt_n")))
     if dt_runs:
-        order_table("TEMPORAL CONVERGENCE (Oh_SB = 1, t* = 30, N = 800, BDF2)",
+        order_table("TEMPORAL CONVERGENCE (Oh = 1, t* = 30, N = 800, BDF2)",
                     "nsteps", dt_runs)
 
     dx_runs = sorted(((m["nelem"], m["ustar_final"])
                       for n, (m, _, _) in cases.items() if n.startswith("dx_N")))
     if dx_runs:
-        order_table("SPATIAL CONVERGENCE (Oh_SB = 1, t* = 30, nsteps = 12800)",
+        order_table("SPATIAL CONVERGENCE (Oh = 1, t* = 30, nsteps = 12800)",
                     "nelem", dx_runs)
 
     l0_runs = sorted((m["l0"], m["ustar_final"])

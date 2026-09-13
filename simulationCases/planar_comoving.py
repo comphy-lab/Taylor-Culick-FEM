@@ -18,13 +18,13 @@ The case is validated against Savva & Bush, JFM 626 (2009), figure 6, which
 gives the edge velocity against ``t* = t/tau_vis`` for a range of Ohnesorge
 number. Two convention traps in that comparison:
 
-  * their ``Oh = mu/sqrt(2 H rho gamma)`` carries a ``sqrt(2)`` that ours does
-    not, so our coded ``Oh = 0.05`` is their ``Oh = 0.035``;
+  * ``Oh = mu/sqrt(2 H rho gamma)`` carries a ``sqrt(2)`` that the coded
+    viscosity does not, so coded ``mu = 0.05`` is ``Oh = 0.035``;
   * ``tau_vis = mu H / (2 gamma)`` is the *viscous* clock, and their curves
     collapse onto it only for ``Oh >~ 0.5``. At lower ``Oh`` the approach is
     inertial, set by rim growth in capillary time, and ``t*`` is meaningless.
 
-At ``Oh_SB = 0.5`` this case gives ``U/V_TC = 0.9297`` at ``t* = 30`` against
+At ``Oh = 0.5`` this case gives ``U/V_TC = 0.9297`` at ``t* = 30`` against
 their ~0.93.
 
 Geometry (half sheet, midplane symmetry at ``y = 0``):
@@ -119,7 +119,7 @@ class PlanarSheetMesh(GmshTemplate):
 class PlanarTaylorCulickProblem(Problem):
     def __init__(self):
         super().__init__()
-        self.Oh = 0.05  # matches the Basilisk reference study
+        self.mu = 0.05  # coded dynamic viscosity; Oh = mu/sqrt(2) = 0.035
         self.domain_length = 12.0  # co-moving window length, in h0
         self.resolution = 0.06  # ~8 elements across the half-thickness
         self.frame_acceleration = True  # include the non-inertial correction
@@ -142,7 +142,7 @@ class PlanarTaylorCulickProblem(Problem):
 
         eqs = NavierStokesEquations(
             mass_density=1,
-            dynamic_viscosity=self.Oh,
+            dynamic_viscosity=self.mu,
             bulkforce=bulkforce,
         )
         eqs += HyperelasticSmoothedMesh()

@@ -255,13 +255,15 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
 class AxisymmetricComovingProblem(Problem):
     """Axisymmetric hole opening in a fixed-length window dragged by the rim.
 
-    ``Oh`` is the CODED dynamic viscosity (the ``mu = sqrt(2)*Oh_SB``
-    conversion is the driver's job), matching both sibling cases.
+    ``self.mu`` is the CODED dynamic viscosity handed to
+    ``NavierStokesEquations``. The project's Ohnesorge number is derived from
+    it as ``Oh = mu / sqrt(2)``; performing that conversion is the driver's
+    job, matching both sibling cases.
     """
 
     def __init__(self):
         super().__init__()
-        self.Oh = 0.05  # matches the Basilisk reference study (coded, not Oh_SB)
+        self.mu = 0.05  # coded dynamic viscosity; Oh = mu/sqrt(2) = 0.035
         self.X0 = 1.0  # initial hole radius; matches the Basilisk IC
         self.window_length = 40.0  # L: fixed radial extent of the window, in h0
         self.resolution = 0.06  # near-tip element size, ~8 across HALF_THICKNESS
@@ -308,7 +310,7 @@ class AxisymmetricComovingProblem(Problem):
         # No bulkforce: see the module docstring. The frame does not move; only
         # the meshed window does, and its motion is ALE, already accounted for
         # by partial_t(..., ALE="auto") once mesh equations are present.
-        eqs = NavierStokesEquations(mass_density=1, dynamic_viscosity=self.Oh)
+        eqs = NavierStokesEquations(mass_density=1, dynamic_viscosity=self.mu)
         eqs += HyperelasticSmoothedMesh()  # default cartesian mesh metric -- deliberate
         eqs += MeshFileOutput()
         eqs += RemeshWhen(RemeshingOptions(active=self.remesh_active))

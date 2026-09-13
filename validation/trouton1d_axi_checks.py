@@ -67,11 +67,11 @@ def check_imports() -> bool:
                                                  with_capillarity=True)),
                  "with_capillarity=True rejected with a ValueError")
     p = Trouton1DAxiProblem()
-    p.Oh_SB, p.r0 = 1.0, 5.0
+    p.Oh, p.r0 = 1.0, 5.0
     ok &= report("imports.units",
                  abs(p.mu - math.sqrt(2.0)) < 1e-15
                  and abs(p.tau_vis - math.sqrt(2.0) / 2) < 1e-15,
-                 f"Oh_SB=1 -> mu={p.mu:.10f}, tau_vis={p.tau_vis:.10f}, "
+                 f"Oh=1 -> mu={p.mu:.10f}, tau_vis={p.tau_vis:.10f}, "
                  f"R0*={p.r0_star:g}")
     m = auto_mass(5.0, 0.0)
     ok &= report("imports.auto_mass", abs(m - 0.5 * (125.0 ** 2 - 25.0)) < 1e-9,
@@ -91,7 +91,7 @@ def _raises(fn) -> bool:
 # short reference run, shared by metric / mass / dissipation
 # ---------------------------------------------------------------------------
 
-_SHORT = {"oh_sb": 1.0, "tstar_end": 5.0, "nsteps": 400, "n_outputs": 25,
+_SHORT = {"oh": 1.0, "tstar_end": 5.0, "nsteps": 400, "n_outputs": 25,
           "r0": 5.0, "mass": 3000.0, "nelem": 250}
 
 
@@ -114,7 +114,7 @@ def check_metric() -> bool:
     return report("metric", d < 1e-10,
                   f"max over cells and outputs of |w_m - 1/h| = {d:.3e} "
                   f"(tolerance 1e-10); final value {meta['metric_defect_final']:.3e}, "
-                  f"R0=5, Oh_SB=1, t*=5, N=250")
+                  f"R0=5, Oh=1, t*=5, N=250")
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ def check_mass() -> bool:
 # 3. planar limit -- THE GATE
 # ---------------------------------------------------------------------------
 
-_PL = {"oh_sb": 1.0, "tstar_end": 10.0, "nsteps": 1500, "n_outputs": 60,
+_PL = {"oh": 1.0, "tstar_end": 10.0, "nsteps": 1500, "n_outputs": 60,
        "planar_mass": 120.0, "planar_nelem": 400, "grade": 2.0}
 
 #: The gate's asymptotic-order threshold, applied to the LARGEST pair only.
@@ -187,7 +187,7 @@ def check_planar_limit(r0_list=(50.0, 100.0, 200.0, 400.0)) -> bool:
     measurement would be of conditioning, not of the metric terms.
     """
     L, N = _PL["planar_mass"], _PL["planar_nelem"]
-    pm = planar.run_case(_PL["oh_sb"], _PL["tstar_end"], _PL["nsteps"],
+    pm = planar.run_case(_PL["oh"], _PL["tstar_end"], _PL["nsteps"],
                          _PL["n_outputs"], 1e-3, OUTROOT / "planar_ref",
                          L, N, 1e-4)
     ref = np.loadtxt(OUTROOT / "planar_ref" / "control1d.txt")
@@ -200,7 +200,7 @@ def check_planar_limit(r0_list=(50.0, 100.0, 200.0, 400.0)) -> bool:
     for r0 in r0_list:
         mass = 0.5 * ((r0 + L) ** 2 - r0 * r0)
         nelem = round(N * math.sqrt(mass / (r0 * L)))
-        m = axi.run_case(_PL["oh_sb"], _PL["tstar_end"], _PL["nsteps"],
+        m = axi.run_case(_PL["oh"], _PL["tstar_end"], _PL["nsteps"],
                          _PL["n_outputs"], OUTROOT / f"planar_limit_R{r0:g}",
                          r0=r0, mass=mass, nelem=nelem, grade=_PL["grade"],
                          tag=f"planar-limit R0={r0:g}")
@@ -237,13 +237,13 @@ def check_planar_limit(r0_list=(50.0, 100.0, 200.0, 400.0)) -> bool:
 # 4 & 5. high-Oh small-hole run, shared
 # ---------------------------------------------------------------------------
 
-#: Oh_SB = 100 with R0 = 5 puts R0* = R0/(Oh_SB h0) = 0.05 << 1, which is the
+#: Oh = 100 with R0 = 5 puts R0* = R0/(Oh h0) = 0.05 << 1, which is the
 #: regime in which Savva & Bush's exponential opening (their 3.30) holds. t*=4
 #: multiplies R by exp(2) ~ 7.4 if that law is right, which is the "several
 #: fold" the tip-thickness check needs. The domain is sized by hand rather than
 #: by auto_mass: the viscous influence length is ~mu = 141 thicknesses here, so
 #: r_max = 250 covers both the travel and the disturbance.
-_HIGH = {"oh_sb": 100.0, "tstar_end": 4.0, "nsteps": 2000, "n_outputs": 60,
+_HIGH = {"oh": 100.0, "tstar_end": 4.0, "nsteps": 2000, "n_outputs": 60,
          "r0": 5.0, "mass": 0.5 * (250.0 ** 2 - 5.0 ** 2), "nelem": 800}
 
 _high_cache: dict[str, dict] = {}
@@ -320,7 +320,7 @@ def check_exponential() -> bool:
                 f"d(ln R)/dt = {slope:.6e} on t/tau_vis in [0.2, 1] "
                 f"({npts} points) against 1/(2 tau_vis) = {target:.6e}, "
                 f"relative error {err * 100:.2f}% (tolerance 5%); "
-                f"Oh_SB={m['Oh_SB']:g}, R0={m['r0']:g}, R0*={m['r0_star']:g}, "
+                f"Oh={m['Oh']:g}, R0={m['r0']:g}, R0*={m['r0_star']:g}, "
                 f"mu={mu:.4f}")
     for w, (sl, n) in fits.items():
         print(f"       window t/tau_vis in [{w[0]:g}, {w[1]:g}]: "

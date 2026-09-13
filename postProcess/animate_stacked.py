@@ -410,8 +410,8 @@ def main() -> None:
     meta = json.loads((args.case_dir / "case.json").read_text())
     mu = float(meta["mu_coded"])
     L0 = float(meta["domain_length"])
-    oh_sb = float(meta["Oh_savva_bush"])
-    oh_label = f"{oh_sb:g}"
+    oh = float(meta.get("Oh", meta.get("Oh_savva_bush")))
+    oh_label = f"{oh:g}"
 
     if args.reconstruct:
         entries = _reconstructed_frames(args.case_dir, args.reconstruct)
@@ -429,7 +429,7 @@ def main() -> None:
     targets = np.geomspace(t_lo, times.max(), args.nframes)
     picks = sorted({int(np.argmin(np.abs(times - tt))) for tt in targets})
     entries = [entries[i] for i in picks]
-    print(f"Oh_SB={oh_label}  L0={L0:g}  {len(entries)} frames, "
+    print(f"Oh={oh_label}  L0={L0:g}  {len(entries)} frames, "
           f"t = {times.min():.4g} .. {times.max():.4g}", flush=True)
 
     hist_raw = load_control(args.case_dir)

@@ -1,7 +1,7 @@
 """Independent 1D Trouton (slender-sheet) solve of planar retraction.
 
 WHY THIS EXISTS. Our 2D free-surface FEM differs from the digitised Savva & Bush
-curve by 1.24% at ``Oh_SB = 1``. Three explanations are possible and a direct
+curve by 1.24% at ``Oh = 1``. Three explanations are possible and a direct
 FEM-vs-figure comparison cannot separate them:
 
   1. the digitisation is wrong;
@@ -178,10 +178,10 @@ def default_mass(mu: float, t_end: float) -> float:
     return max(30.0, swept, diffusive)
 
 
-def run(oh_sb: float, mass: float, n: int, tstar_end: float, n_out: int = 600,
+def run(oh: float, mass: float, n: int, tstar_end: float, n_out: int = 600,
         rtol: float = 1e-9, atol: float = 1e-11, grade: float = 2.0):
     """Integrate to ``t* = tstar_end``; return (t, t*, u*_tip, far-field drift)."""
-    mu = oh_sb * math.sqrt(2.0)
+    mu = oh * math.sqrt(2.0)
     tau_vis = mu / 2.0
     t_end = tstar_end * tau_vis
 
@@ -276,7 +276,7 @@ def main() -> None:
         rms = float(np.sqrt(np.mean((ustar[e] - np.sqrt(tstar[e] / np.pi)) ** 2))) \
             if e.sum() > 5 else float("nan")
         flag = "   FAR FIELD DISTURBED, increase --mass" if drift > 1e-3 else ""
-        print(f"Oh_SB={oh:<5g} mu={mu:<7.4f} M={mass:<6.1f} n={args.n}  "
+        print(f"Oh={oh:<5g} mu={mu:<7.4f} M={mass:<6.1f} n={args.n}  "
               f"u*(t*={args.tstar_end:g})={ustar[-1]:.5f}  "
               f"early-time RMS vs sqrt(t*/pi)={rms:.4f}  drift={drift:.1e}{flag}",
               flush=True)
@@ -285,7 +285,7 @@ def main() -> None:
         np.savetxt(f, np.column_stack([tstar, ustar]), delimiter=",",
                    header=("Independent 1D Trouton solve of Savva & Bush eqs 2.1-2.2,\n"
                            "Lagrangian mass coordinate, tip closed by their eq. 2.28.\n"
-                           f"Oh_SB={oh:g} mu={mu:.6f} mass={mass:g} n={args.n}\n"
+                           f"Oh={oh:g} mu={mu:.6f} mass={mass:g} n={args.n}\n"
                            f"early-time RMS vs sqrt(t*/pi) = {rms:.5f}; far-field drift = {drift:.2e}\n"
                            "OUR implementation of THEIR model: a discriminator between\n"
                            "digitisation error and model difference, NOT independent\n"

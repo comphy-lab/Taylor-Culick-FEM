@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Batch 3 of the u995 sweep: Oh_SB = 0.035, re-run from t = 0.
+# Batch 3 of the u995 sweep: Oh = 0.035, re-run from t = 0.
 #
 # This is NOT a restart. That case's liquid/*.vtu field output and all 26 _gmsh
 # REMESH files were destroyed on 2026-08-08 by a restart run made before the
@@ -42,7 +42,7 @@ if [[ ! -s "$D/run_validation/control_part1.txt" ]]; then
 fi
 
 systemd-run --user --unit=etc-u995-oh0.035-rerun \
-  --description="elastic-taylor-culick u995 sweep Oh_SB=0.035 full re-run from t=0" \
+  --description="elastic-taylor-culick u995 sweep Oh=0.035 full re-run from t=0" \
   --working-directory="$C" \
   --property=MemoryHigh=44G --property=MemoryMax=52G \
   --property=AllowedCPUs=8-31 \

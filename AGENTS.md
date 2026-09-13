@@ -32,7 +32,9 @@ the Basilisk reference and to theory.
   `rho = sigma = h0 = 1`. The half-thickness is `0.5`. Getting this wrong moves
   the answer by exactly `sqrt(2)`.
 - The target is `V_TC = sqrt(2 sigma / (rho h0)) = sqrt(2) = 1.41421...`.
-- `Oh = mu / sqrt(rho sigma h0) = 0.05` matches the Basilisk study.
+- `Oh = mu / sqrt(2 h0 rho sigma)` is the project's ONLY Ohnesorge number
+  (Savva & Bush convention). The coded viscosity `mu = sqrt(2) Oh` is never
+  called `Oh`. Coded `mu = 0.05` matches the Basilisk study, i.e. `Oh = 0.035`.
 - Single-phase: there is no gas. Do not reintroduce a second fluid to "match"
   Basilisk; the whole point is the sharp free surface.
 
@@ -63,7 +65,7 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 
 `simulationCases/planar_comoving.py` must pass before any axisymmetric result is
 believed, because it is the only case with published data to check against:
-Savva & Bush, JFM 626 (2009), figure 6. At `Oh_SB = 0.5` this code gives
+Savva & Bush, JFM 626 (2009), figure 6. At `Oh = 0.5` this code gives
 `U/V_TC = 0.9297` at `t* = 30` against their ~0.93. Treat that as the
 regression target.
 

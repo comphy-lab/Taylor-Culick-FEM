@@ -13,7 +13,7 @@ two output tables can be compared row for row. In particular:
 
     THAT ``temporal_error`` IS INERT IS A MEASUREMENT, NOT AN ASSUMPTION, since
     an adaptive controller quietly rejecting steps would invalidate every
-    convergence order below. Counted over the reference run (Oh_SB = 1,
+    convergence order below. Counted over the reference run (Oh = 1,
     t* = 30, nsteps = 6400): 6354 of 6424 accepted steps were taken at exactly
     ``maxstep``, and each of the remaining 70 is a distinct value appearing once
     -- the clip onto an output time at the end of each of the 40 legs, plus the
@@ -48,7 +48,7 @@ quantity to the accuracy the sampling can see; the kinematic condition itself is
 imposed exactly by the Lagrange multiplier, to Newton tolerance.
 
 UNITS. Ahsan et al.'s variables, in which the late-time results are stated, are
-X = x/l_I with l_I = 4 Oh_SB, T = t*/4, V = u*. See
+X = x/l_I with l_I = 4 Oh, T = t*/4, V = u*. See
 ``validation/ahsan_thinfilm.py`` for the derivation of the mapping.
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ from trouton1d_ale import Trouton1DALEProblem  # noqa: E402
 V_TC = math.sqrt(2.0)
 
 
-def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
+def run_case(oh: float, tstar_end: float, nsteps: int, n_outputs: int,
              outroot: Path, l0: float | None, nelem: int, grade: float,
              temporal_error: float = 1e-3, drift_tol: float = 1e-4,
              max_newton: int | None = None, gcn: bool = False,
@@ -92,7 +92,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         # --out into its own --outdir and hijacking set_output_directory for
         # every problem in the process (see trouton1d_sweep.run_case).
         p.ignore_command_line = True
-        p.Oh_SB = oh_sb
+        p.Oh = oh
         p.nelem = nelem
         p.grade = grade
         p.ale = ale
@@ -112,7 +112,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 
         dt = t_end / nsteps
         meta = {
-            "code": "TC1D-ALE", "Oh_SB": oh_sb, "mu": p.mu,
+            "code": "TC1D-ALE", "Oh": oh, "mu": p.mu,
             "tau_vis": p.tau_vis, "l_I": p.l_I,
             "tstar_end": tstar_end, "T_end": tstar_end / 4.0, "t_end": t_end,
             "l0": p.l0, "nelem": p.nelem, "grade": p.grade,
@@ -123,7 +123,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
             "mass_initial": p.total_mass(),
             "V_TC": V_TC,
         }
-        print(f"[ale oh={oh_sb:g}] mu={p.mu:.6g} l0={p.l0:.6g} N={p.nelem} "
+        print(f"[ale oh={oh:g}] mu={p.mu:.6g} l0={p.l0:.6g} N={p.nelem} "
               f"grade={p.grade:g} t_end={t_end:.6g} dt={dt:.6g} "
               f"tip_cell={meta['tip_cell_initial']:.3e}", flush=True)
 
@@ -222,7 +222,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
         })
         meta["domain_ok"] = bool(worst_drift <= drift_tol)
         if not meta["domain_ok"]:
-            print(f"[ale oh={oh_sb:g}] WARNING: far-field drift "
+            print(f"[ale oh={oh:g}] WARNING: far-field drift "
                   f"{worst_drift:.3e} exceeds {drift_tol:g}; the disturbance "
                   f"reached the truncation. Re-run with a larger --l0.",
                   flush=True)
@@ -234,7 +234,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
                       f"u*={tab[i,2]:.7f} R={tab[i,3]:.6f} "
                       f"Xc={tab[i,1]:.6f} Xc-pred={tab[i,1]-(tab[i,0]-1+1.5/(1+tab[i,0])):+.3e}",
                       flush=True)
-        print(f"[ale oh={oh_sb:g}] done: u*({tstar_end:g}) = "
+        print(f"[ale oh={oh:g}] done: u*({tstar_end:g}) = "
               f"{meta['ustar_final']:.10f} R={meta['R_final']:.6f} "
               f"affinity={worst_affinity:.2e} rough={worst_rough:.2e} "
               f"mass_drift={meta['mass_rel_drift']:.2e} "
@@ -245,7 +245,7 @@ def run_case(oh_sb: float, tstar_end: float, nsteps: int, n_outputs: int,
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--oh", type=float, default=1.0, help="Oh_SB (Savva-Bush)")
+    ap.add_argument("--oh", type=float, default=1.0, help="Oh (Savva-Bush)")
     ap.add_argument("--tstar-end", type=float, required=True)
     ap.add_argument("--nsteps", type=int, required=True,
                     help="fixed dt = t_end/nsteps; run twice with 2x for the order")

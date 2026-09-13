@@ -71,7 +71,7 @@ structural, and is neither.
 Discriminating evidence, one variable at a time. The whole annulus was
 translated in ``r`` with its length, element count and every solver setting
 held fixed (identical 5275 dofs, ``R_out - R0 = 31.4``, ``dt = 1.06e-5``,
-``Oh_SB = 0.5``, uniform 0.25 mesh), so the ONLY difference between rows is
+``Oh = 0.5``, uniform 0.25 mesh), so the ONLY difference between rows is
 the radial offset:
 
     R0     initial residual   last residual      outcome
@@ -310,15 +310,16 @@ class AnnularSheetMesh(GmshTemplate):
 class AxisymmetricTaylorCulickProblem(Problem):
     """Lab-frame axisymmetric hole-opening DNS on a graded annulus.
 
-    ``Oh`` is the CODED dynamic viscosity (the ``mu = sqrt(2) * Oh_SB``
-    conversion, when needed, is the driver's job -- see
-    ``validation/run_validation_axi.py`` -- exactly as
-    ``planar_comoving.PlanarTaylorCulickProblem.Oh`` takes the coded value).
+    ``self.mu`` is the CODED dynamic viscosity handed to
+    ``NavierStokesEquations``. The project's Ohnesorge number is derived from
+    it as ``Oh = mu / sqrt(2)``; performing that conversion is the driver's job
+    -- see ``validation/run_validation_axi.py`` -- exactly as
+    ``planar_comoving.PlanarTaylorCulickProblem.mu`` takes the coded value.
     """
 
     def __init__(self):
         super().__init__()
-        self.Oh = 0.05  # matches the Basilisk reference study (coded, not Oh_SB)
+        self.mu = 0.05  # coded dynamic viscosity; Oh = mu/sqrt(2) = 0.035
         self.R0 = 1.0  # initial hole radius, in h0; matches the Basilisk IC
         self.R_out = 12.0  # fixed outer (lab-frame) boundary
         self.resolution = 0.06  # near-tip/rim element size, ~8 elements across HALF_THICKNESS
@@ -361,7 +362,7 @@ class AxisymmetricTaylorCulickProblem(Problem):
         # No bulkforce: a radial translation is not a Galilean boost, so there
         # is no frame acceleration to correct for (contrast
         # PlanarTaylorCulickProblem, which feeds -rho*dU/dt through bulkforce).
-        eqs = NavierStokesEquations(mass_density=1, dynamic_viscosity=self.Oh)
+        eqs = NavierStokesEquations(mass_density=1, dynamic_viscosity=self.mu)
         eqs += HyperelasticSmoothedMesh()  # default cartesian mesh metric -- deliberate
         eqs += MeshFileOutput()
         eqs += RemeshWhen(RemeshingOptions(active=self.remesh_active))

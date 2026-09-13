@@ -48,7 +48,7 @@ def load_runs(results: Path) -> dict[float, tuple[np.ndarray, dict]]:
         d = np.loadtxt(ctrl, comments="#")
         if d.ndim == 1 or d.shape[1] < 4:
             continue
-        out[float(meta["Oh_savva_bush"])] = (d, meta)
+        out[float(meta.get("Oh", meta.get("Oh_savva_bush")))] = (d, meta)
     return out
 
 
@@ -111,7 +111,7 @@ def main() -> None:
     fig.savefig(args.out, dpi=140, bbox_inches="tight")
     print(f"wrote {args.out}")
 
-    print(f"\n{'figure':>8} {'Oh_SB':>8} {'RMS du*':>10} {'max du*':>10} {'pts':>5}")
+    print(f"\n{'figure':>8} {'Oh':>8} {'RMS du*':>10} {'max du*':>10} {'pts':>5}")
     for figname, oh, rms, mx, n in rows:
         print(f"{figname:>8} {oh:>8g} {rms:>10.4f} {mx:>10.4f} {n:>5d}")
     print("\nDigitisation uncertainty is a floor on these numbers; see the CSV headers.")

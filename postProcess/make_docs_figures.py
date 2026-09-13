@@ -5,7 +5,7 @@ Four figures:
 ``fig1_schematic``
     The planar co-moving problem: geometry, the global unknown ``U`` and the
     boundary conditions. The sheet OUTLINE is a real computed interface --
-    ``Oh_SB = 0.035`` at ``t ~ 15``, which carries a genuine rim and a genuine
+    ``Oh = 0.035`` at ``t ~ 15``, which carries a genuine rim and a genuine
     capillary-wave train -- with the annotation drawn over it. An earlier
     version hand-rolled the profile from a quarter ellipse and a Gaussian, and
     it looked like what it was. A drawn fallback remains for the case where no
@@ -15,13 +15,13 @@ Four figures:
     Velocity magnitude and viscous dissipation rate at a common
     inertio-capillary time across the Ohnesorge range, mirrored about the
     midplane exactly as in the animations, with the free surface over both.
-    Shows the rim-plus-capillary-wave structure at low ``Oh_SB`` giving way to
-    a smooth, spread-out thickening as ``Oh_SB`` approaches one -- and, in the
+    Shows the rim-plus-capillary-wave structure at low ``Oh`` giving way to
+    a smooth, spread-out thickening as ``Oh`` approaches one -- and, in the
     lower halves, where the energy actually goes.
 
 ``fig3_velocity``
     The retraction velocity itself: ``u*(t) = U/V_TC`` for the eight-point
-    ``Oh_SB`` sweep against the inertio-capillary clock, which is the primary
+    ``Oh`` sweep against the inertio-capillary clock, which is the primary
     observable of the whole campaign.
 
 ``fig4_approach``
@@ -78,7 +78,7 @@ PANELS = [
     ("1.0", "Oh_SB_1_u995", "sweep"),
 ]
 
-# The eight-point log-spaced production sweep, in ascending Oh_SB. Oh_SB=0.035
+# The eight-point log-spaced production sweep, in ascending Oh. Oh=0.035
 # lost its field output to the 2026-08-08 restart defect but its control
 # history survived, so it appears in figures 3 and 4 and not in figure 2.
 SWEEP = ["Oh_SB_0.035_u995", "Oh_SB_0.0565_u995", "Oh_SB_0.09121_u995",
@@ -276,7 +276,7 @@ def fig2_phenomenology(out: Path, sources: dict[str, Path], t_target: float,
     """Velocity and dissipation across Oh at a common inertio-capillary time.
 
     Both colour scales are SHARED across the panels. That is the whole point:
-    the dissipation rate at ``Oh_SB = 1`` is orders above that at 0.035, and a
+    the dissipation rate at ``Oh = 1`` is orders above that at 0.035, and a
     per-panel rescale would hide the one comparison the figure exists to make.
     """
     loaded = []
@@ -363,7 +363,7 @@ def fig2_phenomenology(out: Path, sources: dict[str, Path], t_target: float,
 # ==========================================================================
 
 def _sweep_histories(sweep: Path):
-    """``(Oh_SB, t, u*, tstar)`` per mounted sweep case, ascending in Oh."""
+    """``(Oh, t, u*, tstar)`` per mounted sweep case, ascending in Oh."""
     out = []
     for case in SWEEP:
         d = sweep / case
@@ -376,7 +376,8 @@ def _sweep_histories(sweep: Path):
         except SystemExit:
             print(f"  WARNING: no control history for {case}", file=sys.stderr)
             continue
-        oh = float(json.loads(meta_path.read_text())["Oh_savva_bush"])
+        _m = json.loads(meta_path.read_text())
+        oh = float(_m.get("Oh", _m.get("Oh_savva_bush")))
         out.append((oh, h[:, 0], h[:, 3], h[:, 1]))
     out.sort(key=lambda r: r[0])
     return out
@@ -406,7 +407,7 @@ def fig3_velocity(out: Path, sweep: Path) -> None:
     ax.set_xlabel(r"$t\,\sqrt{\sigma/\rho h_0^3}$")
     ax.set_ylabel(r"$u^{*} = U/V_{\mathrm{TC}}$")
     ax.minorticks_on()
-    leg = ax.legend(title=r"$Oh_{SB}$\ \ (final $u^{*}$)", fontsize=7.5,
+    leg = ax.legend(title=r"$Oh$\ \ (final $u^{*}$)", fontsize=7.5,
                     title_fontsize=8, loc="lower right", frameon=True,
                     framealpha=0.95, ncol=2, handlelength=1.4,
                     columnspacing=1.0)
@@ -448,7 +449,7 @@ def fig4_approach(out: Path, sweep: Path) -> None:
     ax.set_ylabel(r"$1 - u^{*}$")
     # Upper right: the curves run down the diagonal and the lower left is
     # where the highest-Oh cases end, so a legend there sits on the data.
-    leg = ax.legend(title=r"$Oh_{SB}$: fitted $1-u^{*}\propto t^{*\,a}$",
+    leg = ax.legend(title=r"$Oh$: fitted $1-u^{*}\propto t^{*\,a}$",
                     fontsize=7.5, title_fontsize=8, loc="upper right",
                     frameon=True, framealpha=0.95, ncol=2, handlelength=1.4,
                     columnspacing=1.0)

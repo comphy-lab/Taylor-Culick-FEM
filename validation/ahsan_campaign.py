@@ -15,13 +15,13 @@ Two 1D solvers and one asymptotic theory, on ONE continuous problem.
 
 UNIT CONVERSION (re-derived, not assumed; see ahsan_thinfilm.py for the algebra)
 
-    Oh_paper = 2 Oh_SB          their Oh uses the HALF thickness h0 = H_full/2
+    Oh_paper = 2 Oh          their Oh uses the HALF thickness h0 = H_full/2
     T        = t*/4             tI = 4 mu h0/gamma = 4 tau_vis
     V        = u*               their V and our u/V_TC are the same number
     H        = h                their H is h_half/h0, ours is h_full/H_full
-    lI       = 4 h0 Oh_paper = 4 Oh_SB     in our code units (H_full = 1)
-    L        = l0/lI = M/(4 Oh_SB)         M our Lagrangian mass domain
-    X - X_c  = (x - x_tip)/(4 Oh_SB)
+    lI       = 4 h0 Oh_paper = 4 Oh     in our code units (H_full = 1)
+    L        = l0/lI = M/(4 Oh)         M our Lagrangian mass domain
+    X - X_c  = (x - x_tip)/(4 Oh)
 
 Pushed through our momentum equation u_t = (4 mu/h)(h u_x)_x this gives exactly
 H V_T + H V V_X = (H V_X)_X, their (2.16), with no leftover constant. That is
@@ -34,7 +34,7 @@ thickness condition and V = 0 at X = L: that is a symmetry plane, i.e. half of
 a sheet of length 2 l0 retracting from both ends. Our staggered scheme applies
 DirichletBC(u=0) at m = M with h cell-constant and therefore Neumann -- the
 same symmetry plane. So a TC1D-FEM run with mass M and the disturbance ALLOWED
-to reach m = M is a finite sheet of L = M/(4 Oh_SB). The co-located form pins
+to reach m = M is a finite sheet of L = M/(4 Oh). The co-located form pins
 h = 1 there as well and is NOT a finite sheet; it is not used here.
 
 AN EXACT INVARIANT, USED AS A DIAGNOSTIC. Their (3.1) H V + H_X = 0 is an exact
@@ -42,7 +42,7 @@ invariant of (2.15)-(2.16) starting from H = 1, V = 0 -- differentiating H V +
 H_X in time and substituting gives identically zero, inertia included. In our
 mass coordinate H_X = lI H H_m, so the invariant reads
 
-    V = -lI * dh/dm        (lI = 4 Oh_SB)
+    V = -lI * dh/dm        (lI = 4 Oh)
 
 which involves no reconstruction of the physical coordinate at all. TC1D-FEM
 never uses this relation, so its residual is an independent correctness check.
@@ -328,7 +328,7 @@ def run_tcfem(oh, Tend, nsteps, n_outputs, spacing, out, tag,
     lI = 4.0 * oh          # = 4 h0 Oh_paper in code units (H_full = 1)
     t0 = time.time()
     with Trouton1DProblem() as p:
-        p.Oh_SB = oh
+        p.Oh = oh
         tstar_end = 4.0 * Tend
         t_end = tstar_end * p.tau_vis
         if mass is not None:
@@ -366,7 +366,7 @@ def run_tcfem(oh, Tend, nsteps, n_outputs, spacing, out, tag,
         Tg = Tg[(Tg > 0) & (Tg <= Tend * (1 + 1e-12))]
 
         meta = {
-            "code": "TC1D-FEM", "tag": tag, "Oh_SB": oh,
+            "code": "TC1D-FEM", "tag": tag, "Oh": oh,
             "Oh_paper": 2.0 * oh, "mu": p.mu, "tau_vis": p.tau_vis,
             "lI": lI, "mass": M, "L": L_eff,
             "semi_infinite": bool(semi_infinite),
@@ -378,7 +378,7 @@ def run_tcfem(oh, Tend, nsteps, n_outputs, spacing, out, tag,
             "staggered": p.staggered, "variable": p.variable,
             "with_capillarity": p.with_capillarity, "V_TC": V_TC,
         }
-        print(f"[{tag}] Oh_SB={oh:g} L={L_eff:.6g} M={M:.6g} N={p.nelem} "
+        print(f"[{tag}] Oh={oh:g} L={L_eff:.6g} M={M:.6g} N={p.nelem} "
               f"Tend={Tend:g} dT={meta['dT']:.3g} nout={len(Tg)}", flush=True)
 
         rows = []
@@ -609,10 +609,10 @@ def check_units() -> int:
     """
     import sympy as sp
     gamma, rho, Hf, X, T = sp.symbols("gamma rho H_full X T", positive=True)
-    oh_sb = sp.Symbol("Oh_SB", positive=True)
-    # our convention: Oh_SB is fixed by mu = sqrt(2) Oh_SB at rho=gamma=Hf=1,
-    # i.e. Oh_SB = mu/sqrt(2 rho gamma H_full).
-    mu = oh_sb * sp.sqrt(2 * rho * gamma * Hf)
+    oh = sp.Symbol("Oh", positive=True)
+    # our convention: Oh is fixed by mu = sqrt(2) Oh at rho=gamma=Hf=1,
+    # i.e. Oh = mu/sqrt(2 rho gamma H_full).
+    mu = oh * sp.sqrt(2 * rho * gamma * Hf)
     h0 = Hf / 2                                  # their half thickness
     Oh_paper = mu / sp.sqrt(rho * h0 * gamma)
     lI = 4 * h0 * Oh_paper
@@ -621,11 +621,11 @@ def check_units() -> int:
     uTC = sp.sqrt(gamma / (rho * h0))
     V_TC_s = sp.sqrt(2 * gamma / (rho * Hf))
     checks = [
-        ("Oh_paper / Oh_SB", sp.simplify(Oh_paper / oh_sb), 2),
+        ("Oh_paper / Oh", sp.simplify(Oh_paper / oh), 2),
         ("tI / tau_vis", sp.simplify(tI / tau_vis), 4),
         ("uTC / V_TC", sp.simplify(uTC / V_TC_s), 1),
-        ("lI / (4 Oh_SB)  at rho=gamma=H_full=1",
-         sp.simplify((lI / (4 * oh_sb)).subs({rho: 1, gamma: 1, Hf: 1})), 1),
+        ("lI / (4 Oh)  at rho=gamma=H_full=1",
+         sp.simplify((lI / (4 * oh)).subs({rho: 1, gamma: 1, Hf: 1})), 1),
     ]
     ok = True
     for name, got, wants in checks:

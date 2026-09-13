@@ -4,7 +4,7 @@ Exists because the original study was run from an ad-hoc driver that was never
 committed, so its `u*(t* = 30) = 0.95180` could not be reproduced or re-checked.
 Run this instead of hand-rolling another one.
 
-What it establishes, at Oh_SB = 1:
+What it establishes, at Oh = 1:
 
 MESH is converged and the domain does not matter. u*(30) settles to ~1e-10 over
 nelem 50 -> 400, and M = 120 and M = 240 agree to the same order. An earlier
@@ -43,16 +43,16 @@ from trouton1d_pyoomph import Trouton1DProblem  # noqa: E402
 V_TC = math.sqrt(2.0)
 
 
-def run_case(oh_sb: float, mass: float, nelem: int, tstar_end: float,
+def run_case(oh: float, mass: float, nelem: int, tstar_end: float,
              nsteps: int, temporal_error: float, outroot: Path) -> float:
     """One solve; returns u*(tstar_end) = u_tip / V_TC."""
     os.chdir(outroot)
     with Trouton1DProblem() as p:
-        p.Oh_SB = oh_sb
+        p.Oh = oh
         p.mass = mass
         p.nelem = nelem
         p.set_output_directory(
-            str(outroot / f"oh{oh_sb:g}_n{nelem}_M{mass:g}_s{nsteps}_e{temporal_error:g}"))
+            str(outroot / f"oh{oh:g}_n{nelem}_M{mass:g}_s{nsteps}_e{temporal_error:g}"))
         p.initialise()
         t_end = tstar_end * p.tau_vis
         # startstep is deliberately tiny: the impulsively loaded tip has a
@@ -74,7 +74,7 @@ def main() -> None:
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    print(f"Oh_SB={args.oh}  t*_end={args.tstar_end}  V_TC={V_TC!r}", flush=True)
+    print(f"Oh={args.oh}  t*_end={args.tstar_end}  V_TC={V_TC!r}", flush=True)
 
     if args.study in ("mesh", "all"):
         print("\n=== MESH (and domain length) ===", flush=True)

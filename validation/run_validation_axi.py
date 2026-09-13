@@ -54,11 +54,12 @@ second.
 
 Conventions carried over unchanged from run_validation.py / savva_bush.py:
 
-    Oh_SB    = mu / sqrt(2 H rho gamma)        (ours omits the sqrt(2))
+    Oh       = mu / sqrt(2 H rho gamma)         (the project's only Oh; the
+                                                 coded mu omits the sqrt(2))
     u_c      = sqrt(2 gamma / (rho H))          (identical to our V_TC = sqrt(2))
     tau_vis  = mu H / (2 gamma)                 (the *viscous* clock)
 
-with ``H`` the FULL sheet thickness, so ``mu = sqrt(2) Oh_SB`` and
+with ``H`` the FULL sheet thickness, so ``mu = sqrt(2) Oh`` and
 ``tau_vis = mu/2`` in our units (rho = gamma = H = 1).
 """
 
@@ -113,17 +114,21 @@ def auto_rout(r0: float, mu: float, t_end: float) -> float:
     return r0 + V_TC * t_end + window_length(mu, t_end)
 
 
-def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
+def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
              r0: float = R0_DEFAULT, rout: float | None = None,
              temporal_error: float = 1e-3, restart_from: Path | None = None,
              checkpoint_every: int = 0, n_outputs: int = 400) -> dict:
-    mu = viscosity(oh_sb)
+    mu = viscosity(oh)
     tau = tau_vis(mu)
     t_end = tstar_end * tau
     R_out = rout if rout is not None else auto_rout(r0, mu, t_end)
 
     meta = {
-        "Oh_savva_bush": oh_sb,
+        # `Oh` is canonical (Savva & Bush convention). `Oh_savva_bush` and
+        # `Oh_ours` are retained verbatim so archived post-processing and the
+        # SHA-256-manifested run roots written before 2026-09-13 keep working.
+        "Oh": oh,
+        "Oh_savva_bush": oh,
         "Oh_ours": mu,  # mu/sqrt(rho*gamma*h0) with rho=gamma=h0=1
         "mu_coded": mu,
         "tau_vis": tau,
@@ -139,14 +144,14 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
     (outdir / "case.json").write_text(json.dumps(meta, indent=2))
 
     print(
-        f"[Oh_SB={oh_sb}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
+        f"[Oh={oh}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
         f"R0={r0:.2f} R_out={R_out:.1f}",
         flush=True,
     )
 
     os.chdir(outdir)
     with AxisymmetricTaylorCulickProblem() as problem:
-        problem.Oh = mu
+        problem.mu = mu
         problem.R0 = r0
         problem.R_out = R_out
         problem.resolution = resolution
@@ -252,7 +257,7 @@ def run_case(oh_sb: float, outdir: Path, resolution: float, tstar_end: float,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--oh", type=float, nargs="*", default=None,
-                    help="Ohnesorge numbers in the Savva-Bush convention")
+                    help="Ohnesorge numbers, Oh = mu/sqrt(2 h0 rho sigma). The coded viscosity is mu = sqrt(2) Oh.")
     # No committed default. Run outputs live outside this repository, on
     # whichever compute host is being used, and a hard-coded absolute path
     # bakes one machine's home directory into a shared repository -- it is
