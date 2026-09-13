@@ -87,13 +87,21 @@ def check_import() -> bool:
 # 1. mass
 # ---------------------------------------------------------------------------
 
-def check_mass(outroot: Path, threshold: float = 1e-8) -> bool:
+def check_mass(outroot: Path, threshold: float = 1e-6) -> bool:
     _hr("1. mass (2*pi*int h r dr, Oh=1, R0=5, t*=5)")
     # Resolution ladder measured while writing this check: mass_rel_drift is
     # spatial-error-dominated (doubling nsteps at fixed nelem does not move
     # it), 3.6e-8 at nelem=800, falling to 9.1e-9 at nelem=1600 and 5.8e-9 at
-    # nelem=2000/nsteps=4000 -- the setting used here, with margin under the
-    # 1e-8 threshold rather than sitting right on it.
+    # nelem=2000/nsteps=4000, the setting used here.
+    #
+    # The threshold was 1e-8, which this case no longer met: measured drift on
+    # 2026-09-13 is 1.049e-8, against the 5.8e-9 recorded above. Confirmed
+    # pre-existing and reproducible on b9bf8c8. A bound a factor ~2 above a
+    # spatial-error-dominated quantity is a resolution tripwire, not a
+    # conservation test: it fires on the discretisation the case deliberately
+    # chose. Raised to 1e-6 on Vatsal's instruction, which still catches a
+    # genuine conservation defect (two decades above the observed value) while
+    # leaving room for the measured spatial error.
     meta = axi_sweep.run_case(
         oh=1.0, tstar_end=5.0, nsteps=4000, n_outputs=60,
         outroot=outroot / "mass", r0=5.0, l0=None, nelem=2000, grade=2.0)
