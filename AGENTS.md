@@ -34,7 +34,10 @@ the Basilisk reference and to theory.
 - The target is `V_TC = sqrt(2 sigma / (rho h0)) = sqrt(2) = 1.41421...`.
 - `Oh = mu / sqrt(2 h0 rho sigma)` is the project's ONLY Ohnesorge number
   (Savva & Bush convention). The coded viscosity `mu = sqrt(2) Oh` is never
-  called `Oh`. Coded `mu = 0.05` matches the Basilisk study, i.e. `Oh = 0.035`.
+  called `Oh`. Coded `mu = 0.05` is `Oh = 0.035`: a convenient default, NOT a
+  case tuned to match anyone's published run. We do not claim to reproduce
+  Sanjay et al.; at `Oh << 1` the behaviour is qualitatively insensitive to
+  the precise `Oh`.
 - Single-phase: there is no gas. Do not reintroduce a second fluid to "match"
   Basilisk; the whole point is the sharp free surface.
 
