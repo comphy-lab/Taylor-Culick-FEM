@@ -39,6 +39,10 @@ of viscosity. Appendix~A of Sanjay \textit{et al.}\ \cite{sanjay2022} treated
 the Newtonian problem at a single film Ohnesorge number with a two-phase
 volume-of-fluid method. Here we sweep Ohnesorge number with a single-phase
 sharp-interface finite-element method in a frame co-moving with the rim.
+The objective is the approach to $\Vtc$ in the inertial limit, and agreement
+between independent methods within reason, rather than reproduction of any
+particular published case; at $\Oh \ll 1$ the behaviour is qualitatively
+insensitive to the precise $\Oh$.
 The recovered tip speed approaches $\Vtc$ at every $\Oh$ in the production
 range $0.035$ to $1$. In a middle band $0.14724 \le \Oh \le 1$ the deficit
 follows
@@ -76,7 +80,10 @@ long it takes.
 Figure~\ref{fig:schematic} shows the computational setup. This note is intended
 as an extension of Appendix~A of Sanjay \textit{et al.}\ \cite{sanjay2022},
 which treated the classical retraction at a single film Ohnesorge number
-($\mathrm{Oh}_f = 0.05$) with Basilisk \cite{basilisk}. The numerical method
+($\mathrm{Oh}_f = 0.05$) with Basilisk \cite{basilisk}. That value needs no
+conversion: their non-dimensionalisation sets $\sigma = 1/2$ with $h_0$ the
+full thickness, so $\Vtc = 1$ and $\mathrm{Oh}_f$ is already $\Oh$ as defined
+above. No case here is tuned to reproduce theirs. The numerical method
 here is different in kind. A single-phase, sharp-interface finite-element
 method in a frame co-moving with the rim, built on pyoomph \cite{diddens2023}
 and oomph-lib \cite{heil2006}. The inertial planar comparison against Basilisk
@@ -132,9 +139,8 @@ throughout, because it is what the published comparison curves use,
 \end{equation}
 The coded dynamic viscosity omits the $\sqrt{2}$ from that denominator and is
 larger by exactly that factor: in the code units above, $\mu = \sqrt{2}\,\Oh$.
-It is called $\mu$ throughout and never $\Oh$. The coded $\mu = 0.05$ used to
-match the Basilisk study is $\Oh = 0.035$. In code units,
-$\tau_{\mathrm{vis}} = \mu/2$. The velocity is reported as
+It is called $\mu$ throughout and never $\Oh$, so the coded $\mu = 0.05$ is
+$\Oh = 0.035$. In code units, $\tau_{\mathrm{vis}} = \mu/2$. The velocity is reported as
 $\ustar = U/\Vtc$, which is directly comparable across all three conventions
 and tends to $1$.
 
