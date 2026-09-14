@@ -13,7 +13,12 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "validation"))
 
-from run_viscoelastic_axi import build_parser, run_case, validate_args
+from run_viscoelastic_axi import (
+    _enforce_launcher_affinity,
+    build_parser,
+    run_case,
+    validate_args,
+)
 
 
 def append_progress(event: str, **values) -> None:
@@ -151,7 +156,8 @@ def main() -> None:
     parser.add_argument("--case", required=True, type=Path)
     args = parser.parse_args()
     case_path = args.case.resolve()
-    append_progress("started", case=str(case_path))
+    affinity = _enforce_launcher_affinity()
+    append_progress("started", case=str(case_path), launcher_affinity=affinity)
     try:
         driver_args = case_to_driver_args(case_path, Path.cwd())
         metadata = run_case(driver_args)
