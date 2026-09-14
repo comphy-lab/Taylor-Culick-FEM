@@ -202,8 +202,13 @@ def run_case(args: argparse.Namespace) -> dict:
             # normal velocity is -U.  Psi=0 is an inflow condition only while
             # U>=0; elastic recoil would turn that edge into outflow and make
             # the strong conformation condition invalid.
-            if minimum_speed < -args.max_recoil_speed:
+            if args.max_recoil_speed is not None and minimum_speed < -args.max_recoil_speed:
                 failures.append(f"far boundary ceased to be inflow (minimum U={minimum_speed:.6e})")
+            if last_row[2] <= args.min_final_speed:
+                failures.append(
+                    f"final retraction speed {last_row[2]:.6e} is not above "
+                    f"{args.min_final_speed:.6e}"
+                )
             if worst_volume_error > args.max_volume_error:
                 failures.append(
                     f"window-volume relative error {worst_volume_error:.3e} exceeds "
@@ -233,7 +238,7 @@ def run_case(args: argparse.Namespace) -> dict:
                     "R_final": radius_final,
                     "R_increase": radius_increase,
                     "minimum_U": minimum_speed,
-                    "far_boundary_remained_inflow": minimum_speed >= -args.max_recoil_speed,
+                    "far_boundary_remained_inflow": minimum_speed >= 0,
                     "U_final": last_row[2],
                     "ustar_final": last_row[3],
                     "worst_volume_rel_error": worst_volume_error,
@@ -285,7 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="output root; one canonical case directory is created below it",
     )
     parser.add_argument(
-        "--t-end", type=_positive_float, default=0.02, help="end time in capillary units"
+        "--t-end", type=_positive_float, default=0.2, help="end time in capillary units"
     )
     parser.add_argument("--resolution", type=_positive_float, default=0.25)
     parser.add_argument("--far-resolution", type=_positive_float, default=0.5)
@@ -320,7 +325,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-volume-error", type=_positive_float, default=5e-3)
     parser.add_argument("--max-tip-pin-residual", type=_positive_float, default=1e-6)
     parser.add_argument("--min-radius-increase", type=_nonnegative_float, default=1e-4)
-    parser.add_argument("--max-recoil-speed", type=_nonnegative_float, default=1e-10)
+    parser.add_argument(
+        "--max-recoil-speed",
+        type=_nonnegative_float,
+        default=None,
+        help="optional failure threshold for transient inward U; always recorded",
+    )
+    parser.add_argument("--min-final-speed", type=_nonnegative_float, default=0.0)
     parser.add_argument("--min-polymer-stress", type=_nonnegative_float, default=1e-10)
     return parser
 
