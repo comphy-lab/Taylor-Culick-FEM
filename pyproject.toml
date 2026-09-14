@@ -20,10 +20,10 @@ dependencies = [
     "mpi4py>=3.1",
 ]
 
-# pyoomph is taken from the CoMPhy fork's develop branch, not PyPI. It is a
+# pyoomph is taken from an immutable CoMPhy release commit, not PyPI. It is a
 # source build: CMake compiles vendored oomph-lib plus downloaded CLN/GiNaC.
 [tool.uv.sources]
-pyoomph = { git = "https://github.com/comphy-lab/pyoomph", branch = "develop" }
+pyoomph = { git = "https://github.com/comphy-lab/pyoomph", rev = "a186e07e1a7ea6b74ecc4f3a3fc39cc763d41618" }
 
 # MPI is REQUIRED, not optional. src/nanobind/mesh.cpp calls
 # oomph::GeneralisedElement::is_halo(), which oomph-lib only declares under
@@ -42,6 +42,10 @@ dev = [
     "imageio-ffmpeg>=0.6.0",
     "pytest>=8.0",
     "ruff>=0.6",
+]
+pyoomph-build = [
+    "nanobind==2.9.2",
+    "scikit-build-core==0.11.6",
 ]
 
 [tool.ruff]
