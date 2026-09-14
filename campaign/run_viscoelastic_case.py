@@ -58,7 +58,8 @@ def _mapping(mapping: dict, key: str, context: str) -> dict:
 
 def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
     """Translate the repository's serialized case into the existing driver CLI."""
-    case = json.loads(case_path.read_text())
+    serialized_case = case_path.read_bytes()
+    case = json.loads(serialized_case)
     if not isinstance(case, dict):
         raise TypeError("case must be a JSON object")
     if case.get("schema") != "pyoomph-case-v1":
@@ -144,10 +145,15 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
             arguments.append("--allow-recoil")
     else:
         raise ValueError(f"unsupported completion kind: {kind!r}")
+    if "restart" in case:
+        arguments.extend(["--restart-case", str(case_path.resolve())])
 
     parser = build_parser()
     parsed = parser.parse_args(arguments)
     validate_args(parser, parsed)
+    # Carry the bytes which were actually validated, rather than rereading a
+    # project-context file that may change before the immutable attempt starts.
+    parsed.serialized_case = serialized_case
     return parsed
 
 

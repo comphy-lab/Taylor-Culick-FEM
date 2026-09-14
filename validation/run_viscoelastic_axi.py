@@ -12,14 +12,17 @@ sheet thickness, consistently with the inherited FEM problem.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from pyoomph.output.states import copy_state_file
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "simulationCases"))
@@ -67,6 +70,160 @@ def _assert_finite(label: str, values) -> None:
     array = np.asarray(list(values), dtype=float)
     if array.size and not np.all(np.isfinite(array)):
         raise RuntimeError(f"non-finite {label}: {array!r}")
+
+
+def _file_reference(path: Path) -> dict[str, str]:
+    with path.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    return {"path": str(path.resolve()), "sha256": digest}
+
+
+def _checked_reference(reference: dict) -> Path:
+    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+        raise ValueError("restart references require exactly path and sha256")
+    path = Path(reference["path"])
+    if not path.is_absolute() or not path.is_file():
+        raise ValueError("restart reference must name an existing absolute file")
+    if _file_reference(path)["sha256"] != reference["sha256"]:
+        raise ValueError(f"restart reference hash mismatch: {path.name}")
+    return path.resolve()
+
+
+def _read_restart(args: argparse.Namespace) -> dict | None:
+    """Validate immutable parent evidence before creating a continuation directory."""
+    if args.restart_case is None:
+        return None
+    serialized_case = getattr(args, "serialized_case", None)
+    case = json.loads(
+        serialized_case if serialized_case is not None else args.restart_case.read_bytes()
+    )
+    restart = case.get("restart")
+    required = {"checkpoint", "input_case", "metadata", "control", "pvd", "time", "output_index"}
+    if not isinstance(restart, dict) or set(restart) != required:
+        raise ValueError(
+            "restart requires checkpoint, input_case, metadata, control, pvd, time, output_index"
+        )
+    restart = dict(restart)
+    paths = {
+        key: _checked_reference(restart[key])
+        for key in required - {"time", "output_index", "input_case"}
+    }
+    root = paths["metadata"].parent
+    snapshot = root / "input-case.json"
+    if snapshot.is_file():
+        restart["input_case"] = {**restart["input_case"], "path": str(snapshot)}
+    paths["input_case"] = _checked_reference(restart["input_case"])
+    if not paths["input_case"].is_relative_to(root):
+        raise ValueError(
+            "restart requires a verified parent input-case snapshot inside its case directory"
+        )
+    parent = json.loads(paths["input_case"].read_text())
+    for key in (
+        "schema",
+        "geometry",
+        "nondimensionalization",
+        "physics",
+        "mesh",
+        "tolerances",
+        "output",
+        "solver",
+        "arrest",
+    ):
+        if key not in case or case[key] != parent.get(key):
+            raise ValueError(f"restart case mismatch: {key}")
+    metadata = json.loads(paths["metadata"].read_text())
+    identity = {
+        "Oh": args.oh,
+        "elastic_modulus": args.elastic_modulus,
+        "relaxation_time": "inf" if math.isinf(args.relaxation_time) else args.relaxation_time,
+        "length": args.length,
+        "r0": args.r0,
+        "resolution": args.resolution,
+        "far_resolution": args.far_resolution,
+        "output_step": args.output_step,
+        "max_step": args.max_step,
+        "stabilization_option": args.stabilization,
+        "temporal_error": args.temporal_error,
+    }
+    for key, value in identity.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"restart metadata mismatch: {key}")
+    index, time = restart["output_index"], restart["time"]
+    if type(index) is not int or index <= 0:
+        raise ValueError("restart output_index must be a positive integer")
+    if not isinstance(time, (int, float)) or not math.isfinite(time) or not 0 < time < args.t_end:
+        raise ValueError("restart time must be finite, positive and before t_end")
+    if args.output_step is None:
+        raise ValueError("restart requires a fixed output cadence")
+    rows = np.loadtxt(paths["control"], ndmin=2)
+    if rows.shape[1] != 8 or len(rows) < index or not np.all(np.isfinite(rows)):
+        raise ValueError("restart control history is incomplete or invalid")
+    if np.any(np.diff(rows[:, 0]) <= 0) or rows[0, 0] <= 0:
+        raise ValueError("restart control times must be strictly increasing and positive")
+    rows = rows[:index]
+    if not math.isclose(rows[-1, 0], time, rel_tol=1e-10, abs_tol=1e-10):
+        raise ValueError("restart time does not match selected control row")
+    # Output times have a small solver landing offset; reject off-grid checkpoints
+    # rather than silently changing the output interval after a short final step.
+    if not np.allclose(rows[:, 0], args.output_step * np.arange(1, index + 1), rtol=0, atol=1e-6):
+        raise ValueError("restart control history does not match the output cadence")
+    datasets = ET.parse(paths["pvd"]).findall("./Collection/DataSet")
+    if len(datasets) < index:
+        raise ValueError("restart PVD history is incomplete")
+    fields = []
+    for row, dataset in zip(rows, datasets[:index], strict=True):
+        if not math.isclose(
+            float(dataset.attrib["timestep"]), row[0], rel_tol=1e-10, abs_tol=1e-10
+        ):
+            raise ValueError("restart PVD and control times disagree")
+        path = (paths["pvd"].parent / dataset.attrib["file"]).resolve()
+        if not path.is_file():
+            raise ValueError("restart PVD refers to a missing field")
+        fields.append((float(row[0]), path))
+    if paths["checkpoint"].parent != root / "checkpoints":
+        raise ValueError("restart checkpoint does not belong to the parent case")
+    if paths["control"].parent != root / "run_viscoelastic_axi":
+        raise ValueError("restart control does not belong to the parent case")
+    if paths["pvd"].parent != paths["control"].parent:
+        raise ValueError("restart PVD does not belong to the parent case")
+    return {
+        "evidence": restart,
+        "paths": paths,
+        "metadata": metadata,
+        "rows": rows,
+        "fields": fields,
+        "time": float(time),
+        "output_index": index,
+    }
+
+
+def _write_field_history(output_dir: Path, parent_fields: list) -> None:
+    """Join a read-only parent prefix and this attempt's fresh field segment."""
+    root = ET.Element("VTKFile", type="Collection", version="0.1")
+    collection = ET.SubElement(root, "Collection")
+    fields = list(parent_fields)
+    pvd = output_dir / "liquid.pvd"
+    if pvd.exists():
+        for dataset in ET.parse(pvd).findall("./Collection/DataSet"):
+            fields.append(
+                (float(dataset.attrib["timestep"]), (output_dir / dataset.attrib["file"]).resolve())
+            )
+    previous = -math.inf
+    for time, path in fields:
+        if time <= previous:
+            raise ValueError("field history contains nonmonotone or duplicate times")
+        ET.SubElement(
+            collection,
+            "DataSet",
+            timestep=str(time),
+            part="0",
+            file=os.path.relpath(path, output_dir),
+        )
+        previous = time
+    target = output_dir / "liquid-history.pvd"
+    temporary = target.with_suffix(".pvd.tmp")
+    ET.ElementTree(root).write(temporary, encoding="utf-8", xml_declaration=True)
+    temporary.replace(target)
 
 
 def _output_times(args: argparse.Namespace) -> np.ndarray:
@@ -191,6 +348,7 @@ def _enforce_launcher_affinity() -> dict[str, object]:
 
 
 def run_case(args: argparse.Namespace) -> dict:
+    restart = _read_restart(args)
     affinity = _enforce_launcher_affinity()
     run_dir = args.results.resolve() / _case_name(
         args.oh, args.elastic_modulus, args.relaxation_time
@@ -242,7 +400,36 @@ def run_case(args: argparse.Namespace) -> dict:
         "launcher_affinity": affinity,
         "status": "initialising",
     }
+    serialized_case = getattr(args, "serialized_case", None)
+    if serialized_case is not None:
+        snapshot = run_dir / "input-case.json"
+        with snapshot.open("xb") as stream:
+            stream.write(serialized_case)
+            stream.flush()
+            os.fsync(stream.fileno())
+        metadata["input_case"] = {**_file_reference(snapshot), "path": snapshot.name}
     _write_json(run_dir / "case.json", metadata)
+    if restart is not None:
+        lineage = {
+            key: {**value, "path": os.path.relpath(value["path"], run_dir)}
+            if isinstance(value, dict)
+            else value
+            for key, value in restart["evidence"].items()
+        }
+        _write_json(
+            run_dir / "restart-lineage.json",
+            {
+                "schema": "viscoelastic-restart-lineage-v1",
+                "parent": lineage,
+                "authoritative_segment": "run_viscoelastic_axi/liquid.pvd",
+                "authoritative_control_segment": "run_viscoelastic_axi/control-segment.txt",
+                "derived_views": [
+                    "run_viscoelastic_axi/control.txt",
+                    "run_viscoelastic_axi/liquid-history.pvd",
+                ],
+                "archive_contract": "Retain all ancestor attempts with relative directory layout; derived views require ancestor fields.",
+            },
+        )
 
     previous_cwd = Path.cwd()
     try:
@@ -258,6 +445,64 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.far_resolution = args.far_resolution
             problem.max_newton_iterations = args.max_newton
             problem.initialise()
+            # Preserve the original ALE reference before restoring the deformed state.
+            volume0 = problem.volume()
+            radius0 = problem.window_position()
+            if restart is not None:
+                checkpoint = restart["paths"]["checkpoint"]
+                state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
+                if (
+                    not math.isclose(state_time, restart["time"], rel_tol=1e-10, abs_tol=1e-10)
+                    or state_index != restart["output_index"]
+                ):
+                    raise ValueError("checkpoint header time/output index disagrees with lineage")
+                relocated = run_dir / "restart-input" / checkpoint.name
+                relocated.parent.mkdir()
+                copy_state_file(str(checkpoint), str(relocated))
+                # Relocation rewrites embedded mesh paths, so byte equality is
+                # informative, not required. The source itself must stay intact.
+                source_reference = _file_reference(checkpoint)
+                if source_reference["sha256"] != restart["evidence"]["checkpoint"]["sha256"]:
+                    raise ValueError("checkpoint source hash changed during relocation")
+                relocated_reference = _file_reference(relocated)
+                metadata["checkpoint_relocation"] = {
+                    "source_sha256": source_reference["sha256"],
+                    "relocated_sha256": relocated_reference["sha256"],
+                    "byte_identical": source_reference["sha256"] == relocated_reference["sha256"],
+                }
+                problem.load_state(str(relocated), ignore_outstep=False)
+                if not math.isclose(
+                    float(problem.get_current_time(as_float=True)),
+                    restart["time"],
+                    rel_tol=1e-10,
+                    abs_tol=1e-10,
+                ):
+                    raise ValueError("loaded checkpoint time disagrees with lineage")
+                row = restart["rows"][-1]
+                if not np.allclose(
+                    [problem.window_position(), problem.retraction_speed(), problem.volume()],
+                    row[[1, 2, 4]],
+                    rtol=1e-10,
+                    atol=1e-10,
+                ):
+                    raise ValueError("checkpoint state disagrees with parent control row")
+                # Carry the parent's ALE reference exactly, including older attempts
+                # which did not store volume0 explicitly in case.json.
+                inferred_volume0 = float(
+                    row[5]
+                    - math.pi / 2 * ((row[1] + args.length) ** 2 - (radius0 + args.length) ** 2)
+                )
+                volume0 = restart["metadata"].get("volume_initial_reference", inferred_volume0)
+                if not math.isfinite(volume0) or not math.isclose(
+                    volume0, inferred_volume0, rel_tol=1e-12, abs_tol=1e-10
+                ):
+                    raise ValueError("restart ALE reference disagrees with parent control row")
+                metadata["restart_time"] = restart["time"]
+                metadata["restart_output_index"] = restart["output_index"]
+                metadata["relocated_checkpoint"] = {
+                    **relocated_reference,
+                    "path": os.path.relpath(relocated, run_dir),
+                }
             # Per-internal-step states are prohibitively wasteful. A longer
             # arrest run may retain explicit output-indexed checkpoints.
             problem.write_states = False
@@ -265,10 +510,22 @@ def run_case(args: argparse.Namespace) -> dict:
             if args.checkpoint_every:
                 checkpoint_dir.mkdir()
 
-            volume0 = problem.volume()
-            radius0 = problem.window_position()
+            metadata["volume_initial_reference"] = volume0
             history = problem.create_text_file_output(
                 "control.txt",
+                header=[
+                    "t",
+                    "R",
+                    "U",
+                    "ustar",
+                    "volume",
+                    "volume_expected",
+                    "volume_rel_error",
+                    "tip_pin_residual",
+                ],
+            )
+            segment = problem.create_text_file_output(
+                "control-segment.txt",
                 header=[
                     "t",
                     "R",
@@ -296,8 +553,21 @@ def run_case(args: argparse.Namespace) -> dict:
                 trend_tolerance=args.arrest_trend_tolerance,
                 radius_span_tolerance=args.arrest_radius_span,
             )
+            output_offset = 0
+            if restart is not None:
+                for row in restart["rows"]:
+                    history.add_row(*row)
+                    arrest_tracker.observe(list(row), radius0)
+                output_offset = restart["output_index"]
+                previous_target = output_offset * args.output_step
+                out_times = out_times[out_times > restart["time"]]
+                worst_volume_error = float(np.max(restart["rows"][:, 6]))
+                worst_tip_pin = float(np.max(restart["rows"][:, 7]))
+                minimum_sampled_speed = float(np.min(restart["rows"][:, 2]))
+                if not len(out_times):
+                    raise ValueError("restart has no output targets before the requested endpoint")
 
-            for output_index, target in enumerate(out_times, start=1):
+            for output_index, target in enumerate(out_times, start=output_offset + 1):
                 interval = float(target - previous_target)
                 if args.fixed_step is not None:
                     # This is a maximum-step cap, not a promise that every
@@ -337,6 +607,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 ]
                 _assert_finite("control row", last_row)
                 history.add_row(*last_row)
+                segment.add_row(*last_row)
                 diagnostics = problem.polymer_diagnostic_extrema()
                 _assert_finite("polymer diagnostics", diagnostics.values())
                 worst_volume_error = max(worst_volume_error, volume_error)
@@ -351,10 +622,16 @@ def run_case(args: argparse.Namespace) -> dict:
                     problem.save_state(
                         str(checkpoint_dir / f"ckpt_{output_index:05d}.dump"), quiet=True
                     )
+                    _write_field_history(
+                        Path(problem.get_output_directory()), restart["fields"] if restart else []
+                    )
                 if arrest is not None:
                     break
 
             assert last_row is not None
+            _write_field_history(
+                Path(problem.get_output_directory()), restart["fields"] if restart else []
+            )
             radius_final = last_row[1]
             radius_increase = radius_final - radius0
             failures = []
@@ -452,6 +729,9 @@ def run_case(args: argparse.Namespace) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--restart-case", type=Path, help="serialized case with hash-bound parent lineage"
+    )
     parser.add_argument(
         "--oh",
         type=_nonnegative_float,
