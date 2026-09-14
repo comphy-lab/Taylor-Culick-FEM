@@ -129,7 +129,10 @@ class ArrestTracker:
                     speeds = np.asarray([sample[3] for sample in self.near_zero_rows])
                     slope = float(np.polyfit(times, speeds, 1)[0])
                     radius_span = float(np.ptp(radii))
-                    if slope <= self.trend_tolerance and radius_span <= self.radius_span_tolerance:
+                    if (
+                        abs(slope) <= self.trend_tolerance
+                        and radius_span <= self.radius_span_tolerance
+                    ):
                         result = {
                             "kind": "threshold_certified_asymptotic",
                             "time": time,
@@ -553,8 +556,8 @@ def main() -> None:
         parser.error("--n-outputs must be at least 1")
     if args.max_newton < 1:
         parser.error("--max-newton must be at least 1")
-    if args.arrest_consecutive < 1:
-        parser.error("--arrest-consecutive must be at least 1")
+    if args.arrest_consecutive < 2:
+        parser.error("--arrest-consecutive must be at least 2")
     if args.checkpoint_every < 0:
         parser.error("--checkpoint-every must be non-negative")
     if args.length <= args.resolution:
