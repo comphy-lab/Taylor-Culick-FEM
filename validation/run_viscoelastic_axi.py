@@ -186,7 +186,7 @@ def run_case(args: argparse.Namespace) -> dict:
             previous_target = 0.0
             worst_volume_error = 0.0
             worst_tip_pin = 0.0
-            minimum_speed = math.inf
+            minimum_sampled_speed = math.inf
             last_row: list[float] | None = None
             diagnostics: dict[str, float] = {}
 
@@ -232,7 +232,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 _assert_finite("polymer diagnostics", diagnostics.values())
                 worst_volume_error = max(worst_volume_error, volume_error)
                 worst_tip_pin = max(worst_tip_pin, tip_pin)
-                minimum_speed = min(minimum_speed, speed)
+                minimum_sampled_speed = min(minimum_sampled_speed, speed)
                 previous_target = float(target)
 
             assert last_row is not None
@@ -247,8 +247,11 @@ def run_case(args: argparse.Namespace) -> dict:
             # normal velocity is -U.  Psi=0 is an inflow condition only while
             # U>=0; elastic recoil would turn that edge into outflow and make
             # the strong conformation condition invalid.
-            if args.max_recoil_speed is not None and minimum_speed < -args.max_recoil_speed:
-                failures.append(f"far boundary ceased to be inflow (minimum U={minimum_speed:.6e})")
+            if args.max_recoil_speed is not None and minimum_sampled_speed < -args.max_recoil_speed:
+                failures.append(
+                    "far boundary ceased to be inflow at an output sample "
+                    f"(minimum sampled U={minimum_sampled_speed:.6e})"
+                )
             if last_row[2] <= args.min_final_speed:
                 failures.append(
                     f"final retraction speed {last_row[2]:.6e} is not above "
@@ -282,8 +285,8 @@ def run_case(args: argparse.Namespace) -> dict:
                     "R_initial": radius0,
                     "R_final": radius_final,
                     "R_increase": radius_increase,
-                    "minimum_U": minimum_speed,
-                    "far_boundary_remained_inflow": minimum_speed >= 0,
+                    "minimum_sampled_U": minimum_sampled_speed,
+                    "far_boundary_remained_sampled_inflow": minimum_sampled_speed >= 0,
                     "U_final": last_row[2],
                     "ustar_final": last_row[3],
                     "worst_volume_rel_error": worst_volume_error,
@@ -374,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-recoil-speed",
         type=_nonnegative_float,
         default=None,
-        help="optional failure threshold for transient inward U; always recorded",
+        help="optional failure threshold for inward U at output samples; always recorded",
     )
     parser.add_argument("--min-final-speed", type=_nonnegative_float, default=0.0)
     parser.add_argument("--min-polymer-stress", type=_nonnegative_float, default=1e-10)
