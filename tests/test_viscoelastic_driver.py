@@ -15,7 +15,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
 
-from run_viscoelastic_axi import ArrestTracker, _output_times, _zero_crossing
+from run_viscoelastic_axi import ArrestTracker, _output_times, _zero_crossing, main
 
 
 def test_output_step_includes_a_short_final_interval() -> None:
@@ -73,12 +73,37 @@ def test_near_zero_rebound_fails_trend_and_radius_plateau() -> None:
     assert tracker.observe([0.4, 1.0116, 0.0013, 0.0009, 0, 0, 0, 0], 1.0) is None
 
 
+def test_steep_negative_near_zero_trend_is_not_asymptotic_arrest() -> None:
+    tracker = _tracker()
+    assert tracker.observe([0.1, 1.01, 0.04, 0.03, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.2, 1.0110, 0.0012, 0.0009, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.3, 1.0111, 0.0008, 0.0005, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.4, 1.0112, 0.0004, 0.0001, 0, 0, 0, 0], 1.0) is None
+
+
 def test_persistent_near_zero_plateau_is_certified() -> None:
     tracker = _tracker()
     assert tracker.observe([0.1, 1.01, 0.04, 0.03, 0, 0, 0, 0], 1.0) is None
     assert tracker.observe([0.2, 1.0110, 0.0012, 0.0008, 0, 0, 0, 0], 1.0) is None
-    assert tracker.observe([0.3, 1.0112, 0.0009, 0.0006, 0, 0, 0, 0], 1.0) is None
-    arrest = tracker.observe([0.4, 1.0113, 0.0006, 0.0004, 0, 0, 0, 0], 1.0)
+    assert tracker.observe([0.3, 1.0112, 0.0011, 0.000805, 0, 0, 0, 0], 1.0) is None
+    arrest = tracker.observe([0.4, 1.0113, 0.0010, 0.00081, 0, 0, 0, 0], 1.0)
     assert arrest is not None
     assert arrest["kind"] == "threshold_certified_asymptotic"
     assert arrest["radius"] == pytest.approx((1.0110 + 1.0112 + 1.0113) / 3)
+
+
+def test_arrest_trend_requires_at_least_two_samples(monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_viscoelastic_axi.py",
+            "--results",
+            str(tmp_path),
+            "--arrest-consecutive",
+            "1",
+        ],
+    )
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "--arrest-consecutive must be at least 2" in capsys.readouterr().err
