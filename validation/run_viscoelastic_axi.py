@@ -141,6 +141,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "fixed_step_semantics": "maximum-step cap after smaller BDF startup",
         "max_step": args.max_step,
         "temporal_error": None if args.fixed_step is not None else args.temporal_error,
+        "write_states": False,
         "V_TC": V_TAYLOR_CULICK,
         "launcher_affinity": affinity,
         "status": "initialising",
@@ -161,6 +162,10 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.far_resolution = args.far_resolution
             problem.max_newton_iterations = args.max_newton
             problem.initialise()
+            # This is a bounded smoke, not a resumable production run.  The
+            # pyoomph default writes a full state at every internal step,
+            # turning a sub-second check into thousands of redundant files.
+            problem.write_states = False
 
             volume0 = problem.volume()
             radius0 = problem.window_position()
