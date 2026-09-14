@@ -30,6 +30,8 @@ sys.path.insert(0, str(_ROOT / "simulationCases"))
 from axisymmetric_viscoelastic import AxisymmetricViscoelasticProblem
 from planar_comoving import V_TAYLOR_CULICK
 
+from taylor_culick_fem.absorbing_layer import RayleighSpongeParameters
+
 
 def _positive_float(text: str) -> float:
     value = float(text)
@@ -60,6 +62,22 @@ def _case_name(oh: float, elastic_modulus: float, relaxation_time: float) -> str
         f"axi_viscoelastic_Oh_{oh:g}_G_{elastic_modulus:g}_"
         f"lambda_{_parameter_label(relaxation_time)}"
     )
+
+
+def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | None:
+    values = (args.sponge_start, args.sponge_width, args.sponge_gamma_max)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError("sponge start, width and gamma_max must be supplied together")
+    parameters = RayleighSpongeParameters(
+        start=args.sponge_start,
+        width=args.sponge_width,
+        gamma_max=args.sponge_gamma_max,
+        profile=args.sponge_profile,
+    )
+    parameters.validate_window(args.length)
+    return parameters
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -144,6 +162,11 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "max_step": args.max_step,
         "stabilization_option": args.stabilization,
         "temporal_error": args.temporal_error,
+        "sponge": (
+            _sponge_parameters(args).as_json_dict()
+            if _sponge_parameters(args) is not None
+            else None
+        ),
     }
     for key, value in identity.items():
         if metadata.get(key) != value:
@@ -349,6 +372,7 @@ def _enforce_launcher_affinity() -> dict[str, object]:
 
 def run_case(args: argparse.Namespace) -> dict:
     restart = _read_restart(args)
+    sponge = _sponge_parameters(args)
     affinity = _enforce_launcher_affinity()
     run_dir = args.results.resolve() / _case_name(
         args.oh, args.elastic_modulus, args.relaxation_time
@@ -382,6 +406,8 @@ def run_case(args: argparse.Namespace) -> dict:
         "output_step": args.output_step,
         "stop_when_arrested": args.stop_when_arrested,
         "allow_recoil": args.allow_recoil,
+        "sponge": sponge.as_json_dict() if sponge is not None else None,
+        "sponge_force": "-rho*gamma(x_rel)*u_lab" if sponge is not None else None,
         "arrest_ustar_threshold": args.arrest_ustar,
         "arrest_consecutive_samples": args.arrest_consecutive,
         "arrest_trend_tolerance": args.arrest_trend_tolerance,
@@ -438,6 +464,7 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.solvent_oh = args.oh
             problem.elastic_modulus = args.elastic_modulus
             problem.relaxation_time = args.relaxation_time
+            problem.sponge = sponge
             problem.conformation_stabilization = "SUPG" if args.stabilization == "supg" else None
             problem.X0 = args.r0
             problem.window_length = args.length
@@ -537,6 +564,12 @@ def run_case(args: argparse.Namespace) -> dict:
                     "tip_pin_residual",
                 ],
             )
+            sponge_history = None
+            if sponge is not None and sponge.gamma_max > 0:
+                sponge_history = problem.create_text_file_output(
+                    "sponge-diagnostics.txt",
+                    header=["t", "power", "core_velocity_rms"],
+                )
             out_times = _output_times(args)
             previous_target = 0.0
             worst_volume_error = 0.0
@@ -544,6 +577,16 @@ def run_case(args: argparse.Namespace) -> dict:
             minimum_sampled_speed = math.inf
             last_row: list[float] | None = None
             diagnostics: dict[str, float] = {}
+            sponge_diagnostics: dict[str, float] = {}
+            largest_positive_sponge_power = (
+                float(restart["metadata"].get("largest_positive_sponge_power", 0.0))
+                if restart is not None
+                else 0.0
+            )
+            _assert_finite(
+                "restart largest positive sponge power",
+                [largest_positive_sponge_power],
+            )
             arrest: dict[str, float | str] | None = None
             arrest_tracker = ArrestTracker(
                 opening_ustar=args.opening_ustar,
@@ -610,6 +653,18 @@ def run_case(args: argparse.Namespace) -> dict:
                 segment.add_row(*last_row)
                 diagnostics = problem.polymer_diagnostic_extrema()
                 _assert_finite("polymer diagnostics", diagnostics.values())
+                if sponge_history is not None:
+                    sponge_diagnostics = problem.sponge_diagnostics()
+                    _assert_finite("sponge diagnostics", sponge_diagnostics.values())
+                    sponge_power = sponge_diagnostics["sponge_power"]
+                    largest_positive_sponge_power = max(
+                        largest_positive_sponge_power, sponge_power
+                    )
+                    sponge_history.add_row(
+                        now,
+                        sponge_power,
+                        sponge_diagnostics["sponge_core_velocity_rms"],
+                    )
                 worst_volume_error = max(worst_volume_error, volume_error)
                 worst_tip_pin = max(worst_tip_pin, tip_pin)
                 minimum_sampled_speed = min(minimum_sampled_speed, speed)
@@ -678,6 +733,11 @@ def run_case(args: argparse.Namespace) -> dict:
                         f"polymer stress {stress_abs_max:.6e} is below "
                         f"{args.min_polymer_stress:.6e}"
                     )
+            if largest_positive_sponge_power > args.max_positive_sponge_power:
+                failures.append(
+                    f"sponge power {largest_positive_sponge_power:.6e} exceeds "
+                    f"{args.max_positive_sponge_power:.6e}"
+                )
 
             completion_reason = "fixed_horizon"
             if args.stop_when_arrested:
@@ -703,6 +763,9 @@ def run_case(args: argparse.Namespace) -> dict:
                     "worst_tip_pin_residual": worst_tip_pin,
                     "polymer_diagnostics_available": bool(diagnostics),
                     "polymer_diagnostics_final": diagnostics,
+                    "sponge_diagnostics_available": bool(sponge_diagnostics),
+                    "sponge_diagnostics_final": sponge_diagnostics,
+                    "largest_positive_sponge_power": largest_positive_sponge_power,
                     "opening_established": arrest_tracker.opening_established,
                     "arrest_detected": arrest is not None,
                     "arrest": arrest,
@@ -781,6 +844,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="supg",
         help="conformation stabilisation: SUPG or plain Galerkin",
     )
+    parser.add_argument("--sponge-start", type=_nonnegative_float, default=None)
+    parser.add_argument("--sponge-width", type=_positive_float, default=None)
+    parser.add_argument("--sponge-gamma-max", type=_nonnegative_float, default=None)
+    parser.add_argument("--sponge-profile", choices=("quintic",), default="quintic")
+    parser.add_argument(
+        "--max-positive-sponge-power",
+        type=_nonnegative_float,
+        default=1e-12,
+        help="largest tolerated positive value of integral f_sponge dot u",
+    )
     parser.add_argument(
         "--fixed-step",
         type=_positive_float,
@@ -855,6 +928,10 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--checkpoint-every must be non-negative")
     if args.length <= args.resolution:
         parser.error("--length must exceed --resolution")
+    try:
+        _sponge_parameters(args)
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
 
 
 def main() -> None:

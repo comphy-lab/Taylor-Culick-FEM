@@ -132,6 +132,34 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         "--arrest-radius-span",
         str(_value(arrest, "radius_span_tolerance", "arrest")),
     ]
+    sponge = physics.get("sponge")
+    if sponge is not None:
+        if not isinstance(sponge, dict):
+            raise TypeError("physics.sponge must be an object")
+        required = {"start", "width", "gamma_max", "profile"}
+        if set(sponge) != required:
+            raise ValueError(
+                "physics.sponge requires exactly start, width, gamma_max and profile"
+            )
+        arguments.extend(
+            [
+                "--sponge-start",
+                str(sponge["start"]),
+                "--sponge-width",
+                str(sponge["width"]),
+                "--sponge-gamma-max",
+                str(sponge["gamma_max"]),
+                "--sponge-profile",
+                str(sponge["profile"]),
+            ]
+        )
+    if "max_positive_sponge_power" in tolerances:
+        arguments.extend(
+            [
+                "--max-positive-sponge-power",
+                str(tolerances["max_positive_sponge_power"]),
+            ]
+        )
 
     kind = _value(completion, "kind", "completion")
     if kind == "event":
