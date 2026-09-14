@@ -1,0 +1,84 @@
+"""Software tests for the viscoelastic arrest-run control logic."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
+os.environ.setdefault("MPLBACKEND", "Agg")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
+
+from run_viscoelastic_axi import ArrestTracker, _output_times, _zero_crossing
+
+
+def test_output_step_includes_a_short_final_interval() -> None:
+    args = argparse.Namespace(t_end=1.0, output_step=0.3, n_outputs=2)
+    np.testing.assert_allclose(_output_times(args), [0.3, 0.6, 0.9, 1.0])
+
+
+def test_output_count_is_used_without_an_output_step() -> None:
+    args = argparse.Namespace(t_end=1.0, output_step=None, n_outputs=4)
+    np.testing.assert_allclose(_output_times(args), [0.25, 0.5, 0.75, 1.0])
+
+
+def test_zero_crossing_interpolates_time_and_radius() -> None:
+    crossing = _zero_crossing(
+        [2.0, 3.0, 0.2, 0, 0, 0, 0, 0],
+        [3.0, 3.3, -0.1, 0, 0, 0, 0, 0],
+    )
+    assert crossing["time"] == pytest.approx(2.0 + 2.0 / 3.0)
+    assert crossing["radius"] == pytest.approx(3.2)
+    assert crossing["bracket_start"] == 2.0
+    assert crossing["bracket_end"] == 3.0
+    assert crossing["time_sampling_uncertainty"] == 0.5
+    assert crossing["radius_sampling_uncertainty"] == pytest.approx(0.15)
+
+
+def _tracker() -> ArrestTracker:
+    return ArrestTracker(
+        opening_ustar=0.02,
+        minimum_radius_increase=1e-3,
+        arrest_ustar=1e-3,
+        consecutive_samples=3,
+        trend_tolerance=1e-4,
+        radius_span_tolerance=1e-3,
+    )
+
+
+def test_startup_recoil_cannot_trigger_arrest() -> None:
+    tracker = _tracker()
+    assert tracker.observe([0.05, 0.999, -0.01, -0.007, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.10, 1.0005, 0.01, 0.007, 0, 0, 0, 0], 1.0) is None
+    assert not tracker.opening_established
+    assert tracker.observe([0.15, 1.002, 0.04, 0.028, 0, 0, 0, 0], 1.0) is None
+    arrest = tracker.observe([0.20, 1.003, -0.01, -0.007, 0, 0, 0, 0], 1.0)
+    assert arrest is not None
+    assert arrest["kind"] == "sampled_zero_crossing"
+
+
+def test_near_zero_rebound_fails_trend_and_radius_plateau() -> None:
+    tracker = _tracker()
+    assert tracker.observe([0.1, 1.01, 0.04, 0.03, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.2, 1.0100, 0.0010, 0.0007, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.3, 1.0108, 0.0011, 0.0008, 0, 0, 0, 0], 1.0) is None
+    # All three speeds are below threshold, but both the fitted trend and
+    # radius span indicate continued motion rather than arrest.
+    assert tracker.observe([0.4, 1.0116, 0.0013, 0.0009, 0, 0, 0, 0], 1.0) is None
+
+
+def test_persistent_near_zero_plateau_is_certified() -> None:
+    tracker = _tracker()
+    assert tracker.observe([0.1, 1.01, 0.04, 0.03, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.2, 1.0110, 0.0012, 0.0008, 0, 0, 0, 0], 1.0) is None
+    assert tracker.observe([0.3, 1.0112, 0.0009, 0.0006, 0, 0, 0, 0], 1.0) is None
+    arrest = tracker.observe([0.4, 1.0113, 0.0006, 0.0004, 0, 0, 0, 0], 1.0)
+    assert arrest is not None
+    assert arrest["kind"] == "threshold_certified_asymptotic"
+    assert arrest["radius"] == pytest.approx((1.0110 + 1.0112 + 1.0113) / 3)
