@@ -26,8 +26,13 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 from axisymmetric_comoving import AxisymmetricComovingProblem
-from pyoomph import DirichletBC
+from pyoomph import DirichletBC, IntegralObservables, WeakContribution
+from pyoomph.expressions import dot, piecewise_geq0, var, var_and_test
 
+from taylor_culick_fem.absorbing_layer import (
+    RayleighSpongeParameters,
+    rayleigh_coefficient,
+)
 from taylor_culick_fem.viscoelastic import (
     GLambdaOldroydBParameters,
     make_g_lambda_oldroyd_b_equations,
@@ -52,6 +57,7 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         self.conformation_stabilization = "SUPG"
         self.conformation_supg_factor = 1.0
         self.viscoelastic_parameters: GLambdaOldroydBParameters | None = None
+        self.sponge: RayleighSpongeParameters | None = None
 
     def define_problem(self):
         if not math.isfinite(self.solvent_oh) or self.solvent_oh < 0:
@@ -65,6 +71,24 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         # stress only.  Velocities remain laboratory-frame velocities.
         self.mu = math.sqrt(2.0) * self.solvent_oh
         super().define_problem()
+
+        if self.sponge is not None:
+            self.sponge.validate_window(self.window_length)
+            if self.sponge.gamma_max > 0:
+                # The ALE mesh translates, but ``velocity`` is the laboratory
+                # velocity.  With f=-rho*gamma*u and rho=1, Navier--Stokes'
+                # ``-weak(f,u_test)`` convention gives this positive residual.
+                velocity, velocity_test = var_and_test("velocity")
+                x_rel = var("mesh_x") - var("X", domain="globals")
+                gamma = rayleigh_coefficient(x_rel, self.sponge)
+                core = piecewise_geq0(self.sponge.start - x_rel, 1, 0)
+                sponge_eqs = WeakContribution(gamma * velocity, velocity_test)
+                sponge_eqs += IntegralObservables(
+                    sponge_power=-gamma * dot(velocity, velocity),
+                    sponge_core_velocity_squared=core * dot(velocity, velocity),
+                    sponge_core_volume=core,
+                )
+                self += sponge_eqs @ "liquid"
 
         # G=0 is intentionally an exact Newtonian baseline: adding decoupled
         # conformation dofs would change the algebraic system for no physics.
@@ -102,6 +126,22 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         # deliberately no conformation condition on ``interface``.
         eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
         self += eqs @ "liquid"
+
+    def sponge_diagnostics(self) -> dict[str, float]:
+        """Return instantaneous damping power and undamped-core velocity RMS."""
+
+        if self.sponge is None or self.sponge.gamma_max == 0:
+            return {"sponge_power": 0.0, "sponge_core_velocity_rms": 0.0}
+        mesh = self.get_mesh("liquid")
+        power = float(mesh.evaluate_observable("sponge_power"))
+        velocity_squared = float(mesh.evaluate_observable("sponge_core_velocity_squared"))
+        volume = float(mesh.evaluate_observable("sponge_core_volume"))
+        if volume <= 0:
+            raise RuntimeError("sponge core has non-positive axisymmetric volume")
+        return {
+            "sponge_power": power,
+            "sponge_core_velocity_rms": math.sqrt(max(velocity_squared / volume, 0.0)),
+        }
 
     def polymer_diagnostic_extrema(self) -> dict[str, float]:
         """Return nodal conformation/stress extrema available for a smoke run.

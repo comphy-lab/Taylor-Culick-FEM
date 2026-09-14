@@ -88,6 +88,61 @@ def test_time_case_explicitly_allows_recoil(tmp_path: Path) -> None:
     assert args.t_end == 200.0
 
 
+def test_optional_sponge_maps_to_driver_and_preserves_absent_default(tmp_path: Path) -> None:
+    baseline = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    baseline_path = _write_case(tmp_path, baseline)
+    baseline_args = adapter.case_to_driver_args(baseline_path, tmp_path / "baseline")
+    assert baseline_args.sponge_start is None
+    assert baseline_args.sponge_width is None
+    assert baseline_args.sponge_gamma_max is None
+
+    sponge_case = copy.deepcopy(baseline)
+    sponge_case["physics"]["sponge"] = {
+        "start": 50.0,
+        "width": 25.0,
+        "gamma_max": 2.0,
+        "profile": "quintic",
+    }
+    sponge_case["mesh"]["length"] = 75.0
+    sponge_path = tmp_path / "sponge.json"
+    sponge_path.write_text(json.dumps(sponge_case))
+    sponge_args = adapter.case_to_driver_args(sponge_path, tmp_path / "sponge")
+    assert sponge_args.sponge_start == 50.0
+    assert sponge_args.sponge_width == 25.0
+    assert sponge_args.sponge_gamma_max == 2.0
+    assert sponge_args.sponge_profile == "quintic"
+
+
+@pytest.mark.parametrize(
+    "sponge,match",
+    [
+        ({"start": 50, "width": 25, "gamma_max": 2}, "requires exactly"),
+        ("not-an-object", "must be an object"),
+    ],
+)
+def test_adapter_rejects_invalid_sponge(tmp_path: Path, sponge, match) -> None:
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["sponge"] = sponge
+    path = _write_case(tmp_path, case)
+    with pytest.raises((TypeError, ValueError), match=match):
+        adapter.case_to_driver_args(path, tmp_path / "attempt")
+
+
+def test_adapter_rejects_sponge_extending_beyond_window(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["sponge"] = {
+        "start": 50,
+        "width": 30,
+        "gamma_max": 2,
+        "profile": "quintic",
+    }
+    with pytest.raises(SystemExit):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    assert "must not exceed window length" in capsys.readouterr().err
+
+
 def test_adapter_rejects_nonlaboratory_axisymmetric_case(tmp_path: Path) -> None:
     case = _case({"kind": "time", "value": 1.0})
     case["geometry"]["frame"] = "co-moving"
@@ -153,6 +208,7 @@ def restart_case(tmp_path):
                 "max_step": 0.01,
                 "stabilization_option": "supg",
                 "temporal_error": 0.001,
+                "largest_positive_sponge_power": 2.5e-13,
             }
         )
     )
@@ -389,6 +445,7 @@ def test_resume_driver_preserves_parent_and_output_lineage(
     np.testing.assert_allclose(targets, [0.15, 0.2])
     assert outputs == [2, 3]
     assert metadata["outputs_written"] == 4
+    assert metadata["largest_positive_sponge_power"] == pytest.approx(2.5e-13)
     root = tmp_path / "attempt-bundle" / "next" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
     assert (root / "input-case.json").read_bytes() == validated_bytes
     assert metadata["input_case"] == {
