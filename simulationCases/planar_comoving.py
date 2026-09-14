@@ -59,11 +59,16 @@ import os
 os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-from pyoomph import *  # noqa: E402
-from pyoomph.equations.navier_stokes import *
+from pyoomph import *
 from pyoomph.equations.ALE import *
+from pyoomph.equations.navier_stokes import *
 from pyoomph.expressions import *
-from pyoomph.meshes.bcs import EnforcedDirichlet
+
+try:
+    # pyoomph >= 65a4e87c moved generic boundary equations here.
+    from pyoomph.equations.generic import EnforcedDirichlet
+except ImportError:  # compatibility with the older develop pin
+    from pyoomph.meshes.bcs import EnforcedDirichlet
 from pyoomph.meshes.zeta import (
     AssignZetaCoordinatesByArclength,
     AssignZetaCoordinatesByEulerianCoordinate,
