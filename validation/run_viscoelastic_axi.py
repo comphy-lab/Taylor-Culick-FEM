@@ -68,7 +68,46 @@ def _assert_finite(label: str, values) -> None:
         raise RuntimeError(f"non-finite {label}: {array!r}")
 
 
+def _enforce_launcher_affinity() -> dict[str, object]:
+    """Confine auxiliary threads to the launcher's Linux CPU affinity.
+
+    MPI initialisation creates an auxiliary ``fuse`` thread which widens its
+    own affinity after inheriting the launcher's mask.  On Linux, restore every
+    extant thread to the main thread's mask before any FEM work begins.  On
+    other platforms this is a reported no-op; their launchers own affinity.
+    """
+
+    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+        return {"supported": False, "repaired_threads": 0}
+    allowed = os.sched_getaffinity(0)
+    task_root = Path("/proc/self/task")
+    if not task_root.is_dir():
+        return {"supported": False, "repaired_threads": 0}
+    repaired = 0
+    checked = 0
+    for task in task_root.iterdir():
+        try:
+            tid = int(task.name)
+            checked += 1
+            if os.sched_getaffinity(tid) != allowed:
+                os.sched_setaffinity(tid, allowed)
+                if os.sched_getaffinity(tid) != allowed:
+                    raise RuntimeError(f"thread {tid} rejected the launcher CPU mask")
+                repaired += 1
+        except ProcessLookupError:
+            # A short-lived library thread exited between enumeration and the
+            # affinity calls; it cannot escape the later computation.
+            continue
+    return {
+        "supported": True,
+        "allowed_cpus": sorted(allowed),
+        "checked_threads": checked,
+        "repaired_threads": repaired,
+    }
+
+
 def run_case(args: argparse.Namespace) -> dict:
+    affinity = _enforce_launcher_affinity()
     run_dir = args.results.resolve() / _case_name(
         args.oh, args.elastic_modulus, args.relaxation_time
     )
@@ -103,6 +142,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "max_step": args.max_step,
         "temporal_error": None if args.fixed_step is not None else args.temporal_error,
         "V_TC": V_TAYLOR_CULICK,
+        "launcher_affinity": affinity,
         "status": "initialising",
     }
     _write_json(run_dir / "case.json", metadata)
