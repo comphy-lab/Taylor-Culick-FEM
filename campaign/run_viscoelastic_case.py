@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +14,27 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "validation"))
 
 from run_viscoelastic_axi import build_parser, run_case, validate_args
+
+
+def append_progress(event: str, **values) -> None:
+    """Append one fsynced runner-owned progress event inside the attempt."""
+    runtime = Path.cwd() / "runtime"
+    runtime.mkdir(exist_ok=True)
+    path = runtime / "progress.jsonl"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    payload = {
+        "schema": "pyoomph-runner-progress-v1",
+        "recorded_at": dt.datetime.now(dt.UTC).isoformat(),
+        "event": event,
+        **values,
+    }
+    with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, sort_keys=True, allow_nan=False) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def _value(mapping: dict, key: str, context: str):
@@ -127,8 +150,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", required=True, type=Path)
     args = parser.parse_args()
-    driver_args = case_to_driver_args(args.case.resolve(), Path.cwd())
-    metadata = run_case(driver_args)
+    case_path = args.case.resolve()
+    append_progress("started", case=str(case_path))
+    try:
+        driver_args = case_to_driver_args(case_path, Path.cwd())
+        metadata = run_case(driver_args)
+    except BaseException as exc:
+        append_progress("failed", error_type=type(exc).__name__, error=str(exc))
+        raise
+    append_progress(
+        "completed",
+        status=metadata["status"],
+        physical_time=metadata["t_reached"],
+        primary_observable=metadata["ustar_final"],
+    )
     print(json.dumps(metadata, indent=2, sort_keys=True, allow_nan=False))
 
 

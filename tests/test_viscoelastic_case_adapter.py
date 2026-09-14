@@ -99,3 +99,13 @@ def test_adapter_rejects_non_object_case_sections(tmp_path: Path, payload) -> No
     path = _write_case(tmp_path, payload)
     with pytest.raises(TypeError, match="JSON object|geometry must be an object"):
         adapter.case_to_driver_args(path, tmp_path / "attempt")
+
+
+def test_runner_progress_is_append_only_jsonl(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    adapter.append_progress("started", case="case.json")
+    adapter.append_progress("completed", physical_time=2.0, primary_observable=0.1)
+
+    rows = [json.loads(line) for line in (tmp_path / "runtime" / "progress.jsonl").read_text().splitlines()]
+    assert [row["event"] for row in rows] == ["started", "completed"]
+    assert rows[1]["physical_time"] == 2.0
