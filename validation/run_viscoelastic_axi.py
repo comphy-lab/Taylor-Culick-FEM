@@ -245,9 +245,9 @@ def run_case(args: argparse.Namespace) -> dict:
     _write_json(run_dir / "case.json", metadata)
 
     previous_cwd = Path.cwd()
-    os.chdir(run_dir)
     try:
         with AxisymmetricViscoelasticProblem() as problem:
+            problem.set_output_directory(str(run_dir / "run_viscoelastic_axi"))
             problem.solvent_oh = args.oh
             problem.elastic_modulus = args.elastic_modulus
             problem.relaxation_time = args.relaxation_time
@@ -441,7 +441,8 @@ def run_case(args: argparse.Namespace) -> dict:
         _write_json(run_dir / "case.json", metadata)
         raise
     finally:
-        os.chdir(previous_cwd)
+        if Path.cwd() != previous_cwd:
+            raise RuntimeError("viscoelastic driver changed its process working directory")
 
     _write_json(run_dir / "case.json", metadata)
     if metadata["failure_reasons"]:
