@@ -100,6 +100,25 @@ in the metric, not as a change of variables. Schematics and the constraint
 equations are in
 [`docs/axi-comoving-window.html`](docs/axi-comoving-window.html).
 
+### 3. Viscoelastic axisymmetric (`simulationCases/axisymmetric_viscoelastic.py`)
+
+The axisymmetric ALE problem extended with an Oldroyd-B conformation tensor in
+the `G`–`lambda` parameterisation,
+
+```text
+tau_p = G (A - I),
+upper-convected(A) = -(A - I)/lambda.
+```
+
+`lambda = inf` removes the relaxation term exactly rather than replacing it by
+a large finite value. With finite solvent viscosity this is the Kelvin–Voigt
+limit; setting the solvent viscosity to zero gives the corresponding purely
+elastic neo-Hookean limit for a compatible initial state.
+
+The accepted four-panel field/history animation and its reproducibility checks
+are documented in
+[`postProcess/viscoelastic-video-protocol.md`](postProcess/viscoelastic-video-protocol.md).
+
 ## Layout
 
 ```
