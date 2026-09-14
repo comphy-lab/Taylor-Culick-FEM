@@ -223,6 +223,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "n_outputs": args.n_outputs,
         "output_step": args.output_step,
         "stop_when_arrested": args.stop_when_arrested,
+        "allow_recoil": args.allow_recoil,
         "arrest_ustar_threshold": args.arrest_ustar,
         "arrest_consecutive_samples": args.arrest_consecutive,
         "arrest_trend_tolerance": args.arrest_trend_tolerance,
@@ -370,7 +371,11 @@ def run_case(args: argparse.Namespace) -> dict:
                     "far boundary ceased to be inflow at an output sample "
                     f"(minimum sampled U={minimum_sampled_speed:.6e})"
                 )
-            if not args.stop_when_arrested and last_row[2] <= args.min_final_speed:
+            if (
+                not args.stop_when_arrested
+                and not args.allow_recoil
+                and last_row[2] <= args.min_final_speed
+            ):
                 failures.append(
                     f"final retraction speed {last_row[2]:.6e} is not above "
                     f"{args.min_final_speed:.6e}"
@@ -519,6 +524,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional failure threshold for inward U at output samples; always recorded",
     )
     parser.add_argument("--min-final-speed", type=_nonnegative_float, default=0.0)
+    parser.add_argument(
+        "--allow-recoil",
+        action="store_true",
+        help=(
+            "permit a non-positive final U in fixed-horizon diagnostic runs; "
+            "far-boundary inflow validity is still recorded"
+        ),
+    )
     parser.add_argument("--min-polymer-stress", type=_nonnegative_float, default=1e-10)
     parser.add_argument(
         "--stop-when-arrested",
@@ -549,9 +562,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    parser = build_parser()
-    args = parser.parse_args()
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Apply cross-argument checks shared by CLI and serialized-case runners."""
     if args.n_outputs < 1:
         parser.error("--n-outputs must be at least 1")
     if args.max_newton < 1:
@@ -562,6 +574,12 @@ def main() -> None:
         parser.error("--checkpoint-every must be non-negative")
     if args.length <= args.resolution:
         parser.error("--length must exceed --resolution")
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    validate_args(parser, args)
     metadata = run_case(args)
     print(json.dumps(metadata, indent=2, sort_keys=True, allow_nan=False))
 
