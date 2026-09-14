@@ -15,7 +15,14 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
 
-from run_viscoelastic_axi import ArrestTracker, _output_times, _zero_crossing, main
+from run_viscoelastic_axi import (
+    ArrestTracker,
+    _output_times,
+    _zero_crossing,
+    build_parser,
+    main,
+    validate_args,
+)
 
 
 def test_output_step_includes_a_short_final_interval() -> None:
@@ -107,3 +114,11 @@ def test_arrest_trend_requires_at_least_two_samples(monkeypatch, capsys, tmp_pat
     with pytest.raises(SystemExit, match="2"):
         main()
     assert "--arrest-consecutive must be at least 2" in capsys.readouterr().err
+
+
+def test_allow_recoil_is_an_explicit_fixed_horizon_option(tmp_path) -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--results", str(tmp_path), "--allow-recoil"])
+    validate_args(parser, args)
+    assert args.allow_recoil
+    assert not args.stop_when_arrested
