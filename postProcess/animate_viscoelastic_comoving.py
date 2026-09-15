@@ -531,6 +531,33 @@ def padded_limits(values: np.ndarray, fraction: float = 0.05) -> tuple[float, fl
     return low - fraction * span, high + fraction * span
 
 
+def stride_selection(
+    entries: list[tuple[float, Path]], *, stride: int, early_time_limit: float
+) -> list[tuple[int, tuple[float, Path]]]:
+    """Subsample long histories while retaining every held early state and the endpoint."""
+
+    if stride < 1:
+        raise ValueError("frame stride must be positive")
+    if stride == 1:
+        return list(enumerate(entries))
+    early = [
+        index
+        for index, (time, _) in enumerate(entries)
+        if time <= early_time_limit
+        or math.isclose(
+            time,
+            early_time_limit,
+            rel_tol=0.0,
+            abs_tol=TIME_MATCH_ATOL,
+        )
+    ]
+    first_later = early[-1] + 1 if early else 0
+    indices = [*early, *range(first_later, len(entries), stride)]
+    if entries and (not indices or indices[-1] != len(entries) - 1):
+        indices.append(len(entries) - 1)
+    return [(index, entries[index]) for index in indices]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", required=True, type=Path)
@@ -544,6 +571,12 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--procs", type=int, default=8)
     parser.add_argument("--indices", type=int, nargs="*")
+    parser.add_argument(
+        "--stride",
+        type=int,
+        default=1,
+        help="encode every Nth post-early source frame while retaining the final frame",
+    )
     parser.add_argument("--skip-encode", action="store_true")
     parser.add_argument(
         "--initial-state",
@@ -558,12 +591,14 @@ def main() -> None:
     parser.add_argument("--tip-speed-limits", type=float, nargs=2)
     args = parser.parse_args()
 
-    if args.fps < 1 or args.procs < 1:
-        parser.error("--fps and --procs must be positive")
+    if args.fps < 1 or args.procs < 1 or args.stride < 1:
+        parser.error("--fps, --procs and --stride must be positive")
     if min(args.t0_hold_seconds, args.early_hold_seconds, args.early_time_limit) < 0:
         parser.error("playback hold durations and early-time limit must be non-negative")
     if args.indices is not None and not args.skip_encode:
         parser.error("--indices is a QA-only selection and requires --skip-encode")
+    if args.indices is not None and args.stride != 1:
+        parser.error("--indices and --stride cannot be combined")
 
     args.run_dir = args.run_dir.resolve()
     case_json = (
@@ -601,7 +636,11 @@ def main() -> None:
     if radius_ylim[0] >= radius_ylim[1] or speed_ylim[0] >= speed_ylim[1]:
         parser.error("plot limits must be increasing")
 
-    selected = list(enumerate(entries))
+    selected = stride_selection(
+        entries,
+        stride=args.stride,
+        early_time_limit=args.early_time_limit,
+    )
     if args.indices is not None:
         bad = [index for index in args.indices if index < 0 or index >= len(entries)]
         if bad:
@@ -610,7 +649,9 @@ def main() -> None:
 
     args.frames_dir.mkdir(parents=True, exist_ok=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    expected_frames = [args.frames_dir / f"frame_{index:05d}.png" for index in range(len(entries))]
+    expected_frames = [
+        args.frames_dir / f"frame_{index:05d}.png" for index, _ in selected
+    ]
     stale_frames = sorted(set(args.frames_dir.glob("frame_*.png")).difference(expected_frames))
     if stale_frames:
         raise SystemExit(f"frames directory contains stale frame: {stale_frames[0]}")
@@ -639,7 +680,7 @@ def main() -> None:
         raise SystemExit(f"missing rendered frame: {missing_frames[0]}")
     playback_frames = [
         frame
-        for (time, _), frame in zip(entries, expected_frames, strict=True)
+        for (_, (time, _)), frame in zip(selected, expected_frames, strict=True)
         for _ in range(
             playback_repeats(
                 time,
@@ -715,9 +756,11 @@ def main() -> None:
             "projection": "piecewise-linear subtriangle value area-averaged to nodes",
         },
         "source_frames": len(entries),
+        "selected_source_frames": len(selected),
+        "frame_stride": args.stride,
         "frames": len(playback_frames),
-        "time_first": entries[0][0],
-        "time_last": entries[-1][0],
+        "time_first": selected[0][1][0],
+        "time_last": selected[-1][1][0],
         "fps": args.fps,
         "early_time_playback": {
             "t0_hold_frames": playback_repeats(
@@ -730,7 +773,7 @@ def main() -> None:
             "t0_hold_seconds": args.t0_hold_seconds,
             "positive_times_held": [
                 time
-                for time, _ in entries
+                for _, (time, _) in selected
                 if 0 < time
                 and (
                     time <= args.early_time_limit
