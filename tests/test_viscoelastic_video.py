@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -76,6 +77,26 @@ def test_accepted_source_schedule_encodes_553_frames() -> None:
     )
     assert len(times) == 468
     assert encoded == 553
+
+
+def test_stride_selection_keeps_early_states_and_endpoint() -> None:
+    entries = [(0.05 * index, Path(f"frame-{index}")) for index in range(101)]
+    entries[4] = (0.200000095, entries[4][1])
+
+    selected = video.stride_selection(entries, stride=8, early_time_limit=0.2)
+
+    indices = [index for index, _ in selected]
+    assert indices[:6] == [0, 1, 2, 3, 4, 5]
+    assert indices[-1] == 100
+    assert len(indices) == len(set(indices))
+    assert all((right - left) == 8 for left, right in pairwise(indices[5:-1]))
+
+
+def test_unit_stride_keeps_every_frame() -> None:
+    entries = [(float(index), Path(f"frame-{index}")) for index in range(5)]
+    assert video.stride_selection(entries, stride=1, early_time_limit=0.2) == list(
+        enumerate(entries)
+    )
 
 
 def test_case_metadata_validates_project_conventions(tmp_path: Path) -> None:
