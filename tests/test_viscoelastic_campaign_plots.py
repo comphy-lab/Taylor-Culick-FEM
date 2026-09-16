@@ -79,3 +79,19 @@ def test_close_ec_values_get_distinct_output_names(tmp_path: Path) -> None:
 
     case_stems = {path.stem for path in outputs if path.stem != "ec_campaign"}
     assert len(case_stems) == 2
+
+
+def test_time_limit_interpolates_exact_shared_endpoint() -> None:
+    history = plotter.TipHistory(
+        np.array([0.0, 1.0, 3.0]),
+        np.array([1.0, 2.0, 6.0]),
+        np.array([0.0, 0.2, 0.6]),
+        "viscoelastic",
+        Path("synthetic"),
+    )
+
+    limited = plotter._truncate_history(history, 2.0)
+
+    assert limited.time.tolist() == [0.0, 1.0, 2.0]
+    assert limited.radius[-1] == 4.0
+    assert limited.ustar[-1] == 0.4

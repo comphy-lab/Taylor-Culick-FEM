@@ -8,7 +8,8 @@ Examples::
     --case 1e-2 viscoelastic /path/to/control.txt --output metrics.json
 
 Each ``--case`` is ``EC SCHEMA CONTROL``.  Supported schemas are
-``newtonian`` (seven columns) and ``viscoelastic`` (eight columns).
+``newtonian`` (seven columns), ``newtonian_globals`` (three columns) and
+``viscoelastic`` (eight columns).
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def parser() -> argparse.ArgumentParser:
         nargs=3,
         metavar=("EC", "SCHEMA", "CONTROL"),
         required=True,
-        help="repeatable case: Ec, newtonian|viscoelastic, control.txt",
+        help="repeatable case: Ec, newtonian|newtonian_globals|viscoelastic, history",
     )
     result.add_argument("--output", type=Path, help="JSON destination (stdout if omitted)")
     result.add_argument("--r0", type=_positive, default=1.0)

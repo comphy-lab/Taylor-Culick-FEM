@@ -100,13 +100,27 @@ def load_newtonian_control(path: str | Path, *, r0: float = 1.0) -> TipHistory:
     return TipHistory(time, radius, ustar, "newtonian", source)
 
 
+def load_newtonian_globals(path: str | Path, *, r0: float = 1.0) -> TipHistory:
+    """Load solved t,R_tip,U globals and normalise U by V_TC."""
+    source = Path(path)
+    table = _load_table(source, columns=3, schema="newtonian_globals")
+    time, radius, ustar = _with_initial_state(
+        table[:, 0], table[:, 1], table[:, 2] / np.sqrt(2.0), r0=r0
+    )
+    return TipHistory(time, radius, ustar, "newtonian_globals", source)
+
+
 def load_control(path: str | Path, *, schema: str, r0: float = 1.0) -> TipHistory:
     """Dispatch only between the two explicit supported schemas."""
     if schema == "viscoelastic":
         return load_viscoelastic_control(path, r0=r0)
     if schema == "newtonian":
         return load_newtonian_control(path, r0=r0)
-    raise ValueError("schema must be 'newtonian' or 'viscoelastic'")
+    if schema == "newtonian_globals":
+        return load_newtonian_globals(path, r0=r0)
+    raise ValueError(
+        "schema must be 'newtonian', 'newtonian_globals' or 'viscoelastic'"
+    )
 
 
 def _linear_slope(time: np.ndarray, radius: np.ndarray) -> float:
