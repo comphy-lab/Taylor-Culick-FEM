@@ -64,19 +64,35 @@ TIME_MATCH_ATOL = 1e-6
 def read_pvd(path: Path) -> list[tuple[float, Path]]:
     """Return finite, strictly increasing ``(time, VTU)`` entries."""
     root = ET.parse(path).getroot()
-    entries = sorted(
+    entries = [
         (
             float(dataset.attrib["timestep"]),
             path.parent / dataset.attrib["file"],
         )
         for dataset in root.iter("DataSet")
-    )
+    ]
     times = np.asarray([time for time, _ in entries])
     if not entries or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0):
         raise ValueError(f"{path} must contain finite, strictly increasing times")
     missing = [str(frame) for _, frame in entries if not frame.is_file()]
     if missing:
         raise FileNotFoundError(f"PVD references missing frame: {missing[0]}")
+    return entries
+
+
+def concatenate_pvd_segments(paths: list[Path]) -> list[tuple[float, Path]]:
+    """Load ordered PVD segments and reject overlaps at every boundary."""
+    if not paths:
+        raise ValueError("at least one PVD segment is required")
+    entries: list[tuple[float, Path]] = []
+    for path in paths:
+        segment = read_pvd(path)
+        if entries and segment[0][0] <= entries[-1][0]:
+            raise ValueError(
+                "PVD segments must be ordered and non-overlapping: "
+                f"{path} starts at t={segment[0][0]:g} after t={entries[-1][0]:g}"
+            )
+        entries.extend(segment)
     return entries
 
 
@@ -266,6 +282,8 @@ def plot_kinematic_fields(
     subtris: np.ndarray,
     speed: np.ndarray,
     dissipation: np.ndarray,
+    *,
+    speed_limits: tuple[float, float],
 ):
     """Plot the horizontally reflected comoving kinematic view."""
     reflected_x = -points[:, 0]
@@ -274,7 +292,7 @@ def plot_kinematic_fields(
         speed,
         shading="gouraud",
         cmap=SPEED_CMAP,
-        norm=Normalize(vmin=SPEED_CLIM[0], vmax=SPEED_CLIM[1], clip=True),
+        norm=Normalize(vmin=speed_limits[0], vmax=speed_limits[1], clip=True),
     )
     lower = ax.tripcolor(
         Triangulation(reflected_x, -points[:, 1], subtris),
@@ -348,6 +366,7 @@ def render_frame(
     metadata: dict[str, float | str],
     radius_ylim: tuple[float, float],
     speed_ylim: tuple[float, float],
+    field_speed_limits: tuple[float, float],
 ) -> None:
     index, (time, path) = item
     destination = frames_dir / f"frame_{index:05d}.png"
@@ -373,7 +392,12 @@ def render_frame(
     mean_cax = fig.add_axes([0.570, 0.600, 0.375, 0.020])
 
     speed_map, dissipation_map = plot_kinematic_fields(
-        left_ax, relative, subtris, speed_field, dissipation
+        left_ax,
+        relative,
+        subtris,
+        speed_field,
+        dissipation,
+        speed_limits=field_speed_limits,
     )
     azimuthal_map, mean_map = plot_strain_fields(
         right_ax, relative, subtris, azimuthal, mean
@@ -429,7 +453,7 @@ def render_frame(
     speed_bar.ax.xaxis.set_ticks_position("top")
     speed_bar.ax.xaxis.set_label_position("top")
     speed_bar.set_label(r"$|\mathbf{u}|/V_{\mathrm{TC}}$", fontsize=14, labelpad=3)
-    speed_bar.set_ticks([0.0, 0.05, 0.10, 0.15, 0.20, 0.25])
+    speed_bar.set_ticks(np.linspace(*field_speed_limits, 6))
     speed_bar.ax.tick_params(labelsize=10.5, width=0.9, length=3, pad=1)
 
     dissipation_bar = fig.colorbar(
@@ -511,6 +535,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def pvd_source_receipt(paths: list[Path]) -> list[dict[str, str]]:
+    """Return the complete, ordered identity of the PVD inputs."""
+    return [{"path": str(path), "sha256": sha256(path)} for path in paths]
+
+
 def load_history(path: Path) -> np.ndarray:
     """Load the ``t,R,U,u*`` prefix and reject ambiguous histories."""
     history = np.atleast_2d(np.loadtxt(path, comments="#"))
@@ -566,6 +595,15 @@ def main() -> None:
         type=Path,
         help="case metadata (default: case.json beside the run directory)",
     )
+    parser.add_argument(
+        "--segment-pvd",
+        action="append",
+        type=Path,
+        help=(
+            "ordered PVD segment to concatenate; repeat for restarts "
+            "(default: <run-dir>/liquid.pvd)"
+        ),
+    )
     parser.add_argument("--frames-dir", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--fps", type=int, default=30)
@@ -589,6 +627,14 @@ def main() -> None:
     parser.add_argument("--early-time-limit", type=float, default=EARLY_TIME_LIMIT)
     parser.add_argument("--radius-limits", type=float, nargs=2)
     parser.add_argument("--tip-speed-limits", type=float, nargs=2)
+    parser.add_argument(
+        "--speed-limits",
+        type=float,
+        nargs=2,
+        default=SPEED_CLIM,
+        metavar=("MIN", "MAX"),
+        help="velocity-field colour limits (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     if args.fps < 1 or args.procs < 1 or args.stride < 1:
@@ -601,6 +647,11 @@ def main() -> None:
         parser.error("--indices and --stride cannot be combined")
 
     args.run_dir = args.run_dir.resolve()
+    pvd_paths = (
+        [path.resolve() for path in args.segment_pvd]
+        if args.segment_pvd
+        else [args.run_dir / "liquid.pvd"]
+    )
     case_json = (
         args.case_json.resolve()
         if args.case_json is not None
@@ -609,7 +660,7 @@ def main() -> None:
     if not case_json.is_file():
         raise SystemExit(f"missing case metadata: {case_json}")
     metadata = load_case_metadata(case_json)
-    pvd_entries = read_pvd(args.run_dir / "liquid.pvd")
+    pvd_entries = concatenate_pvd_segments(pvd_paths)
     initial_mesh = args.run_dir / INITIAL_MESH
     stored_t0 = abs(pvd_entries[0][0]) <= 1e-12
     reconstruct_t0 = not stored_t0 and args.initial_state in {"auto", "reconstruct"}
@@ -633,7 +684,14 @@ def main() -> None:
         if args.tip_speed_limits
         else (min(-0.025, float(history[:, 3].min())), max(0.025, 1.1 * float(history[:, 3].max())))
     )
-    if radius_ylim[0] >= radius_ylim[1] or speed_ylim[0] >= speed_ylim[1]:
+    field_speed_limits = tuple(args.speed_limits)
+    if (
+        radius_ylim[0] >= radius_ylim[1]
+        or speed_ylim[0] >= speed_ylim[1]
+        or not all(math.isfinite(value) for value in field_speed_limits)
+        or field_speed_limits[0] < 0
+        or field_speed_limits[0] >= field_speed_limits[1]
+    ):
         parser.error("plot limits must be increasing")
 
     selected = stride_selection(
@@ -663,6 +721,7 @@ def main() -> None:
         metadata=metadata,
         radius_ylim=radius_ylim,
         speed_ylim=speed_ylim,
+        field_speed_limits=field_speed_limits,
     )
     if args.procs == 1:
         for item in selected:
@@ -719,7 +778,8 @@ def main() -> None:
     receipt = {
         "case_metadata": str(case_json),
         "case_metadata_sha256": sha256(case_json),
-        "source_pvd": str(args.run_dir / "liquid.pvd"),
+        "source_pvd": str(pvd_paths[0]) if len(pvd_paths) == 1 else None,
+        "source_pvds": pvd_source_receipt(pvd_paths),
         "initial_condition_source": (
             {
                 "mesh": str(initial_mesh),
@@ -793,7 +853,7 @@ def main() -> None:
         },
         "crop": {"left_x": LEFT_XLIM, "right_x": FOLLOW_XLIM, "field_y": FIELD_YLIM},
         "colour_limits": {
-            "speed": SPEED_CLIM,
+            "speed": field_speed_limits,
             "dissipation": DISSIPATION_CLIM,
             "azimuthal": STRAIN_CLIM,
             "mean": STRAIN_CLIM,

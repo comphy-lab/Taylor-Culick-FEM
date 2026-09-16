@@ -32,6 +32,17 @@ def test_loader_reconstructs_exact_t0_for_each_schema(tmp_path: Path) -> None:
     assert ve.ustar[-1] == newton.ustar[-1] == 0.07
 
 
+def test_newtonian_globals_uses_solved_control_speed(tmp_path: Path) -> None:
+    path = tmp_path / "globals.txt"
+    np.savetxt(path, np.array([[0.0, 1.0, 0.0], [2.0, 3.0, np.sqrt(2.0)]]))
+
+    loaded = campaign.load_control(path, schema="newtonian_globals")
+
+    assert loaded.schema == "newtonian_globals"
+    assert loaded.radius.tolist() == [1.0, 3.0]
+    assert loaded.ustar.tolist() == pytest.approx([0.0, 1.0])
+
+
 def test_loader_rejects_wrong_schema_and_nonmonotone_time(tmp_path: Path) -> None:
     path = tmp_path / "control.txt"
     np.savetxt(path, np.ones((2, 7)))

@@ -17,6 +17,75 @@ video = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(video)
 
 
+def _write_pvd(path: Path, times: list[float]) -> None:
+    datasets = []
+    for index, time in enumerate(times):
+        frame = path.parent / f"{path.stem}-{index}.vtu"
+        frame.touch()
+        datasets.append(
+            f'<DataSet timestep="{time}" file="{frame.name}"/>'
+        )
+    path.write_text(
+        "<VTKFile><Collection>" + "".join(datasets) + "</Collection></VTKFile>"
+    )
+
+
+def test_pvd_segments_concatenate_in_explicit_order(tmp_path: Path) -> None:
+    first = tmp_path / "first.pvd"
+    second = tmp_path / "second.pvd"
+    _write_pvd(first, [0.05, 0.10])
+    _write_pvd(second, [0.15, 0.20])
+
+    entries = video.concatenate_pvd_segments([first, second])
+
+    assert [time for time, _ in entries] == [0.05, 0.10, 0.15, 0.20]
+
+
+@pytest.mark.parametrize("second_times", [[0.10, 0.15], [0.09, 0.15]])
+def test_pvd_segments_reject_duplicate_or_overlapping_times(
+    tmp_path: Path, second_times: list[float]
+) -> None:
+    first = tmp_path / "first.pvd"
+    second = tmp_path / "second.pvd"
+    _write_pvd(first, [0.05, 0.10])
+    _write_pvd(second, second_times)
+
+    with pytest.raises(ValueError, match="ordered and non-overlapping"):
+        video.concatenate_pvd_segments([first, second])
+
+
+def test_pvd_segment_rejects_out_of_order_entries(tmp_path: Path) -> None:
+    path = tmp_path / "segment.pvd"
+    _write_pvd(path, [0.10, 0.05])
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        video.concatenate_pvd_segments([path])
+
+
+def test_pvd_segment_rejects_missing_vtu(tmp_path: Path) -> None:
+    path = tmp_path / "segment.pvd"
+    _write_pvd(path, [0.05, 0.10])
+    (tmp_path / "segment-1.vtu").unlink()
+
+    with pytest.raises(FileNotFoundError, match="missing frame"):
+        video.concatenate_pvd_segments([path])
+
+
+def test_pvd_receipt_records_every_ordered_source_and_hash(tmp_path: Path) -> None:
+    first = tmp_path / "first.pvd"
+    second = tmp_path / "second.pvd"
+    _write_pvd(first, [0.05])
+    _write_pvd(second, [0.10])
+
+    receipt = video.pvd_source_receipt([first, second])
+
+    assert [item["path"] for item in receipt] == [str(first), str(second)]
+    assert [item["sha256"] for item in receipt] == [
+        video.sha256(first),
+        video.sha256(second),
+    ]
+
+
 def test_axisymmetric_affine_dissipation_includes_hoop_term() -> None:
     points = np.array([[1.0, 0.0], [2.0, 0.0], [1.0, 1.0]])
     subtris = np.array([[0, 1, 2]])
@@ -29,6 +98,25 @@ def test_axisymmetric_affine_dissipation_includes_hoop_term() -> None:
 
     expected = 2.0 * viscosity * (2.0 * a**2 + b**2)
     np.testing.assert_allclose(result, expected, rtol=0, atol=1e-14)
+
+
+def test_kinematic_field_uses_requested_speed_limits() -> None:
+    points = np.array([[0.1, 0.0], [1.0, 0.0], [0.1, 0.5]])
+    subtris = np.array([[0, 1, 2]])
+    figure, axis = video.plt.subplots()
+    try:
+        speed_map, _ = video.plot_kinematic_fields(
+            axis,
+            points,
+            subtris,
+            np.array([0.0, 0.5, 1.0]),
+            np.full(3, 1e-3),
+            speed_limits=(0.0, 1.0),
+        )
+        assert speed_map.norm.vmin == 0.0
+        assert speed_map.norm.vmax == 1.0
+    finally:
+        video.plt.close(figure)
 
 
 @pytest.mark.parametrize("fps", [24, 30])

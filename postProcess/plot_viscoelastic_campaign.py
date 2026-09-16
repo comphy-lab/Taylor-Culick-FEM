@@ -107,15 +107,34 @@ def _save(fig: plt.Figure, base: Path) -> None:
     plt.close(fig)
 
 
+def _truncate_history(history: TipHistory, time_limit: float) -> TipHistory:
+    if not math.isfinite(time_limit) or time_limit <= 0:
+        raise ValueError("time_limit must be finite and positive")
+    if history.time[-1] < time_limit:
+        raise ValueError(f"{history.source} ends before time_limit={time_limit:g}")
+    earlier = history.time < time_limit
+    time = np.concatenate((history.time[earlier], [time_limit]))
+    radius = np.concatenate(
+        (history.radius[earlier], [np.interp(time_limit, history.time, history.radius)])
+    )
+    ustar = np.concatenate(
+        (history.ustar[earlier], [np.interp(time_limit, history.time, history.ustar)])
+    )
+    return TipHistory(time, radius, ustar, history.schema, history.source)
+
+
 def render_campaign(
     cases: list[tuple[float, TipHistory]],
     output_dir: Path,
     *,
     use_tex: bool = True,
+    time_limit: float | None = None,
 ) -> list[Path]:
     """Render the aligned campaign plot and each individual case."""
     if not cases:
         raise ValueError("at least one case is required")
+    if time_limit is not None:
+        cases = [(ec, _truncate_history(history, time_limit)) for ec, history in cases]
     ecs = [ec for ec, _ in cases]
     if any(not math.isfinite(ec) or ec < 0 for ec in ecs) or len(set(ecs)) != len(ecs):
         raise ValueError("Ec values must be finite, non-negative and unique")
@@ -169,10 +188,11 @@ def parser() -> argparse.ArgumentParser:
         nargs=3,
         metavar=("EC", "SCHEMA", "CONTROL"),
         required=True,
-        help="repeatable case: Ec, newtonian|viscoelastic, control.txt",
+        help="repeatable case: Ec, newtonian|newtonian_globals|viscoelastic, history",
     )
     result.add_argument("--output-dir", type=Path, required=True)
     result.add_argument("--r0", type=float, default=1.0)
+    result.add_argument("--time-limit", type=float)
     return result
 
 
@@ -182,7 +202,7 @@ def main() -> None:
         (float(ec), load_control(path, schema=schema, r0=args.r0))
         for ec, schema, path in args.case
     ]
-    render_campaign(cases, args.output_dir)
+    render_campaign(cases, args.output_dir, time_limit=args.time_limit)
 
 
 if __name__ == "__main__":

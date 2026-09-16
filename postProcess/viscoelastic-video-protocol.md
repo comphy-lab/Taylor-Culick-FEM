@@ -59,9 +59,28 @@ uv run python postProcess/animate_viscoelastic_comoving.py \
 
 The explicit history limits reproduce the accepted $Oh=1$, $Ec=1$,
 $\lambda=\infty$ presentation. Omit them for padded limits derived from a
-different run. The script refuses missing arrays, invalid conformation values,
-duplicate/non-finite times, incomplete histories, stale frame files, and
-partial-frame encoding.
+different run. The velocity-field colour range defaults to 0–0.25; pass
+`--speed-limits 0 1` when comparing cases on the shared 0–1 scale.
+
+A restarted trajectory may be assembled without copying or rewriting its PVD
+files. Supply the segments in chronological order, repeating `--segment-pvd`:
+
+```bash
+uv run python postProcess/animate_viscoelastic_comoving.py \
+  --run-dir <case>/run_viscoelastic_axi \
+  --segment-pvd <case>/attempt-1/run_viscoelastic_axi/liquid.pvd \
+  --segment-pvd <case>/attempt-2/run_viscoelastic_axi/liquid.pvd \
+  --frames-dir <work>/frames \
+  --out <work>/viscoelastic.mp4 \
+  --speed-limits 0 1
+```
+
+Without `--segment-pvd`, the source remains `<run-dir>/liquid.pvd`. Each
+segment must contain finite, strictly increasing times, every referenced VTU
+must exist, and the first time in each later segment must exceed the final time
+in the preceding segment. The script refuses overlaps as well as missing
+arrays, invalid conformation values, incomplete histories, stale frame files,
+and partial-frame encoding.
 
 ## Verification
 
@@ -74,5 +93,5 @@ Before retaining a render:
 3. Confirm H.264 `yuv420p`, 1600×912 pixels, the expected frame count, and no
    post-encode rescaling.
 4. Retain the generated JSON receipt beside the MP4. It records metadata and
-   input identities, field definitions, colour limits, playback holds, frame
-   count, codec probe, and SHA-256 digest.
+   every source PVD path and SHA-256 identity, field definitions, colour
+   limits, playback holds, frame count, codec probe, and SHA-256 digest.
