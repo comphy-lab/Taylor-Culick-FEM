@@ -161,6 +161,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "output_step": args.output_step,
         "max_step": args.max_step,
         "stabilization_option": args.stabilization,
+        "conformation_supg_factor": args.supg_factor,
         "temporal_error": args.temporal_error,
         "sponge": (
             _sponge_parameters(args).as_json_dict()
@@ -169,7 +170,12 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         ),
     }
     for key, value in identity.items():
-        if metadata.get(key) != value:
+        observed = metadata.get(key)
+        if key == "conformation_supg_factor" and observed is None:
+            # Attempts written before this control was exposed used the
+            # problem class's factor-one default.
+            observed = 1.0
+        if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
     index, time = restart["output_index"], restart["time"]
     if type(index) is not int or index <= 0:
@@ -394,6 +400,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "conformation_formulation": "log-conf",
         "stabilization_option": args.stabilization,
         "conformation_stabilization": "SUPG" if args.stabilization == "supg" else None,
+        "conformation_supg_factor": args.supg_factor,
         "coordinate_system": "axisymmetric",
         "velocity_frame": "laboratory",
         "time_scale": "capillary",
@@ -466,6 +473,7 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.relaxation_time = args.relaxation_time
             problem.sponge = sponge
             problem.conformation_stabilization = "SUPG" if args.stabilization == "supg" else None
+            problem.conformation_supg_factor = args.supg_factor
             problem.X0 = args.r0
             problem.window_length = args.length
             problem.resolution = args.resolution
@@ -843,6 +851,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("supg", "none"),
         default="supg",
         help="conformation stabilisation: SUPG or plain Galerkin",
+    )
+    parser.add_argument(
+        "--supg-factor",
+        type=_positive_float,
+        default=1.0,
+        help="multiplicative SUPG factor; recorded even when stabilisation is disabled",
     )
     parser.add_argument("--sponge-start", type=_nonnegative_float, default=None)
     parser.add_argument("--sponge-width", type=_positive_float, default=None)

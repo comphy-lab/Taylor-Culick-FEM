@@ -88,6 +88,21 @@ def test_time_case_explicitly_allows_recoil(tmp_path: Path) -> None:
     assert args.t_end == 200.0
 
 
+def test_supg_factor_is_explicit_and_backwards_compatible(tmp_path: Path) -> None:
+    baseline = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    baseline_args = adapter.case_to_driver_args(
+        _write_case(tmp_path, baseline), tmp_path / "baseline"
+    )
+    assert baseline_args.supg_factor == 1.0
+
+    varied = copy.deepcopy(baseline)
+    varied["physics"]["supg_factor"] = 0.5
+    varied_path = tmp_path / "varied.json"
+    varied_path.write_text(json.dumps(varied))
+    varied_args = adapter.case_to_driver_args(varied_path, tmp_path / "varied")
+    assert varied_args.supg_factor == 0.5
+
+
 def test_optional_sponge_maps_to_driver_and_preserves_absent_default(tmp_path: Path) -> None:
     baseline = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
     baseline_path = _write_case(tmp_path, baseline)
@@ -207,6 +222,7 @@ def restart_case(tmp_path):
                 "output_step": 0.05,
                 "max_step": 0.01,
                 "stabilization_option": "supg",
+                "conformation_supg_factor": 1.0,
                 "temporal_error": 0.001,
                 "largest_positive_sponge_power": 2.5e-13,
             }
