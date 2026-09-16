@@ -95,6 +95,8 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         relaxation_text,
         "--stabilization",
         str(_value(physics, "stabilization", "physics")),
+        "--supg-factor",
+        str(physics.get("supg_factor", 1.0)),
         "--length",
         str(_value(mesh, "length", "mesh")),
         "--r0",
