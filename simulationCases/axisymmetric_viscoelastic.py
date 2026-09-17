@@ -7,6 +7,9 @@ the polymer conformation equation and its stress ``G (C - I)``.
 
 The dimensionless modulus used here is ``G = G_dim h0 / sigma``, on the same
 full-thickness ``h0`` and surface-tension scale as the inherited problem.
+``passive_conformation=True`` retains the log-conformation transport and
+diagnostic output while omitting polymer feedback in the momentum equation;
+it is required when ``G=0``.
 
 ``relaxation_time=math.inf`` is an exact non-relaxing limit: no large finite
 surrogate is used.  The incoming film is unstretched (``log(C)=0``), while the
@@ -45,7 +48,8 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
     ``solvent_oh`` is the project's Ohnesorge number, so the viscosity passed
     to Navier--Stokes is ``mu_s = sqrt(2) * solvent_oh``.  ``elastic_modulus``
     is ``G = G_dim h0 / sigma`` and ``relaxation_time`` is ``lambda`` in
-    capillary units.
+    capillary units.  ``passive_conformation`` selects diagnostic-only
+    conformation transport; active polymer feedback remains the default.
     """
 
     def __init__(self):
@@ -53,6 +57,7 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         self.solvent_oh = 0.0
         self.elastic_modulus = 1.0
         self.relaxation_time = math.inf
+        self.passive_conformation = False
         self.conformation_space = "C2"
         self.conformation_stabilization = "SUPG"
         self.conformation_supg_factor = 1.0
@@ -66,6 +71,10 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             raise ValueError("elastic_modulus must be finite and non-negative")
         if not (self.relaxation_time > 0):
             raise ValueError("relaxation_time must be positive (or infinity)")
+        if type(self.passive_conformation) is not bool:
+            raise TypeError("passive_conformation must be a boolean")
+        if self.elastic_modulus == 0 and not self.passive_conformation:
+            raise ValueError("elastic_modulus=0 requires passive_conformation=True")
 
         # NavierStokesEquations in the inherited problem carries the solvent
         # stress only.  Velocities remain laboratory-frame velocities.
@@ -90,12 +99,6 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
                 )
                 self += sponge_eqs @ "liquid"
 
-        # G=0 is intentionally an exact Newtonian baseline: adding decoupled
-        # conformation dofs would change the algebraic system for no physics.
-        if self.elastic_modulus == 0:
-            self.viscoelastic_parameters = None
-            return
-
         params = GLambdaOldroydBParameters(
             elastic_modulus=self.elastic_modulus,
             relaxation_time=self.relaxation_time,
@@ -107,6 +110,7 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             space=self.conformation_space,
             stabilization=self.conformation_stabilization,
             supg_factor=self.conformation_supg_factor,
+            add_polymer_stress_to_momentum=not self.passive_conformation,
             output_conformation=True,
         )
 
@@ -151,7 +155,7 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         expression output.  For this Oldroyd-B parameterisation
         ``tau_p=G(C-I)`` exactly, including at infinite relaxation time.
         """
-        if self.elastic_modulus == 0:
+        if self.viscoelastic_parameters is None:
             return {}
 
         mesh = self.get_mesh("liquid")

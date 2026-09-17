@@ -169,6 +169,7 @@ def make_g_lambda_oldroyd_b_equations(
     space: Any = "C2",
     stabilization: Stabilization = "SUPG",
     supg_factor: Any = 1,
+    add_polymer_stress_to_momentum: bool = True,
     output_conformation: bool = True,
 ) -> ViscoelasticEquations:
     """Build pyoomph equations for the ``G``--``lambda`` formulation.
@@ -176,14 +177,23 @@ def make_g_lambda_oldroyd_b_equations(
     The unit relaxation time is a finite bookkeeping scale.  The constitutive
     model contains the physical inverse relaxation time, including exact zero
     for the elastic limit, while ``polymer_viscosity=G`` produces
-    ``tau_p=G(C-I)``.  When SUPG is enabled, the same unit scale regularises
-    its intrinsic time at stagnation points.  This changes only the consistent
-    numerical stabilisation, not the continuous constitutive equation; SUPG
-    sensitivity must therefore be checked before quantitative use.
+    ``tau_p=G(C-I)``.  ``add_polymer_stress_to_momentum=False`` retains the
+    constitutive transport and output fields while omitting the polymer stress
+    residual from the momentum equation.  When SUPG is enabled, the same unit
+    scale regularises its intrinsic time at stagnation points.  This changes
+    only the consistent numerical stabilisation, not the continuous
+    constitutive equation; SUPG sensitivity must therefore be checked before
+    quantitative use.
     """
 
     if not isinstance(params, GLambdaOldroydBParameters):
         raise TypeError("params must be GLambdaOldroydBParameters")
+    if type(add_polymer_stress_to_momentum) is not bool:
+        raise TypeError("add_polymer_stress_to_momentum must be a boolean")
+    if params.elastic_modulus == 0 and add_polymer_stress_to_momentum:
+        raise ValueError(
+            "zero elastic modulus requires add_polymer_stress_to_momentum=False"
+        )
     return ViscoelasticEquations(
         model=RelaxationRateOldroydB(params.relaxation_rate),
         relaxation_time=1.0,
@@ -192,5 +202,6 @@ def make_g_lambda_oldroyd_b_equations(
         space=space,
         stabilization=stabilization,
         supg_factor=supg_factor,
+        add_polymer_stress_to_momentum=add_polymer_stress_to_momentum,
         output_conformation=output_conformation,
     )
