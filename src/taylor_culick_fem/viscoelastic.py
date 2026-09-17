@@ -24,6 +24,7 @@ from pyoomph.equations.viscoelastic import (
     ViscoelasticConstitutiveModel,
     ViscoelasticEquations,
 )
+from pyoomph.expressions import matrix
 
 Formulation = Literal["log-conf", "conformation"]
 Stabilization = Literal["SUPG"] | None
@@ -125,6 +126,20 @@ class RelaxationRateOldroydB(ViscoelasticConstitutiveModel):
         return C - identity
 
 
+class _ZeroModulusViscoelasticEquations(ViscoelasticEquations):
+    """Retain a tensor-valued zero stress for diagnostic field output.
+
+    GiNaC simplifies ``0 * (C-I)`` to a scalar zero.  The upstream optional
+    output then indexes that result to form ``polymer_N1``, which requires a
+    matrix.  Passive ``G=0`` transport therefore supplies the mathematically
+    identical zero as an explicit tensor; it is never added to momentum.
+    """
+
+    def _polymer_stress(self, C: Any, trC: Any, identity: Any) -> Any:
+        del C, trC, identity
+        return matrix([[0, 0, 0], [0, 0, 0], [0, 0, 0]])
+
+
 def g_lambda_relaxation(
     conformation: ArrayLike, relaxation_time: float | str
 ) -> NDArray[np.float64]:
@@ -194,7 +209,12 @@ def make_g_lambda_oldroyd_b_equations(
         raise ValueError(
             "zero elastic modulus requires add_polymer_stress_to_momentum=False"
         )
-    return ViscoelasticEquations(
+    equation_type = (
+        _ZeroModulusViscoelasticEquations
+        if params.elastic_modulus == 0
+        else ViscoelasticEquations
+    )
+    return equation_type(
         model=RelaxationRateOldroydB(params.relaxation_rate),
         relaxation_time=1.0,
         polymer_viscosity=params.elastic_modulus,
