@@ -57,11 +57,26 @@ def _parameter_label(value: float) -> str:
     return "inf" if math.isinf(value) else f"{value:g}"
 
 
-def _case_name(oh: float, elastic_modulus: float, relaxation_time: float) -> str:
-    return (
+def _case_name(
+    oh: float,
+    elastic_modulus: float,
+    relaxation_time: float,
+    passive_conformation: bool = False,
+) -> str:
+    name = (
         f"axi_viscoelastic_Oh_{oh:g}_G_{elastic_modulus:g}_"
         f"lambda_{_parameter_label(relaxation_time)}"
     )
+    return f"{name}_passive_conformation" if passive_conformation else name
+
+
+def _passive_conformation(args: argparse.Namespace) -> bool:
+    """Return the explicit conformation-feedback mode carried by CLI args."""
+
+    value = getattr(args, "passive_conformation", False)
+    if type(value) is not bool:
+        raise ValueError("passive_conformation must be a boolean")
+    return value
 
 
 def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | None:
@@ -111,6 +126,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
     """Validate immutable parent evidence before creating a continuation directory."""
     if args.restart_case is None:
         return None
+    passive_conformation = _passive_conformation(args)
     serialized_case = getattr(args, "serialized_case", None)
     case = json.loads(
         serialized_case if serialized_case is not None else args.restart_case.read_bytes()
@@ -147,13 +163,27 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "solver",
         "arrest",
     ):
-        if key not in case or case[key] != parent.get(key):
+        current = case.get(key)
+        expected = parent.get(key)
+        if key == "physics" and isinstance(current, dict) and isinstance(expected, dict):
+            # A missing mode predates this switch and means the backwards-
+            # compatible active default. Treat it as equivalent to false.
+            current = {
+                **current,
+                "passive_conformation": current.get("passive_conformation", False),
+            }
+            expected = {
+                **expected,
+                "passive_conformation": expected.get("passive_conformation", False),
+            }
+        if key not in case or current != expected:
             raise ValueError(f"restart case mismatch: {key}")
     metadata = json.loads(paths["metadata"].read_text())
     identity = {
         "Oh": args.oh,
         "elastic_modulus": args.elastic_modulus,
         "relaxation_time": "inf" if math.isinf(args.relaxation_time) else args.relaxation_time,
+        "passive_conformation": passive_conformation,
         "length": args.length,
         "r0": args.r0,
         "resolution": args.resolution,
@@ -175,6 +205,10 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             # Attempts written before this control was exposed used the
             # problem class's factor-one default.
             observed = 1.0
+        if key == "passive_conformation" and key not in metadata:
+            # Attempts written before passive conformation was exposed were
+            # active by construction.
+            observed = False
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
     index, time = restart["output_index"], restart["time"]
@@ -377,11 +411,14 @@ def _enforce_launcher_affinity() -> dict[str, object]:
 
 
 def run_case(args: argparse.Namespace) -> dict:
+    passive_conformation = _passive_conformation(args)
+    if args.elastic_modulus == 0 and not passive_conformation:
+        raise ValueError("elastic_modulus=0 requires passive_conformation=True")
     restart = _read_restart(args)
     sponge = _sponge_parameters(args)
     affinity = _enforce_launcher_affinity()
     run_dir = args.results.resolve() / _case_name(
-        args.oh, args.elastic_modulus, args.relaxation_time
+        args.oh, args.elastic_modulus, args.relaxation_time, passive_conformation
     )
     run_dir.mkdir(parents=True, exist_ok=False)
 
@@ -394,6 +431,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "mu_s": math.sqrt(2.0) * args.oh,
         "elastic_modulus": args.elastic_modulus,
         "elastic_modulus_definition": "G_dim*h0/sigma",
+        "passive_conformation": passive_conformation,
         "relaxation_time": relaxation_json,
         "constitutive_model": "Oldroyd-B",
         "polymer_stress": "G*(C-I)",
@@ -471,6 +509,7 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.solvent_oh = args.oh
             problem.elastic_modulus = args.elastic_modulus
             problem.relaxation_time = args.relaxation_time
+            problem.passive_conformation = passive_conformation
             problem.sponge = sponge
             problem.conformation_stabilization = "SUPG" if args.stabilization == "supg" else None
             problem.conformation_supg_factor = args.supg_factor
@@ -736,7 +775,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 )
                 if diagnostics["conformation_eigenvalue_min"] <= 0:
                     failures.append("conformation tensor lost positive definiteness")
-                if stress_abs_max < args.min_polymer_stress:
+                if args.elastic_modulus > 0 and stress_abs_max < args.min_polymer_stress:
                     failures.append(
                         f"polymer stress {stress_abs_max:.6e} is below "
                         f"{args.min_polymer_stress:.6e}"
@@ -814,6 +853,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=_nonnegative_float,
         default=1.0,
         help="dimensionless polymer modulus G=G_dim*h0/sigma",
+    )
+    parser.add_argument(
+        "--passive-conformation",
+        action="store_true",
+        help=(
+            "evolve log-conformation diagnostics without feeding polymer stress "
+            "back into momentum; required when G=0"
+        ),
     )
     parser.add_argument(
         "--relaxation-time",
@@ -932,6 +979,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Apply cross-argument checks shared by CLI and serialized-case runners."""
+    try:
+        passive_conformation = _passive_conformation(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.elastic_modulus == 0 and not passive_conformation:
+        parser.error("--elastic-modulus=0 requires --passive-conformation")
     if args.n_outputs < 1:
         parser.error("--n-outputs must be at least 1")
     if args.max_newton < 1:

@@ -73,6 +73,7 @@ def test_event_case_maps_to_first_turning_point_driver(tmp_path: Path) -> None:
     assert args.stop_when_arrested
     assert not args.allow_recoil
     assert args.t_end == 25.0
+    assert args.passive_conformation is False
 
 
 def test_time_case_explicitly_allows_recoil(tmp_path: Path) -> None:
@@ -101,6 +102,123 @@ def test_supg_factor_is_explicit_and_backwards_compatible(tmp_path: Path) -> Non
     varied_path.write_text(json.dumps(varied))
     varied_args = adapter.case_to_driver_args(varied_path, tmp_path / "varied")
     assert varied_args.supg_factor == 0.5
+
+
+def test_passive_conformation_maps_and_allows_zero_modulus(tmp_path: Path) -> None:
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["elastic_modulus"] = 0.0
+    case["physics"]["passive_conformation"] = True
+
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+    assert args.elastic_modulus == 0.0
+    assert args.passive_conformation is True
+
+
+def test_missing_passive_conformation_rejects_zero_modulus(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["elastic_modulus"] = 0.0
+
+    with pytest.raises(SystemExit):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    assert "--elastic-modulus=0 requires --passive-conformation" in capsys.readouterr().err
+
+
+def test_adapter_rejects_non_boolean_passive_conformation(tmp_path: Path) -> None:
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["passive_conformation"] = 1
+
+    with pytest.raises(TypeError, match="passive_conformation must be a boolean"):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+def test_passive_zero_stress_diagnostics_do_not_fail_driver(tmp_path, monkeypatch) -> None:
+    import run_viscoelastic_axi as driver
+
+    class History:
+        def __init__(self, path, header):
+            self.path = path
+            path.write_text("#" + " ".join(header) + "\n")
+
+        def add_row(self, *row):
+            with self.path.open("a") as stream:
+                stream.write(" ".join(map(str, row)) + "\n")
+
+    class Problem:
+        def __init__(self):
+            self.time = 0.0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def set_output_directory(self, path):
+            self.output_dir = Path(path)
+
+        def initialise(self):
+            self.output_dir.mkdir()
+
+        def volume(self):
+            return 1.0
+
+        def window_position(self):
+            return 1.0 + self.time
+
+        def hole_radius(self):
+            return self.window_position()
+
+        def retraction_speed(self):
+            return 0.1
+
+        def expected_volume(self, volume0, radius0):
+            del radius0
+            return volume0
+
+        def create_text_file_output(self, filename, header):
+            return History(self.output_dir / filename, header)
+
+        def run(self, target, **kwargs):
+            del kwargs
+            self.time = target
+
+        def output(self, **kwargs):
+            del kwargs
+
+        def get_current_time(self, **kwargs):
+            del kwargs
+            return self.time
+
+        def get_output_directory(self):
+            return str(self.output_dir)
+
+        def polymer_diagnostic_extrema(self):
+            return {
+                "log_conformation_abs_max": 0.0,
+                "conformation_eigenvalue_min": 1.0,
+                "conformation_eigenvalue_max": 1.0,
+                "polymer_stress_eigenvalue_min": 0.0,
+                "polymer_stress_eigenvalue_max": 0.0,
+            }
+
+    monkeypatch.setattr(driver, "AxisymmetricViscoelasticProblem", Problem)
+    monkeypatch.setattr(driver, "_enforce_launcher_affinity", dict)
+    case = _case({"kind": "time", "value": 0.1, "allow_recoil": True})
+    case["physics"].update(elastic_modulus=0.0, passive_conformation=True)
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+    metadata = driver.run_case(args)
+
+    assert metadata["status"] == "passed"
+    assert metadata["passive_conformation"] is True
+    assert metadata["polymer_diagnostics_available"] is True
+    assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_max"] == 0.0
+    assert (
+        tmp_path / "attempt" / "axi_viscoelastic_Oh_1_G_0_lambda_inf_passive_conformation"
+    ).is_dir()
 
 
 def test_optional_sponge_maps_to_driver_and_preserves_absent_default(tmp_path: Path) -> None:
@@ -292,6 +410,35 @@ def test_restart_rejects_external_parent_case_without_snapshot(tmp_path, restart
     snapshot.rename(snapshot.with_suffix(".unavailable"))
     args = adapter.case_to_driver_args(_write_case(tmp_path, restart_case), tmp_path / "next")
     with pytest.raises(ValueError, match="verified parent input-case snapshot"):
+        _read_restart(args)
+
+
+def test_restart_identity_rejects_a_changed_conformation_mode(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["physics"]["passive_conformation"] = True
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "next")
+
+    with pytest.raises(ValueError, match="restart case mismatch: physics"):
+        _read_restart(args)
+
+
+def test_restart_metadata_identity_binds_conformation_mode(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    # Explicit false is the same backwards-compatible active mode as the
+    # parent snapshot, so the metadata identity check is reached below.
+    case["physics"]["passive_conformation"] = False
+    metadata_path = Path(case["restart"]["metadata"]["path"])
+    metadata = json.loads(metadata_path.read_text())
+    metadata["passive_conformation"] = True
+    metadata_path.write_text(json.dumps(metadata))
+    case["restart"]["metadata"] = _reference(metadata_path)
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "next")
+
+    with pytest.raises(ValueError, match="restart metadata mismatch: passive_conformation"):
         _read_restart(args)
 
 

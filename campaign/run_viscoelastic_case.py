@@ -84,6 +84,9 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
 
     relaxation = _value(physics, "relaxation_time", "physics")
     relaxation_text = "inf" if str(relaxation).lower() == "inf" else str(float(relaxation))
+    passive_conformation = physics.get("passive_conformation", False)
+    if type(passive_conformation) is not bool:
+        raise TypeError("physics.passive_conformation must be a boolean")
     arguments = [
         "--results",
         str(results.resolve()),
@@ -134,6 +137,8 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         "--arrest-radius-span",
         str(_value(arrest, "radius_span_tolerance", "arrest")),
     ]
+    if passive_conformation:
+        arguments.append("--passive-conformation")
     sponge = physics.get("sponge")
     if sponge is not None:
         if not isinstance(sponge, dict):

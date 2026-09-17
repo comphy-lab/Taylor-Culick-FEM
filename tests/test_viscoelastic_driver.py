@@ -122,3 +122,23 @@ def test_allow_recoil_is_an_explicit_fixed_horizon_option(tmp_path) -> None:
     validate_args(parser, args)
     assert args.allow_recoil
     assert not args.stop_when_arrested
+
+
+def test_zero_modulus_requires_explicit_passive_conformation(tmp_path, capsys) -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--results", str(tmp_path), "--elastic-modulus", "0"])
+    with pytest.raises(SystemExit):
+        validate_args(parser, args)
+    assert "--elastic-modulus=0 requires --passive-conformation" in capsys.readouterr().err
+
+    passive = parser.parse_args(
+        [
+            "--results",
+            str(tmp_path),
+            "--elastic-modulus",
+            "0",
+            "--passive-conformation",
+        ]
+    )
+    validate_args(parser, passive)
+    assert passive.passive_conformation is True

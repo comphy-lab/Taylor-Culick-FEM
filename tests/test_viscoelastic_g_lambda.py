@@ -75,7 +75,30 @@ def test_equation_factory_uses_only_finite_base_parameters_at_infinite_lambda() 
     equations = make_g_lambda_oldroyd_b_equations(params)
     assert equations.relaxation_time == 1.0
     assert equations.polymer_viscosity == 0.4
+    assert equations.add_polymer_stress_to_momentum is True
     assert equations.formulation == "log-conf"
     assert equations.stabilization == "SUPG"
     assert isinstance(equations.model, RelaxationRateOldroydB)
     assert equations.model.relaxation_rate == 0.0
+
+
+def test_equation_factory_can_retain_conformation_without_polymer_feedback() -> None:
+    params = GLambdaOldroydBParameters(0.0, math.inf)
+    equations = make_g_lambda_oldroyd_b_equations(
+        params,
+        add_polymer_stress_to_momentum=False,
+        output_conformation=True,
+    )
+    assert equations.polymer_viscosity == 0.0
+    assert equations.add_polymer_stress_to_momentum is False
+    assert equations.output_conformation is True
+
+
+def test_equation_factory_rejects_zero_modulus_with_feedback() -> None:
+    with pytest.raises(ValueError, match="zero elastic modulus.*False"):
+        make_g_lambda_oldroyd_b_equations(GLambdaOldroydBParameters(0.0, math.inf))
+
+
+def test_zero_modulus_polymer_stress_is_exactly_zero() -> None:
+    C = np.array([[1.5, 0.25], [0.25, 0.8]])
+    np.testing.assert_array_equal(g_lambda_polymer_stress(C, 0.0), np.zeros_like(C))
