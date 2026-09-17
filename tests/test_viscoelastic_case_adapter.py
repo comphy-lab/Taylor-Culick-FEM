@@ -697,3 +697,33 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     resumed = np.loadtxt(bundle / "next" / suffix)
     reference = np.loadtxt(bundle / "reference" / suffix)
     np.testing.assert_allclose(resumed, reference, rtol=1e-9, atol=1e-10)
+
+
+def test_small_fem_passive_zero_modulus_evolves_conformation(tmp_path):
+    """A real coarse solve retains conformation at zero momentum feedback."""
+    import run_viscoelastic_axi as driver
+
+    case = _case({"kind": "time", "value": 0.02, "allow_recoil": True})
+    case["physics"].update(elastic_modulus=0.0, passive_conformation=True)
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["output"].update(cadence=0.02, checkpoint_every=0)
+    case["tolerances"]["min_polymer_stress"] = 1e-10
+    case["tolerances"]["min_radius_increase"] = 1e-6
+    input_path = _write_case(tmp_path, case)
+
+    metadata = driver.run_case(
+        adapter.case_to_driver_args(input_path, tmp_path / "attempt")
+    )
+
+    root = (
+        tmp_path
+        / "attempt"
+        / "axi_viscoelastic_Oh_1_G_0_lambda_inf_passive_conformation"
+    )
+    assert metadata["status"] == "passed"
+    assert metadata["passive_conformation"] is True
+    assert metadata["polymer_diagnostics_available"] is True
+    assert metadata["polymer_diagnostics_final"]["log_conformation_abs_max"] > 0
+    assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_min"] == 0
+    assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_max"] == 0
+    assert (root / "run_viscoelastic_axi/liquid/liquid_000000.vtu").is_file()
