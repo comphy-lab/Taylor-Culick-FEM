@@ -24,6 +24,12 @@ Both field views follow the rim spatially. Only the lower-left history is a
 lab-frame trajectory. The velocity components themselves are the lab-frame
 components stored by the axisymmetric ALE solver.
 
+The fixed spatial window spans the first $40h_0$ behind the tip:
+$0\leq (r-R_\mathrm{tip})/h_0\leq40$ in the unreflected view and
+$-40\leq -(r-R_\mathrm{tip})/h_0\leq0$ in the reflected view. This extent
+shows the rear shoulder and enough undisturbed film for morphology comparisons
+without changing the crop between frames or cases.
+
 The axisymmetric dissipation includes the hoop term,
 
 $$

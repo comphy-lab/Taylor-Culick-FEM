@@ -119,6 +119,11 @@ def test_kinematic_field_uses_requested_speed_limits() -> None:
         video.plt.close(figure)
 
 
+def test_field_views_show_40_thicknesses_and_are_exact_reflections() -> None:
+    assert video.FOLLOW_XLIM == (0.0, 40.0)
+    assert video.LEFT_XLIM == tuple(-value for value in reversed(video.FOLLOW_XLIM))
+
+
 @pytest.mark.parametrize("fps", [24, 30])
 def test_playback_holds_are_specified_in_seconds(fps: int) -> None:
     assert video.playback_repeats(
