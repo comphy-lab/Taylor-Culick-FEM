@@ -12,6 +12,7 @@ sheet thickness, consistently with the inherited FEM problem.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import math
@@ -132,15 +133,26 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         serialized_case if serialized_case is not None else args.restart_case.read_bytes()
     )
     restart = case.get("restart")
-    required = {"checkpoint", "input_case", "metadata", "control", "pvd", "time", "output_index"}
-    if not isinstance(restart, dict) or set(restart) != required:
+    legacy_required = {
+        "checkpoint", "input_case", "metadata", "control", "pvd", "time", "output_index"
+    }
+    decoupled_required = {
+        "checkpoint", "input_case", "metadata", "control", "rim_height", "pvd", "time",
+        "control_index", "field_index",
+    }
+    keys = set(restart) if isinstance(restart, dict) else set()
+    if keys not in (legacy_required, decoupled_required):
         raise ValueError(
-            "restart requires checkpoint, input_case, metadata, control, pvd, time, output_index"
+            "restart requires either legacy output_index lineage or decoupled "
+            "control_index, field_index and rim_height lineage"
         )
+    legacy = keys == legacy_required
     restart = dict(restart)
     paths = {
         key: _checked_reference(restart[key])
-        for key in required - {"time", "output_index", "input_case"}
+        for key in keys - {
+            "time", "output_index", "control_index", "field_index", "input_case"
+        }
     }
     root = paths["metadata"].parent
     snapshot = root / "input-case.json"
@@ -189,6 +201,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "resolution": args.resolution,
         "far_resolution": args.far_resolution,
         "output_step": args.output_step,
+        "field_stride": args.field_stride,
         "max_step": args.max_step,
         "stabilization_option": args.stabilization,
         "conformation_supg_factor": args.supg_factor,
@@ -201,6 +214,8 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
     }
     for key, value in identity.items():
         observed = metadata.get(key)
+        if key == "field_stride" and observed is None:
+            observed = 1
         if key == "conformation_supg_factor" and observed is None:
             # Attempts written before this control was exposed used the
             # problem class's factor-one default.
@@ -211,52 +226,84 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             observed = False
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
-    index, time = restart["output_index"], restart["time"]
-    if type(index) is not int or index <= 0:
-        raise ValueError("restart output_index must be a positive integer")
+    control_index = restart["output_index"] if legacy else restart["control_index"]
+    field_index = restart["output_index"] if legacy else restart["field_index"]
+    time = restart["time"]
+    if type(control_index) is not int or control_index <= 0:
+        label = "output_index" if legacy else "control index"
+        raise ValueError(f"restart {label} must be a positive integer")
+    if type(field_index) is not int or field_index < 0 or field_index > control_index:
+        raise ValueError("restart field index must be a non-negative integer at most control_index")
     if not isinstance(time, (int, float)) or not math.isfinite(time) or not 0 < time < args.t_end:
         raise ValueError("restart time must be finite, positive and before t_end")
     if args.output_step is None:
         raise ValueError("restart requires a fixed output cadence")
     rows = np.loadtxt(paths["control"], ndmin=2)
-    if rows.shape[1] != 8 or len(rows) < index or not np.all(np.isfinite(rows)):
+    if rows.shape[1] != 8 or len(rows) < control_index or not np.all(np.isfinite(rows)):
         raise ValueError("restart control history is incomplete or invalid")
     if np.any(np.diff(rows[:, 0]) <= 0) or rows[0, 0] <= 0:
         raise ValueError("restart control times must be strictly increasing and positive")
-    rows = rows[:index]
+    rows = rows[:control_index]
     if not math.isclose(rows[-1, 0], time, rel_tol=1e-10, abs_tol=1e-10):
         raise ValueError("restart time does not match selected control row")
     # Output times have a small solver landing offset; reject off-grid checkpoints
     # rather than silently changing the output interval after a short final step.
-    if not np.allclose(rows[:, 0], args.output_step * np.arange(1, index + 1), rtol=0, atol=1e-6):
+    if not np.allclose(
+        rows[:, 0], args.output_step * np.arange(1, control_index + 1), rtol=0, atol=1e-6
+    ):
         raise ValueError("restart control history does not match the output cadence")
     datasets = ET.parse(paths["pvd"]).findall("./Collection/DataSet")
-    if len(datasets) < index:
+    if len(datasets) < field_index:
         raise ValueError("restart PVD history is incomplete")
+    expected_field_times = rows[args.field_stride - 1 :: args.field_stride, 0]
+    if len(expected_field_times) != field_index:
+        raise ValueError("restart field index disagrees with deterministic field stride")
     fields = []
-    for row, dataset in zip(rows, datasets[:index], strict=True):
+    for expected_field_time, dataset in zip(
+        expected_field_times, datasets[:field_index], strict=True
+    ):
+        field_time = float(dataset.attrib["timestep"])
         if not math.isclose(
-            float(dataset.attrib["timestep"]), row[0], rel_tol=1e-10, abs_tol=1e-10
+            expected_field_time, field_time, rel_tol=1e-10, abs_tol=1e-10
         ):
             raise ValueError("restart PVD and control times disagree")
         path = (paths["pvd"].parent / dataset.attrib["file"]).resolve()
         if not path.is_file():
             raise ValueError("restart PVD refers to a missing field")
-        fields.append((float(row[0]), path))
+        fields.append((field_time, path))
+    height_rows = None
+    if not legacy:
+        height_rows = np.loadtxt(paths["rim_height"], ndmin=2)
+        if (
+            height_rows.shape[1] != 2
+            or len(height_rows) < control_index
+            or not np.all(np.isfinite(height_rows))
+            or np.any(height_rows[:, 1] <= 0)
+        ):
+            raise ValueError("restart rim-height history is incomplete or invalid")
+        height_rows = height_rows[:control_index]
+        if not np.allclose(height_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
+            raise ValueError("restart rim-height and control times disagree")
     if paths["checkpoint"].parent != root / "checkpoints":
         raise ValueError("restart checkpoint does not belong to the parent case")
     if paths["control"].parent != root / "run_viscoelastic_axi":
         raise ValueError("restart control does not belong to the parent case")
     if paths["pvd"].parent != paths["control"].parent:
         raise ValueError("restart PVD does not belong to the parent case")
+    if not legacy and paths["rim_height"].parent != paths["control"].parent:
+        raise ValueError("restart rim-height history does not belong to the parent case")
     return {
         "evidence": restart,
         "paths": paths,
         "metadata": metadata,
         "rows": rows,
+        "height_rows": height_rows,
         "fields": fields,
         "time": float(time),
-        "output_index": index,
+        "control_index": control_index,
+        "field_index": field_index,
+        "output_index": control_index,
+        "legacy": legacy,
     }
 
 
@@ -372,6 +419,146 @@ class ArrestTracker:
         return result
 
 
+@dataclass
+class HeightPlateauTracker:
+    """Certify a sustained plateau in the full rim height ``H``.
+
+    A candidate must pass the campaign's trend, residual, adjacent-window and
+    residual-envelope predicates continuously for ``hold`` physical-time
+    units.  The tracker deliberately uses no inferred oscillation period; a
+    period only enters when supplied explicitly.
+    """
+
+    hold: float = 10.0
+    minimum_window: float = 10.0
+    window_time_fraction: float = 0.1
+    slope_window_fraction: float = 0.005
+    instantaneous_slope_fraction: float = 0.02
+    residual_rms_fraction: float = 0.005
+    adjacent_mean_fraction: float = 0.005
+    residual_envelope_growth_fraction: float = 0.05
+    oscillation_period: float | None = None
+    rows: list[tuple[float, float]] = field(default_factory=list)
+    sum_time: list[float] = field(default_factory=lambda: [0.0])
+    sum_height: list[float] = field(default_factory=lambda: [0.0])
+    sum_time_squared: list[float] = field(default_factory=lambda: [0.0])
+    sum_time_height: list[float] = field(default_factory=lambda: [0.0])
+    sum_height_squared: list[float] = field(default_factory=lambda: [0.0])
+    candidate_since: float | None = None
+    latest_metrics: dict[str, float | bool] | None = None
+
+    def _window(self, time: float) -> float:
+        terms = [self.minimum_window, self.window_time_fraction * time]
+        if self.oscillation_period is not None:
+            terms.append(3.0 * self.oscillation_period)
+        return max(terms)
+
+    def _statistics(self, start: int, stop: int) -> tuple[float, float, float]:
+        """Return mean, least-squares slope and residual RMS in O(1)."""
+
+        count = stop - start
+        sum_time = self.sum_time[stop] - self.sum_time[start]
+        sum_height = self.sum_height[stop] - self.sum_height[start]
+        sum_time_squared = self.sum_time_squared[stop] - self.sum_time_squared[start]
+        sum_time_height = self.sum_time_height[stop] - self.sum_time_height[start]
+        sum_height_squared = self.sum_height_squared[stop] - self.sum_height_squared[start]
+        mean = sum_height / count
+        centred_time_squared = sum_time_squared - sum_time**2 / count
+        centred_cross = sum_time_height - sum_time * sum_height / count
+        centred_height_squared = max(sum_height_squared - sum_height**2 / count, 0.0)
+        slope = centred_cross / centred_time_squared
+        residual_squared = max(centred_height_squared - slope * centred_cross, 0.0)
+        return mean, slope, math.sqrt(residual_squared / count)
+
+    def observe(self, time: float, height: float) -> dict[str, object] | None:
+        if not math.isfinite(time) or not math.isfinite(height) or height <= 0:
+            raise ValueError("height plateau samples must have finite time and positive height")
+        if self.rows and time <= self.rows[-1][0]:
+            raise ValueError("height plateau times must be strictly increasing")
+        self.rows.append((time, height))
+        self.sum_time.append(self.sum_time[-1] + time)
+        self.sum_height.append(self.sum_height[-1] + height)
+        self.sum_time_squared.append(self.sum_time_squared[-1] + time**2)
+        self.sum_time_height.append(self.sum_time_height[-1] + time * height)
+        self.sum_height_squared.append(self.sum_height_squared[-1] + height**2)
+        window = self._window(time)
+        time_key = lambda row: row[0]
+        previous_start = bisect.bisect_left(
+            self.rows, time - 2 * window, key=time_key
+        )
+        current_start = bisect.bisect_left(self.rows, time - window, key=time_key)
+        stop = len(self.rows)
+        previous_count = current_start - previous_start
+        current_count = stop - current_start
+        if (
+            previous_count < 2
+            or current_count < 4
+            or self.rows[current_start - 1][0] - self.rows[previous_start][0] < 0.8 * window
+            or self.rows[-1][0] - self.rows[current_start][0] < 0.8 * window
+        ):
+            self.candidate_since = None
+            self.latest_metrics = None
+            return None
+
+        mean, slope, residual_rms = self._statistics(current_start, stop)
+        previous_mean, _previous_slope, previous_rms = self._statistics(
+            previous_start, current_start
+        )
+        envelope_limit = previous_rms * (1.0 + self.residual_envelope_growth_fraction)
+        # Compare like-sized adjacent windows.  When an explicit period is
+        # supplied each contains at least three periods, avoiding a fragile
+        # half-cycle or spectral estimate.
+        envelope_ok = bool(
+            residual_rms <= envelope_limit + 1e-7 * mean
+        )
+        metrics: dict[str, float | bool] = {
+            "time": time,
+            "window": window,
+            "height_mean": mean,
+            "slope": float(slope),
+            "slope_window_fraction": abs(float(slope)) * window / mean,
+            "instantaneous_slope_fraction": time * abs(float(slope)) / mean,
+            "residual_rms_fraction": residual_rms / mean,
+            "adjacent_mean_fraction": abs(mean - previous_mean) / mean,
+            "residual_previous_window_rms": previous_rms,
+            "residual_current_window_rms": residual_rms,
+            "residual_envelope_non_growing": envelope_ok,
+        }
+        passed = bool(
+            metrics["slope_window_fraction"] < self.slope_window_fraction
+            and metrics["instantaneous_slope_fraction"] < self.instantaneous_slope_fraction
+            and metrics["residual_rms_fraction"] < self.residual_rms_fraction
+            and metrics["adjacent_mean_fraction"] < self.adjacent_mean_fraction
+            and envelope_ok
+        )
+        metrics["candidate"] = passed
+        self.latest_metrics = metrics
+        if not passed:
+            self.candidate_since = None
+            return None
+        if self.candidate_since is None:
+            self.candidate_since = time
+        held_for = time - self.candidate_since
+        if held_for + 1e-12 < self.hold:
+            return None
+        return {
+            "kind": "height_plateau",
+            "candidate_since": self.candidate_since,
+            "certified_at": time,
+            "hold": self.hold,
+            "held_for": held_for,
+            "oscillation_period": self.oscillation_period,
+            "thresholds": {
+                "slope_window_fraction": self.slope_window_fraction,
+                "instantaneous_slope_fraction": self.instantaneous_slope_fraction,
+                "residual_rms_fraction": self.residual_rms_fraction,
+                "adjacent_mean_fraction": self.adjacent_mean_fraction,
+                "residual_envelope_growth_fraction": self.residual_envelope_growth_fraction,
+            },
+            "metrics": metrics,
+        }
+
+
 def _enforce_launcher_affinity() -> dict[str, object]:
     """Confine auxiliary threads to the launcher's Linux CPU affinity.
 
@@ -449,7 +636,9 @@ def run_case(args: argparse.Namespace) -> dict:
         "r0": args.r0,
         "n_outputs": args.n_outputs,
         "output_step": args.output_step,
+        "field_stride": args.field_stride,
         "stop_when_arrested": args.stop_when_arrested,
+        "stop_on_height_plateau": args.stop_on_height_plateau,
         "allow_recoil": args.allow_recoil,
         "sponge": sponge.as_json_dict() if sponge is not None else None,
         "sponge_force": "-rho*gamma(x_rel)*u_lab" if sponge is not None else None,
@@ -458,15 +647,29 @@ def run_case(args: argparse.Namespace) -> dict:
         "arrest_trend_tolerance": args.arrest_trend_tolerance,
         "arrest_radius_span_tolerance": args.arrest_radius_span,
         "opening_ustar_threshold": args.opening_ustar,
-        "checkpoint_every_outputs": args.checkpoint_every,
+        "checkpoint_every_outputs": (
+            args.checkpoint_every if args.field_stride == 1 else None
+        ),
+        "checkpoint_every_scalar_samples": args.checkpoint_every,
         "fixed_step": args.fixed_step,
         "fixed_step_semantics": "maximum-step cap after smaller BDF startup",
         "max_step": args.max_step,
         "temporal_error": None if args.fixed_step is not None else args.temporal_error,
         "write_states": False,
         "checkpoint_policy": (
-            f"every {args.checkpoint_every} output samples" if args.checkpoint_every else "none"
+            f"every {args.checkpoint_every} scalar samples" if args.checkpoint_every else "none"
         ),
+        "height_plateau": {
+            "hold": args.height_hold,
+            "minimum_window": args.height_minimum_window,
+            "window_time_fraction": args.height_window_time_fraction,
+            "slope_window_fraction": args.height_slope_window_fraction,
+            "instantaneous_slope_fraction": args.height_instantaneous_slope_fraction,
+            "residual_rms_fraction": args.height_residual_rms_fraction,
+            "adjacent_mean_fraction": args.height_adjacent_mean_fraction,
+            "residual_envelope_growth_fraction": args.height_envelope_growth_fraction,
+            "oscillation_period": args.height_oscillation_period,
+        } if args.stop_on_height_plateau else None,
         "V_TC": V_TAYLOR_CULICK,
         "launcher_affinity": affinity,
         "status": "initialising",
@@ -490,12 +693,14 @@ def run_case(args: argparse.Namespace) -> dict:
         _write_json(
             run_dir / "restart-lineage.json",
             {
-                "schema": "viscoelastic-restart-lineage-v1",
+                "schema": "viscoelastic-restart-lineage-v2",
                 "parent": lineage,
                 "authoritative_segment": "run_viscoelastic_axi/liquid.pvd",
                 "authoritative_control_segment": "run_viscoelastic_axi/control-segment.txt",
+                "authoritative_rim_height_segment": "run_viscoelastic_axi/rim-height-segment.txt",
                 "derived_views": [
                     "run_viscoelastic_axi/control.txt",
+                    "run_viscoelastic_axi/rim-height.txt",
                     "run_viscoelastic_axi/liquid-history.pvd",
                 ],
                 "archive_contract": "Retain all ancestor attempts with relative directory layout; derived views require ancestor fields.",
@@ -527,9 +732,9 @@ def run_case(args: argparse.Namespace) -> dict:
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
                 if (
                     not math.isclose(state_time, restart["time"], rel_tol=1e-10, abs_tol=1e-10)
-                    or state_index != restart["output_index"]
+                    or state_index != restart["field_index"]
                 ):
-                    raise ValueError("checkpoint header time/output index disagrees with lineage")
+                    raise ValueError("checkpoint header time/field index disagrees with lineage")
                 relocated = run_dir / "restart-input" / checkpoint.name
                 relocated.parent.mkdir()
                 copy_state_file(str(checkpoint), str(relocated))
@@ -572,7 +777,10 @@ def run_case(args: argparse.Namespace) -> dict:
                 ):
                     raise ValueError("restart ALE reference disagrees with parent control row")
                 metadata["restart_time"] = restart["time"]
-                metadata["restart_output_index"] = restart["output_index"]
+                metadata["restart_control_index"] = restart["control_index"]
+                metadata["restart_field_index"] = restart["field_index"]
+                if restart["legacy"]:
+                    metadata["restart_output_index"] = restart["output_index"]
                 metadata["relocated_checkpoint"] = {
                     **relocated_reference,
                     "path": os.path.relpath(relocated, run_dir),
@@ -611,6 +819,12 @@ def run_case(args: argparse.Namespace) -> dict:
                     "tip_pin_residual",
                 ],
             )
+            height_history = problem.create_text_file_output(
+                "rim-height.txt", header=["t", "H"]
+            )
+            height_segment = problem.create_text_file_output(
+                "rim-height-segment.txt", header=["t", "H"]
+            )
             sponge_history = None
             if sponge is not None and sponge.gamma_max > 0:
                 sponge_history = problem.create_text_file_output(
@@ -643,13 +857,31 @@ def run_case(args: argparse.Namespace) -> dict:
                 trend_tolerance=args.arrest_trend_tolerance,
                 radius_span_tolerance=args.arrest_radius_span,
             )
-            output_offset = 0
+            height_plateau: dict[str, object] | None = None
+            height_tracker = HeightPlateauTracker(
+                hold=args.height_hold,
+                minimum_window=args.height_minimum_window,
+                window_time_fraction=args.height_window_time_fraction,
+                slope_window_fraction=args.height_slope_window_fraction,
+                instantaneous_slope_fraction=args.height_instantaneous_slope_fraction,
+                residual_rms_fraction=args.height_residual_rms_fraction,
+                adjacent_mean_fraction=args.height_adjacent_mean_fraction,
+                residual_envelope_growth_fraction=args.height_envelope_growth_fraction,
+                oscillation_period=args.height_oscillation_period,
+            )
+            control_offset = 0
+            field_index = 0
             if restart is not None:
                 for row in restart["rows"]:
                     history.add_row(*row)
                     arrest_tracker.observe(list(row), radius0)
-                output_offset = restart["output_index"]
-                previous_target = output_offset * args.output_step
+                if restart["height_rows"] is not None:
+                    for time, height in restart["height_rows"]:
+                        height_history.add_row(time, height)
+                        height_tracker.observe(float(time), float(height))
+                control_offset = restart["control_index"]
+                field_index = restart["field_index"]
+                previous_target = restart["time"]
                 out_times = out_times[out_times > restart["time"]]
                 worst_volume_error = float(np.max(restart["rows"][:, 6]))
                 worst_tip_pin = float(np.max(restart["rows"][:, 7]))
@@ -657,7 +889,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 if not len(out_times):
                     raise ValueError("restart has no output targets before the requested endpoint")
 
-            for output_index, target in enumerate(out_times, start=output_offset + 1):
+            for control_index, target in enumerate(out_times, start=control_offset + 1):
                 interval = float(target - previous_target)
                 if args.fixed_step is not None:
                     # This is a maximum-step cap, not a promise that every
@@ -677,7 +909,6 @@ def run_case(args: argparse.Namespace) -> dict:
                     temporal_error=None if args.fixed_step is not None else args.temporal_error,
                     outstep=False,
                 )
-                problem.output(quiet=True)
                 now = float(problem.get_current_time(as_float=True))
                 radius = problem.window_position()
                 speed = problem.retraction_speed()
@@ -698,6 +929,10 @@ def run_case(args: argparse.Namespace) -> dict:
                 _assert_finite("control row", last_row)
                 history.add_row(*last_row)
                 segment.add_row(*last_row)
+                height = problem.rim_height()
+                _assert_finite("rim height", [height])
+                height_history.add_row(now, height)
+                height_segment.add_row(now, height)
                 diagnostics = problem.polymer_diagnostic_extrema()
                 _assert_finite("polymer diagnostics", diagnostics.values())
                 if sponge_history is not None:
@@ -719,15 +954,29 @@ def run_case(args: argparse.Namespace) -> dict:
 
                 if args.stop_when_arrested:
                     arrest = arrest_tracker.observe(last_row, radius0)
+                if args.stop_on_height_plateau:
+                    plateau_candidate = height_tracker.observe(now, height)
+                    # Stop only on a scheduled field boundary so the certified
+                    # endpoint always has a matching VTU and restart indices
+                    # remain the deterministic stride sequence.
+                    if (
+                        plateau_candidate is not None
+                        and control_index % args.field_stride == 0
+                    ):
+                        height_plateau = plateau_candidate
 
-                if args.checkpoint_every and output_index % args.checkpoint_every == 0:
+                if control_index % args.field_stride == 0:
+                    problem.output(quiet=True)
+                    field_index += 1
+
+                if args.checkpoint_every and control_index % args.checkpoint_every == 0:
                     problem.save_state(
-                        str(checkpoint_dir / f"ckpt_{output_index:05d}.dump"), quiet=True
+                        str(checkpoint_dir / f"ckpt_{control_index:05d}.dump"), quiet=True
                     )
                     _write_field_history(
                         Path(problem.get_output_directory()), restart["fields"] if restart else []
                     )
-                if arrest is not None:
+                if arrest is not None or height_plateau is not None:
                     break
 
             assert last_row is not None
@@ -752,6 +1001,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 )
             if (
                 not args.stop_when_arrested
+                and not args.stop_on_height_plateau
                 and not args.allow_recoil
                 and last_row[2] <= args.min_final_speed
             ):
@@ -791,8 +1041,16 @@ def run_case(args: argparse.Namespace) -> dict:
                 completion_reason = (
                     "arrest_detected" if arrest is not None else "not_arrested_by_horizon"
                 )
+            elif args.stop_on_height_plateau:
+                completion_reason = (
+                    "height_plateau_detected"
+                    if height_plateau is not None
+                    else "height_plateau_not_reached_by_horizon"
+                )
             status = "failed" if failures else "passed"
-            if not failures and completion_reason == "not_arrested_by_horizon":
+            if not failures and completion_reason in {
+                "not_arrested_by_horizon", "height_plateau_not_reached_by_horizon"
+            }:
                 status = "horizon_reached"
 
             metadata.update(
@@ -816,8 +1074,14 @@ def run_case(args: argparse.Namespace) -> dict:
                     "opening_established": arrest_tracker.opening_established,
                     "arrest_detected": arrest is not None,
                     "arrest": arrest,
+                    "height_plateau_detected": height_plateau is not None,
+                    "height_plateau_certificate": height_plateau,
+                    "height_plateau_latest_metrics": height_tracker.latest_metrics,
+                    "H_final": height,
                     "t_reached": last_row[0],
-                    "outputs_written": output_index,
+                    "outputs_written": field_index,
+                    "scalar_samples_written": control_index,
+                    "fields_written": field_index,
                     "failure_reasons": failures,
                 }
             )
@@ -894,6 +1158,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="uniform physical-time interval between arrest checks; overrides --n-outputs",
     )
     parser.add_argument(
+        "--field-stride",
+        type=int,
+        default=1,
+        help="write one VTU every N scalar samples",
+    )
+    parser.add_argument(
         "--stabilization",
         choices=("supg", "none"),
         default="supg",
@@ -953,6 +1223,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="stop after post-startup U crosses zero or remains near zero",
     )
+    parser.add_argument(
+        "--stop-on-height-plateau",
+        action="store_true",
+        help="stop only after the rim-height plateau predicates survive their hold",
+    )
+    parser.add_argument("--height-hold", type=_positive_float, default=10.0)
+    parser.add_argument("--height-minimum-window", type=_positive_float, default=10.0)
+    parser.add_argument(
+        "--height-window-time-fraction", type=_positive_float, default=0.1
+    )
+    parser.add_argument(
+        "--height-slope-window-fraction", type=_positive_float, default=0.005
+    )
+    parser.add_argument(
+        "--height-instantaneous-slope-fraction", type=_positive_float, default=0.02
+    )
+    parser.add_argument(
+        "--height-residual-rms-fraction", type=_positive_float, default=0.005
+    )
+    parser.add_argument(
+        "--height-adjacent-mean-fraction", type=_positive_float, default=0.005
+    )
+    parser.add_argument(
+        "--height-envelope-growth-fraction", type=_nonnegative_float, default=0.05
+    )
+    parser.add_argument(
+        "--height-oscillation-period",
+        type=_positive_float,
+        default=None,
+        help="optional known period; no period is estimated when omitted",
+    )
     parser.add_argument("--opening-ustar", type=_positive_float, default=0.02)
     parser.add_argument("--arrest-ustar", type=_positive_float, default=1e-3)
     parser.add_argument("--arrest-consecutive", type=int, default=11)
@@ -972,7 +1273,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--checkpoint-every",
         type=int,
         default=0,
-        help="write one restart state every N output samples; 0 disables checkpoints",
+        help="write one restart state every N scalar samples; 0 disables checkpoints",
     )
     return parser
 
@@ -993,6 +1294,14 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--arrest-consecutive must be at least 2")
     if args.checkpoint_every < 0:
         parser.error("--checkpoint-every must be non-negative")
+    if args.field_stride < 1:
+        parser.error("--field-stride must be at least 1")
+    if args.checkpoint_every and args.checkpoint_every % args.field_stride:
+        parser.error("--checkpoint-every must be a multiple of --field-stride")
+    if args.stop_when_arrested and args.stop_on_height_plateau:
+        parser.error("tip arrest and height plateau are distinct completion modes")
+    if args.stop_when_arrested and args.field_stride != 1:
+        parser.error("tip-arrest completion requires --field-stride=1")
     if args.length <= args.resolution:
         parser.error("--length must exceed --resolution")
     try:

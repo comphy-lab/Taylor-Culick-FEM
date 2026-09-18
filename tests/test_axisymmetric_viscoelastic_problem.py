@@ -119,3 +119,37 @@ def test_passive_mode_requires_a_boolean(monkeypatch) -> None:
 
     with pytest.raises(TypeError, match="passive_conformation must be a boolean"):
         problem.define_problem()
+
+
+def test_rim_height_finds_quadratic_maximum_between_interface_nodes(monkeypatch) -> None:
+    class Node:
+        def __init__(self, height: float):
+            self.height = height
+
+        def x(self, coordinate: int) -> float:
+            assert coordinate == 1
+            return self.height
+
+    class Element:
+        # Deliberately shuffled: the implementation must use local coordinates,
+        # not assume endpoint/midside node ordering.
+        local = (1.0, -1.0, 0.0)
+
+        def nnode(self):
+            return len(self.local)
+
+        def local_coordinate_of_node(self, index):
+            return [self.local[index]]
+
+        def node_pt(self, index):
+            coordinate = self.local[index]
+            return Node(1.0 - (coordinate - 0.25) ** 2)
+
+    class Interface:
+        def elements(self):
+            return [Element()]
+
+    problem = axisymmetric.AxisymmetricViscoelasticProblem()
+    monkeypatch.setattr(problem, "get_mesh", lambda _: Interface())
+
+    assert problem.rim_height() == pytest.approx(2.0)

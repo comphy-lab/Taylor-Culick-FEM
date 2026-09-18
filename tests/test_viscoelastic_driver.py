@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
 
 from run_viscoelastic_axi import (
     ArrestTracker,
+    HeightPlateauTracker,
     _output_times,
     _zero_crossing,
     build_parser,
@@ -142,3 +144,50 @@ def test_zero_modulus_requires_explicit_passive_conformation(tmp_path, capsys) -
     )
     validate_args(parser, passive)
     assert passive.passive_conformation is True
+
+
+def test_tip_arrest_requires_a_field_at_every_scalar_sample(tmp_path, capsys) -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--results",
+            str(tmp_path),
+            "--stop-when-arrested",
+            "--field-stride",
+            "2",
+        ]
+    )
+    with pytest.raises(SystemExit):
+        validate_args(parser, args)
+    assert "tip-arrest completion requires --field-stride=1" in capsys.readouterr().err
+
+
+def _height_certificate(function) -> dict | None:
+    tracker = HeightPlateauTracker()
+    certificate = None
+    for time in np.arange(0.5, 100.5, 0.5):
+        certificate = tracker.observe(float(time), float(function(time)))
+        if certificate is not None:
+            break
+    return certificate
+
+
+def test_height_plateau_requires_the_full_ten_time_unit_hold() -> None:
+    certificate = _height_certificate(lambda _time: 2.0)
+    assert certificate is not None
+    assert certificate["held_for"] >= 10.0
+    assert certificate["certified_at"] - certificate["candidate_since"] >= 10.0
+    json.dumps(certificate, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    "height",
+    [
+        lambda time: np.sqrt(time + 1.0),
+        lambda time: 2.0 + 0.01 * time,
+        lambda time: 2.0 + 5e-5 * time * np.sin(0.5 * np.pi * time),
+    ],
+    ids=["sqrt", "linear-drift", "growing-oscillation"],
+)
+def test_non_saturated_height_histories_do_not_pass(height) -> None:
+    assert _height_certificate(height) is None
