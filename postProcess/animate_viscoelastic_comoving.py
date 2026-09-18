@@ -42,8 +42,11 @@ matplotlib.rcParams.update(
 )
 
 SUBTRIS = np.array([[0, 3, 5], [3, 1, 4], [5, 4, 2], [3, 4, 5]])
-FOLLOW_XLIM = (-0.7, 7.5)
-LEFT_XLIM = (-7.5, 0.7)
+# Distance behind the rim tip, in units of the initial film thickness.  Keep
+# the two field views exact horizontal reflections of one another so that the
+# complete rear shoulder remains visible without changing frames.
+FOLLOW_XLIM = (0.0, 40.0)
+LEFT_XLIM = (-40.0, 0.0)
 FIELD_YLIM = (-0.82, 0.82)
 SPEED_CLIM = (0.0, 0.25)
 DISSIPATION_CLIM = (1e-6, 0.32)
