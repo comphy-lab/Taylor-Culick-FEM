@@ -89,6 +89,35 @@ def test_time_case_explicitly_allows_recoil(tmp_path: Path) -> None:
     assert args.t_end == 200.0
 
 
+def test_height_plateau_case_maps_explicit_certificate_thresholds(tmp_path: Path) -> None:
+    completion = {
+        "kind": "height_plateau",
+        "horizon": 1000.0,
+        "hold": 10.0,
+        "minimum_window": 10.0,
+        "window_time_fraction": 0.1,
+        "slope_window_fraction": 0.005,
+        "instantaneous_slope_fraction": 0.02,
+        "residual_rms_fraction": 0.005,
+        "adjacent_mean_fraction": 0.005,
+        "residual_envelope_growth_fraction": 0.05,
+    }
+    case = _case(completion)
+    case["output"]["field_stride"] = 10
+    case["output"]["checkpoint_every"] = 20
+
+    args = adapter.case_to_driver_args(
+        _write_case(tmp_path, case), tmp_path / "attempt"
+    )
+
+    assert args.stop_on_height_plateau
+    assert not args.stop_when_arrested
+    assert args.t_end == 1000.0
+    assert args.height_hold == 10.0
+    assert args.height_oscillation_period is None
+    assert args.field_stride == 10
+
+
 def test_supg_factor_is_explicit_and_backwards_compatible(tmp_path: Path) -> None:
     baseline = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
     baseline_args = adapter.case_to_driver_args(
@@ -170,6 +199,9 @@ def test_passive_zero_stress_diagnostics_do_not_fail_driver(tmp_path, monkeypatc
 
         def hole_radius(self):
             return self.window_position()
+
+        def rim_height(self):
+            return 1.0
 
         def retraction_speed(self):
             return 0.1
@@ -554,6 +586,9 @@ def test_resume_driver_preserves_parent_and_output_lineage(
         def hole_radius(self):
             return self.window_position()
 
+        def rim_height(self):
+            return 1.0
+
         def retraction_speed(self):
             return 0.1
 
@@ -697,6 +732,80 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     resumed = np.loadtxt(bundle / "next" / suffix)
     reference = np.loadtxt(bundle / "reference" / suffix)
     np.testing.assert_allclose(resumed, reference, rtol=1e-9, atol=1e-10)
+
+
+def test_decoupled_field_restart_matches_uninterrupted_histories(tmp_path):
+    """Scalar and quadratic-height histories survive a sparse-field restart."""
+    import xml.etree.ElementTree as ET
+
+    import run_viscoelastic_axi as driver
+
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["output"].update(cadence=0.02, field_stride=2, checkpoint_every=2)
+    scratch = tmp_path / "project-scratch"
+    scratch.mkdir()
+    bundle = tmp_path / "attempt-bundle"
+    parent_input = scratch / "parent-input.json"
+    parent_input.write_text(json.dumps(case))
+    parent_metadata = driver.run_case(
+        adapter.case_to_driver_args(parent_input, bundle / "parent")
+    )
+    parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+    parent_output = parent / "run_viscoelastic_axi"
+    assert parent_metadata["scalar_samples_written"] == 2
+    assert parent_metadata["fields_written"] == 1
+    assert len(ET.parse(parent_output / "liquid.pvd").findall("./Collection/DataSet")) == 1
+
+    rows = np.loadtxt(parent_output / "control.txt", ndmin=2)
+    continued = copy.deepcopy(case)
+    continued["completion"]["value"] = 0.08
+    continued["restart"] = {
+        **{
+            key: _reference(path)
+            for key, path in {
+                "checkpoint": parent / "checkpoints" / "ckpt_00002.dump",
+                "input_case": parent_input,
+                "metadata": parent / "case.json",
+                "control": parent_output / "control.txt",
+                "rim_height": parent_output / "rim-height.txt",
+                "pvd": parent_output / "liquid.pvd",
+            }.items()
+        },
+        "time": float(rows[-1, 0]),
+        "control_index": 2,
+        "field_index": 1,
+    }
+    next_input = scratch / "next-input.json"
+    next_input.write_text(json.dumps(continued))
+    resumed_metadata = driver.run_case(
+        adapter.case_to_driver_args(next_input, bundle / "next")
+    )
+
+    del continued["restart"]
+    reference_input = scratch / "reference-input.json"
+    reference_input.write_text(json.dumps(continued))
+    reference_metadata = driver.run_case(
+        adapter.case_to_driver_args(reference_input, bundle / "reference")
+    )
+    suffix = Path("axi_viscoelastic_Oh_1_G_1_lambda_inf/run_viscoelastic_axi")
+    for filename in ("control.txt", "rim-height.txt"):
+        resumed = np.loadtxt(bundle / "next" / suffix / filename)
+        reference = np.loadtxt(bundle / "reference" / suffix / filename)
+        np.testing.assert_allclose(resumed, reference, rtol=1e-9, atol=1e-10)
+    assert resumed_metadata["scalar_samples_written"] == 4
+    assert resumed_metadata["fields_written"] == 2
+    assert resumed_metadata["outputs_written"] == 2
+    assert reference_metadata["scalar_samples_written"] == 4
+    assert reference_metadata["fields_written"] == 2
+    history_times = [
+        float(node.attrib["timestep"])
+        for node in ET.parse(bundle / "next" / suffix / "liquid-history.pvd").findall(
+            "./Collection/DataSet"
+        )
+    ]
+    control_times = np.loadtxt(bundle / "next" / suffix / "control.txt")[:, 0]
+    np.testing.assert_allclose(history_times, control_times[[1, 3]])
 
 
 def test_small_fem_passive_zero_modulus_evolves_conformation(tmp_path):

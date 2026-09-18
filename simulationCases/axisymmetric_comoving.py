@@ -177,6 +177,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 import math
 
+import numpy as np
 import planar_comoving
 from axisymmetric_lab import _MACHINE_EPSILON, AnnularSheetMesh
 from pyoomph import *
@@ -409,6 +410,49 @@ class AxisymmetricComovingProblem(Problem):
         """
         mesh = self.get_mesh("liquid/interface")
         return min(n.x(0) for n in mesh.nodes())
+
+    def rim_height(self) -> float:
+        """Return full rim height from the quadratic free-surface geometry.
+
+        Interface ``nodes()`` includes midside nodes, but a quadratic
+        coordinate can attain its maximum between all three nodes.  Rebuild
+        each element's sheet-normal coordinate in its local coordinate and
+        include any interior stationary point.  The mesh covers the upper half
+        of a unit-full-thickness sheet, hence the factor two.
+        """
+
+        interface = self.get_mesh("liquid/interface")
+        maximum = -math.inf
+        for element in interface.elements():
+            coordinates = []
+            for local_node in range(element.nnode()):
+                local = element.local_coordinate_of_node(local_node)
+                if len(local) != 1:
+                    raise RuntimeError("interface element is not one-dimensional")
+                coordinates.append((float(local[0]), float(element.node_pt(local_node).x(1))))
+            if not coordinates:
+                continue
+            maximum = max(maximum, *(height for _, height in coordinates))
+            if len(coordinates) >= 3:
+                local = np.asarray([item[0] for item in coordinates], dtype=float)
+                height = np.asarray([item[1] for item in coordinates], dtype=float)
+                constant, linear, quadratic = np.polynomial.polynomial.polyfit(
+                    local, height, 2
+                )
+                if abs(quadratic) > np.finfo(float).eps * max(1.0, abs(linear)):
+                    stationary = -linear / (2.0 * quadratic)
+                    if local.min() < stationary < local.max():
+                        maximum = max(
+                            maximum,
+                            float(
+                                np.polynomial.polynomial.polyval(
+                                    stationary, [constant, linear, quadratic]
+                                )
+                            ),
+                        )
+        if not math.isfinite(maximum):
+            raise RuntimeError("interface contains no finite geometry")
+        return 2.0 * maximum
 
     def volume(self) -> float:
         """Current liquid volume of the meshed window (half sheet, z >= 0)."""

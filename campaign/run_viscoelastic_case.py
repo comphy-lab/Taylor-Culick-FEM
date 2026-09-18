@@ -110,6 +110,8 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         str(_value(mesh, "far_resolution", "mesh")),
         "--output-step",
         str(_value(output, "cadence", "output")),
+        "--field-stride",
+        str(output.get("field_stride", 1)),
         "--checkpoint-every",
         str(_value(output, "checkpoint_every", "output")),
         "--max-step",
@@ -178,6 +180,36 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         arguments.extend(["--t-end", str(_value(completion, "value", "completion"))])
         if completion.get("allow_recoil") is True:
             arguments.append("--allow-recoil")
+    elif kind == "height_plateau":
+        if float(_value(physics, "elastic_modulus", "physics")) <= 0:
+            raise ValueError("height_plateau completion requires elastic_modulus > 0")
+        arguments.extend(
+            [
+                "--t-end",
+                str(_value(completion, "horizon", "completion")),
+                "--stop-on-height-plateau",
+                "--height-hold",
+                str(_value(completion, "hold", "completion")),
+                "--height-minimum-window",
+                str(_value(completion, "minimum_window", "completion")),
+                "--height-window-time-fraction",
+                str(_value(completion, "window_time_fraction", "completion")),
+                "--height-slope-window-fraction",
+                str(_value(completion, "slope_window_fraction", "completion")),
+                "--height-instantaneous-slope-fraction",
+                str(_value(completion, "instantaneous_slope_fraction", "completion")),
+                "--height-residual-rms-fraction",
+                str(_value(completion, "residual_rms_fraction", "completion")),
+                "--height-adjacent-mean-fraction",
+                str(_value(completion, "adjacent_mean_fraction", "completion")),
+                "--height-envelope-growth-fraction",
+                str(_value(completion, "residual_envelope_growth_fraction", "completion")),
+            ]
+        )
+        if completion.get("oscillation_period") is not None:
+            arguments.extend(
+                ["--height-oscillation-period", str(completion["oscillation_period"])]
+            )
     else:
         raise ValueError(f"unsupported completion kind: {kind!r}")
     if "restart" in case:
