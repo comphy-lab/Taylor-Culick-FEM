@@ -33,8 +33,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -43,8 +43,8 @@ import numpy as np
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "simulationCases"))
 
-from savva_bush import V_TC, influence_length, tau_vis, viscosity  # noqa: E402
-from planar_comoving import PlanarTaylorCulickProblem  # noqa: E402
+from planar_comoving import PlanarTaylorCulickProblem
+from savva_bush import V_TC, influence_length, tau_vis, viscosity
 
 # Ohnesorge numbers in the SAVVA & BUSH convention, matching their figures.
 # Figure 5 shows Oh = 0.5, 1, 5, >100; figure 6 shows Oh = 0.5, 1, 10, 100/1000.
@@ -202,8 +202,19 @@ def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
             ckpt_dir.mkdir(exist_ok=True)
 
         for k, t in enumerate(out_times):
-            problem.run(t, startstep=max((t - prev) * 1e-3, 1e-9),
-                        maxstep=max(t - prev, 1e-9), temporal_error=temporal_error)
+            # This driver owns the output schedule.  Suppress pyoomph's
+            # temporal-error default, which otherwise fires every Output object
+            # on every internal timestep, then emit exactly one field state for
+            # this scheduled target.
+            problem.run(
+                t,
+                startstep=max((t - prev) * 1e-3, 1e-9),
+                maxstep=max(t - prev, 1e-9),
+                temporal_error=temporal_error,
+                outstep=False,
+                out_initially=False,
+            )
+            problem.output()
             u = problem.control_velocity()
             now = float(problem.get_current_time(as_float=True))
             history.add_row(now, now / tau, u, u / V_TC)
