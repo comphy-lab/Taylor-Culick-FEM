@@ -32,10 +32,11 @@ without changing the crop between frames or cases.
 
 The vertical window is fixed within each video but is not hard-coded across
 cases. Before rendering, the script scans every source state selected for that
-video, finds the largest native $|z|$, adds a 10% margin and rounds upward to a
-fixed symmetric limit. The receipt records the native maximum, its time and
-the applied limits. This prevents a growing rim from being clipped into a
-spurious rectangular edge while keeping the view stationary in time.
+video, finds the largest native $|z|$, adds a 10% margin and applies a minimum
+half-height of 0.55 to obtain a fixed symmetric limit. The receipt records the
+native maximum, its time and the applied limits. This prevents a growing rim
+from being clipped into a spurious rectangular edge while keeping the view
+stationary in time.
 
 The axisymmetric dissipation includes the hoop term,
 

@@ -113,11 +113,15 @@ def load_case_metadata(path: Path) -> dict[str, float | str]:
         if metadata.get(key) != value:
             raise ValueError(f"case metadata requires {key}={value!r}")
     values = {}
-    for key in ("elastic_modulus", "V_TC", "r0"):
+    for key in ("V_TC", "r0"):
         value = float(metadata[key])
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"case metadata requires finite positive {key}")
         values[key] = value
+    elastic_modulus = float(metadata["elastic_modulus"])
+    if not math.isfinite(elastic_modulus) or elastic_modulus < 0:
+        raise ValueError("case metadata requires finite non-negative elastic_modulus")
+    values["elastic_modulus"] = elastic_modulus
     for key in ("Oh", "mu_s"):
         value = float(metadata[key])
         if not math.isfinite(value) or value < 0:
@@ -621,6 +625,37 @@ def pvd_source_receipt(paths: list[Path]) -> list[dict[str, str]]:
     return [{"path": str(path), "sha256": sha256(path)} for path in paths]
 
 
+def validate_encoded_stream(probe_data: dict, *, expected_frames: int) -> dict:
+    """Return the sole encoded stream after enforcing the video protocol."""
+    streams = probe_data.get("streams")
+    if not isinstance(streams, list) or len(streams) != 1 or not isinstance(streams[0], dict):
+        raise RuntimeError(f"encoded video must contain one stream: {probe_data!r}")
+    stream = streams[0]
+    expected = {
+        "codec_name": "h264",
+        "pix_fmt": "yuv420p",
+        "width": round(FIGSIZE[0] * DPI),
+        "height": round(FIGSIZE[1] * DPI),
+    }
+    mismatch = {
+        key: {"observed": stream.get(key), "expected": value}
+        for key, value in expected.items()
+        if stream.get(key) != value
+    }
+    try:
+        frame_count = int(stream["nb_frames"])
+    except (KeyError, TypeError, ValueError):
+        frame_count = None
+    if frame_count != expected_frames:
+        mismatch["nb_frames"] = {
+            "observed": stream.get("nb_frames"),
+            "expected": expected_frames,
+        }
+    if mismatch:
+        raise RuntimeError(f"encoded video does not match the protocol: {mismatch!r}")
+    return stream
+
+
 def load_history(path: Path) -> np.ndarray:
     """Load the ``t,R,U,u*`` prefix and reject ambiguous histories."""
     history = np.atleast_2d(np.loadtxt(path, comments="#"))
@@ -864,6 +899,8 @@ def main() -> None:
         capture_output=True,
         text=True,
     )
+    probe_data = json.loads(probe.stdout)
+    validate_encoded_stream(probe_data, expected_frames=len(playback_frames))
     receipt = {
         "case_metadata": str(case_json),
         "case_metadata_sha256": sha256(case_json),
@@ -963,7 +1000,7 @@ def main() -> None:
         "video": str(args.out),
         "video_bytes": args.out.stat().st_size,
         "sha256": sha256(args.out),
-        "ffprobe": json.loads(probe.stdout),
+        "ffprobe": probe_data,
     }
     receipt_path = args.out.with_name(args.out.stem + "_render_receipt.json")
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
