@@ -193,6 +193,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output-dir", type=Path, required=True)
     result.add_argument("--r0", type=float, default=1.0)
     result.add_argument("--time-limit", type=float)
+    result.add_argument(
+        "--no-tex", action="store_true", help="render with mathtext instead of LaTeX"
+    )
     return result
 
 
@@ -202,7 +205,12 @@ def main() -> None:
         (float(ec), load_control(path, schema=schema, r0=args.r0))
         for ec, schema, path in args.case
     ]
-    render_campaign(cases, args.output_dir, time_limit=args.time_limit)
+    render_campaign(
+        cases,
+        args.output_dir,
+        use_tex=not args.no_tex,
+        time_limit=args.time_limit,
+    )
 
 
 if __name__ == "__main__":

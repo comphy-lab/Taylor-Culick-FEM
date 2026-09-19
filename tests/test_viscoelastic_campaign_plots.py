@@ -95,3 +95,19 @@ def test_time_limit_interpolates_exact_shared_endpoint() -> None:
     assert limited.time.tolist() == [0.0, 1.0, 2.0]
     assert limited.radius[-1] == 4.0
     assert limited.ustar[-1] == 0.4
+
+
+def test_cli_exposes_mathtext_fallback() -> None:
+    args = plotter.parser().parse_args(
+        [
+            "--case",
+            "0.1",
+            "viscoelastic",
+            "control.txt",
+            "--output-dir",
+            "figures",
+            "--no-tex",
+        ]
+    )
+
+    assert args.no_tex is True

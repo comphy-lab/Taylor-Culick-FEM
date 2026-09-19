@@ -147,6 +147,11 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             "control_index, field_index and rim_height lineage"
         )
     legacy = keys == legacy_required
+    if legacy:
+        raise ValueError(
+            "legacy restart lineage lacks rim-height history; create a fresh "
+            "decoupled checkpoint before continuation"
+        )
     restart = dict(restart)
     paths = {
         key: _checked_reference(restart[key])
@@ -882,7 +887,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
                 previous_target = restart["time"]
-                out_times = out_times[out_times > restart["time"]]
+                out_times = out_times[out_times > restart["time"] + 1e-6]
                 worst_volume_error = float(np.max(restart["rows"][:, 6]))
                 worst_tip_pin = float(np.max(restart["rows"][:, 7]))
                 minimum_sampled_speed = float(np.min(restart["rows"][:, 2]))

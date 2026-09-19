@@ -384,6 +384,8 @@ def restart_case(tmp_path):
         "0.05 1.05 0.1 0.07071067811865475 12 12 0 0\n"
         "0.1 1.1 0.1 0.07071067811865475 13 13 0 0\n"
     )
+    rim_height = output / "rim-height.txt"
+    rim_height.write_text("#t H\n0.05 1.0\n0.1 1.0\n")
     for index in range(2):
         (output / f"liquid_{index:06d}.vtu").write_text("mock field")
     pvd = output / "liquid.pvd"
@@ -402,11 +404,13 @@ def restart_case(tmp_path):
                 "input_case": input_case,
                 "metadata": metadata,
                 "control": control,
+                "rim_height": rim_height,
                 "pvd": pvd,
             }.items()
         },
         "time": 0.1,
-        "output_index": 2,
+        "control_index": 2,
+        "field_index": 2,
     }
     return case
 
@@ -418,7 +422,7 @@ def test_restart_selector_maps_to_driver_and_validates_prefix(tmp_path, restart_
     args = adapter.case_to_driver_args(path, tmp_path / "next")
     assert args.restart_case == path
     restart = _read_restart(args)
-    assert restart["output_index"] == 2
+    assert restart["control_index"] == 2
     assert restart["paths"]["input_case"].name == "input-case.json"
     assert restart["paths"]["input_case"].is_relative_to(tmp_path / "attempt-bundle")
     np.testing.assert_allclose(restart["rows"][:, 0], [0.05, 0.1])
@@ -505,7 +509,7 @@ def test_restart_rejects_unproven_lineage(tmp_path, restart_case, mutation, matc
         path.write_text(json.dumps(payload))
         case["restart"]["metadata"] = _reference(path)
     elif mutation == "index":
-        case["restart"]["output_index"] = True
+        case["restart"]["control_index"] = True
     elif mutation == "duplicate":
         path = Path(case["restart"]["control"]["path"])
         path.write_text(path.read_text().replace("0.1 1.1", "0.05 1.1"))
@@ -682,6 +686,20 @@ def test_resume_driver_preserves_parent_and_output_lineage(
             assert _reference(resolved)["sha256"] == value["sha256"]
 
 
+def test_legacy_restart_without_rim_height_is_rejected(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["restart"].pop("rim_height")
+    case["restart"].pop("control_index")
+    case["restart"].pop("field_index")
+    case["restart"]["output_index"] = 2
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "next")
+
+    with pytest.raises(ValueError, match="lacks rim-height history"):
+        _read_restart(args)
+
+
 def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     """A short coarse-mesh solve checks the real state/output API, not convergence."""
     import run_viscoelastic_axi as driver
@@ -710,11 +728,13 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
                 "input_case": parent_input,
                 "metadata": parent / "case.json",
                 "control": parent_output / "control.txt",
+                "rim_height": parent_output / "rim-height.txt",
                 "pvd": parent_output / "liquid.pvd",
             }.items()
         },
         "time": float(rows[-1, 0]),
-        "output_index": 2,
+        "control_index": 2,
+        "field_index": 2,
     }
     next_input = scratch / "next-input.json"
     next_input.write_text(json.dumps(continued))

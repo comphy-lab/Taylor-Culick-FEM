@@ -260,6 +260,81 @@ def test_case_metadata_validates_project_conventions(tmp_path: Path) -> None:
     assert metadata["relaxation_time"] == "inf"
 
 
+def test_case_metadata_accepts_passive_zero_modulus(tmp_path: Path) -> None:
+    path = tmp_path / "case.json"
+    path.write_text(
+        json.dumps(
+            {
+                "coordinate_system": "axisymmetric",
+                "velocity_frame": "laboratory",
+                "time_scale": "capillary",
+                "constitutive_model": "Oldroyd-B",
+                "Oh": 1.0,
+                "mu_s": np.sqrt(2.0),
+                "elastic_modulus": 0.0,
+                "relaxation_time": "inf",
+                "V_TC": np.sqrt(2.0),
+                "r0": 1.0,
+            }
+        )
+    )
+
+    assert video.load_case_metadata(path)["elastic_modulus"] == 0.0
+
+
+def test_render_frame_accepts_passive_zero_modulus(monkeypatch, tmp_path: Path) -> None:
+    points = np.array([[1.0, 0.0], [2.0, 0.0], [1.0, 0.5]])
+    subtris = np.array([[0, 1, 2]])
+    monkeypatch.setattr(
+        video,
+        "load_mesh",
+        lambda *args, **kwargs: (
+            points,
+            subtris,
+            np.array([0.0, 0.2, 0.1]),
+            np.full(3, 1e-4),
+            np.zeros(3),
+            np.zeros(3),
+        ),
+    )
+    metadata = {
+        "Oh": 1.0,
+        "mu_s": np.sqrt(2.0),
+        "elastic_modulus": 0.0,
+        "relaxation_time": "inf",
+        "V_TC": np.sqrt(2.0),
+        "r0": 1.0,
+    }
+    history = np.array([[0.0, 1.0, 0.0, 0.0], [1.0, 1.1, 0.1, 0.1]])
+
+    video.render_frame(
+        (0, (0.0, Path("synthetic.vtu"))),
+        frames_dir=tmp_path,
+        history=history,
+        metadata=metadata,
+        radius_ylim=(0.9, 1.2),
+        speed_ylim=(-0.02, 0.2),
+        field_speed_limits=(0.0, 1.0),
+        field_y_limits=(-0.55, 0.55),
+    )
+
+    assert (tmp_path / "frame_00000.png").stat().st_size > 1000
+
+
+def test_encoded_stream_must_match_protocol() -> None:
+    stream = {
+        "codec_name": "h264",
+        "pix_fmt": "yuv420p",
+        "width": 1600,
+        "height": 912,
+        "nb_frames": "17",
+    }
+    assert video.validate_encoded_stream({"streams": [stream]}, expected_frames=17) == stream
+
+    with pytest.raises(RuntimeError, match="nb_frames"):
+        video.validate_encoded_stream({"streams": [stream]}, expected_frames=18)
+
+
 def test_case_metadata_rejects_wrong_velocity_frame(tmp_path: Path) -> None:
     path = tmp_path / "case.json"
     path.write_text(
