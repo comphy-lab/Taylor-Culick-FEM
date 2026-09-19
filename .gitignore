@@ -1,4 +1,8 @@
 .venv/
+.venv-pyoomph-*/
+.pyoomph-builds/
+.pyoomph-pin.json
+.pyoomph-environment.lock
 build/
 __pycache__/
 *.py[cod]
@@ -19,4 +23,3 @@ docs/**/*.fls
 docs/**/*.fdb_latexmk
 docs/**/*.synctex.gz
 docs/**/*.toc
-
