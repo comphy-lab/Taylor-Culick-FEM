@@ -112,9 +112,11 @@ def test_kinematic_field_uses_requested_speed_limits() -> None:
             np.array([0.0, 0.5, 1.0]),
             np.full(3, 1e-3),
             speed_limits=(0.0, 1.0),
+            field_y_limits=(-2.0, 2.0),
         )
         assert speed_map.norm.vmin == 0.0
         assert speed_map.norm.vmax == 1.0
+        assert axis.get_ylim() == (-2.0, 2.0)
     finally:
         video.plt.close(figure)
 
@@ -122,6 +124,47 @@ def test_kinematic_field_uses_requested_speed_limits() -> None:
 def test_field_views_show_40_thicknesses_and_are_exact_reflections() -> None:
     assert video.FOLLOW_XLIM == (0.0, 40.0)
     assert video.LEFT_XLIM == tuple(-value for value in reversed(video.FOLLOW_XLIM))
+
+
+def test_fixed_field_y_limits_include_every_state_with_margin() -> None:
+    limits, receipt = video.fixed_field_y_limits(
+        [(0.0, 0.5), (100.0, 2.9), (200.0, 5.13185695)]
+    )
+
+    assert limits == pytest.approx((-5.645042645, 5.645042645))
+    assert receipt["native_max_abs_z"] == pytest.approx(5.13185695)
+    assert receipt["time_of_native_max_abs_z"] == 200.0
+    assert receipt["source_states_scanned"] == 3
+    assert limits[0] < -receipt["native_max_abs_z"]
+    assert limits[1] > receipt["native_max_abs_z"]
+
+
+def test_scan_field_y_limits_records_limiting_source(monkeypatch, tmp_path: Path) -> None:
+    first = tmp_path / "first.vtu"
+    second = tmp_path / "second.vtu"
+    meshes = {
+        first: np.array([[0.0, 0.0, 0.0], [1.0, 0.5, 0.0]]),
+        second: np.array([[0.0, 0.0, 0.0], [1.0, 2.0, 0.0]]),
+    }
+
+    class Mesh:
+        def __init__(self, points):
+            self.points = points
+
+    monkeypatch.setattr(video.meshio, "read", lambda path: Mesh(meshes[path]))
+    limits, receipt = video.scan_field_y_limits(
+        [(3, (1.0, first)), (7, (2.0, second))]
+    )
+
+    assert limits == pytest.approx((-2.2, 2.2))
+    assert receipt["source_index_of_native_max_abs_z"] == 7
+    assert receipt["source_path_of_native_max_abs_z"] == str(second)
+    assert receipt["time_of_native_max_abs_z"] == 2.0
+
+
+def test_fixed_field_y_limits_reject_invalid_extents() -> None:
+    with pytest.raises(ValueError, match="vertical extents"):
+        video.fixed_field_y_limits([(0.0, float("nan"))])
 
 
 @pytest.mark.parametrize("fps", [24, 30])

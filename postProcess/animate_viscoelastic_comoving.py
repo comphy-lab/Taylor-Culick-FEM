@@ -47,7 +47,8 @@ SUBTRIS = np.array([[0, 3, 5], [3, 1, 4], [5, 4, 2], [3, 4, 5]])
 # complete rear shoulder remains visible without changing frames.
 FOLLOW_XLIM = (0.0, 40.0)
 LEFT_XLIM = (-40.0, 0.0)
-FIELD_YLIM = (-0.82, 0.82)
+MIN_FIELD_HALF_HEIGHT = 0.55
+FIELD_Y_MARGIN = 0.10
 SPEED_CLIM = (0.0, 0.25)
 DISSIPATION_CLIM = (1e-6, 0.32)
 SPEED_CMAP = "Blues"
@@ -138,6 +139,67 @@ def _triangulation(mesh: meshio.Mesh) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(mesh.points[:, :2], dtype=float)
     tri6 = np.vstack(blocks)
     return points, tri6[:, SUBTRIS].reshape(-1, 3)
+
+
+def fixed_field_y_limits(
+    samples: list[tuple[float, float]],
+    *,
+    minimum_half_height: float = MIN_FIELD_HALF_HEIGHT,
+    margin_fraction: float = FIELD_Y_MARGIN,
+) -> tuple[tuple[float, float], dict[str, float | int | str]]:
+    """Return one unclipped symmetric vertical window for a frame sequence."""
+    if not samples:
+        raise ValueError("vertical-extent scan requires at least one source state")
+    values = np.asarray([extent for _, extent in samples], dtype=float)
+    if (
+        not np.all(np.isfinite(values))
+        or np.any(values < 0.0)
+        or not math.isfinite(minimum_half_height)
+        or minimum_half_height <= 0.0
+        or not math.isfinite(margin_fraction)
+        or margin_fraction < 0.0
+    ):
+        raise ValueError("vertical extents, minimum and margin must be finite and valid")
+    peak_index = int(np.argmax(values))
+    native_half_height = float(values[peak_index])
+    display_half_height = max(
+        minimum_half_height,
+        native_half_height * (1.0 + margin_fraction),
+    )
+    limits = (-display_half_height, display_half_height)
+    receipt = {
+        "source_states_scanned": len(samples),
+        "native_max_abs_z": native_half_height,
+        "time_of_native_max_abs_z": float(samples[peak_index][0]),
+        "margin_fraction": margin_fraction,
+        "minimum_half_height": minimum_half_height,
+        "display_half_height": display_half_height,
+        "positive_headroom": display_half_height - native_half_height,
+        "selection": "automatic fixed window from every rendered source state",
+    }
+    return limits, receipt
+
+
+def scan_field_y_limits(
+    selected: list[tuple[int, tuple[float, Path]]],
+) -> tuple[tuple[float, float], dict[str, float | int | str]]:
+    """Scan native mesh geometry so no rendered state is clipped vertically."""
+    samples: list[tuple[float, float]] = []
+    for _, (time, path) in selected:
+        points = np.asarray(meshio.read(path).points, dtype=float)
+        if points.ndim != 2 or points.shape[1] < 2 or not np.all(np.isfinite(points[:, :2])):
+            raise ValueError(f"{path} contains invalid mesh coordinates")
+        samples.append((time, float(np.max(np.abs(points[:, 1])))))
+    limits, receipt = fixed_field_y_limits(samples)
+    peak_sample = int(np.argmax([extent for _, extent in samples]))
+    source_index, (_, source_path) = selected[peak_sample]
+    receipt.update(
+        {
+            "source_index_of_native_max_abs_z": source_index,
+            "source_path_of_native_max_abs_z": str(source_path),
+        }
+    )
+    return limits, receipt
 
 
 def axisymmetric_dissipation(
@@ -231,7 +293,13 @@ def free_surface(points: np.ndarray, subtris: np.ndarray) -> list[np.ndarray]:
     return segments
 
 
-def add_free_surface(ax, points: np.ndarray, subtris: np.ndarray) -> None:
+def add_free_surface(
+    ax,
+    points: np.ndarray,
+    subtris: np.ndarray,
+    *,
+    field_y_limits: tuple[float, float],
+) -> None:
     segments = free_surface(points, subtris)
     drawn = list(segments)
     drawn.extend(segment * np.array([1.0, -1.0]) for segment in segments)
@@ -245,7 +313,7 @@ def add_free_surface(ax, points: np.ndarray, subtris: np.ndarray) -> None:
         )
     )
     ax.axhline(0.0, color="0.68", lw=0.75, ls=(0, (5, 4)), zorder=4)
-    ax.set_ylim(*FIELD_YLIM)
+    ax.set_ylim(*field_y_limits)
     ax.set_aspect("equal")
     ax.set_axis_off()
 
@@ -287,6 +355,7 @@ def plot_kinematic_fields(
     dissipation: np.ndarray,
     *,
     speed_limits: tuple[float, float],
+    field_y_limits: tuple[float, float],
 ):
     """Plot the horizontally reflected comoving kinematic view."""
     reflected_x = -points[:, 0]
@@ -319,7 +388,7 @@ def plot_kinematic_fields(
         )
     )
     ax.axhline(0.0, color="0.68", lw=0.75, ls=(0, (5, 4)), zorder=4)
-    ax.set_ylim(*FIELD_YLIM)
+    ax.set_ylim(*field_y_limits)
     ax.set_aspect("equal")
     ax.set_axis_off()
     return upper, lower
@@ -331,6 +400,8 @@ def plot_strain_fields(
     subtris: np.ndarray,
     azimuthal: np.ndarray,
     mean: np.ndarray,
+    *,
+    field_y_limits: tuple[float, float],
 ):
     upper = ax.tripcolor(
         Triangulation(points[:, 0], points[:, 1], subtris),
@@ -348,7 +419,7 @@ def plot_strain_fields(
         cmap=MEAN_CMAP,
         norm=TwoSlopeNorm(vmin=STRAIN_CLIM[0], vcenter=0.0, vmax=STRAIN_CLIM[1]),
     )
-    add_free_surface(ax, points, subtris)
+    add_free_surface(ax, points, subtris, field_y_limits=field_y_limits)
     return upper, lower
 
 
@@ -370,6 +441,7 @@ def render_frame(
     radius_ylim: tuple[float, float],
     speed_ylim: tuple[float, float],
     field_speed_limits: tuple[float, float],
+    field_y_limits: tuple[float, float],
 ) -> None:
     index, (time, path) = item
     destination = frames_dir / f"frame_{index:05d}.png"
@@ -401,9 +473,15 @@ def render_frame(
         speed_field,
         dissipation,
         speed_limits=field_speed_limits,
+        field_y_limits=field_y_limits,
     )
     azimuthal_map, mean_map = plot_strain_fields(
-        right_ax, relative, subtris, azimuthal, mean
+        right_ax,
+        relative,
+        subtris,
+        azimuthal,
+        mean,
+        field_y_limits=field_y_limits,
     )
     left_ax.set_xlim(*LEFT_XLIM)
     right_ax.set_xlim(*FOLLOW_XLIM)
@@ -646,8 +724,6 @@ def main() -> None:
         parser.error("playback hold durations and early-time limit must be non-negative")
     if args.indices is not None and not args.skip_encode:
         parser.error("--indices is a QA-only selection and requires --skip-encode")
-    if args.indices is not None and args.stride != 1:
-        parser.error("--indices and --stride cannot be combined")
 
     args.run_dir = args.run_dir.resolve()
     pvd_paths = (
@@ -697,16 +773,25 @@ def main() -> None:
     ):
         parser.error("plot limits must be increasing")
 
-    selected = stride_selection(
+    scheduled = stride_selection(
         entries,
         stride=args.stride,
         early_time_limit=args.early_time_limit,
     )
+    field_y_limits, vertical_extent = scan_field_y_limits(scheduled)
+    selected = scheduled
     if args.indices is not None:
         bad = [index for index in args.indices if index < 0 or index >= len(entries)]
         if bad:
             raise SystemExit(f"frame indices out of range: {bad}")
         selected = [(index, entries[index]) for index in args.indices]
+    print(
+        "Fixed vertical window "
+        f"{field_y_limits[0]:g}..{field_y_limits[1]:g}; "
+        f"native max |z|={vertical_extent['native_max_abs_z']:.6g} "
+        f"at t={vertical_extent['time_of_native_max_abs_z']:.6g}",
+        flush=True,
+    )
 
     args.frames_dir.mkdir(parents=True, exist_ok=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -725,6 +810,7 @@ def main() -> None:
         radius_ylim=radius_ylim,
         speed_ylim=speed_ylim,
         field_speed_limits=field_speed_limits,
+        field_y_limits=field_y_limits,
     )
     if args.procs == 1:
         for item in selected:
@@ -854,7 +940,12 @@ def main() -> None:
             "seconds_per_positive_early_state": args.early_hold_seconds,
             "later_frames_per_state": 1,
         },
-        "crop": {"left_x": LEFT_XLIM, "right_x": FOLLOW_XLIM, "field_y": FIELD_YLIM},
+        "crop": {
+            "left_x": LEFT_XLIM,
+            "right_x": FOLLOW_XLIM,
+            "field_y": field_y_limits,
+        },
+        "vertical_extent": vertical_extent,
         "colour_limits": {
             "speed": field_speed_limits,
             "dissipation": DISSIPATION_CLIM,
