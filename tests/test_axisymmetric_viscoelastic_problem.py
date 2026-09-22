@@ -22,7 +22,13 @@ from taylor_culick_fem.viscoelastic import (
 )
 
 
-def _define_problem(monkeypatch, *, elastic_modulus: float, passive: bool):
+def _define_problem(
+    monkeypatch,
+    *,
+    elastic_modulus: float,
+    passive: bool,
+    relaxation_time: float = float("inf"),
+):
     captured: dict[str, object] = {}
 
     def factory(params, **kwargs):
@@ -41,8 +47,9 @@ def _define_problem(monkeypatch, *, elastic_modulus: float, passive: bool):
     problem = axisymmetric.AxisymmetricViscoelasticProblem()
     problem.elastic_modulus = elastic_modulus
     problem.passive_conformation = passive
+    problem.relaxation_time = relaxation_time
     problem.define_problem()
-    return problem, captured["equations"], captured
+    return problem, captured.get("equations"), captured
 
 
 def test_active_mode_preserves_polymer_feedback_default(monkeypatch) -> None:
@@ -73,13 +80,39 @@ def test_zero_modulus_passive_mode_retains_log_conformation_and_boundaries(monke
     assert set(liquid._children) == {"far", "symmetry"}
 
 
-def test_zero_modulus_active_mode_is_rejected(monkeypatch) -> None:
-    problem = axisymmetric.AxisymmetricViscoelasticProblem()
-    problem.elastic_modulus = 0.0
+def test_zero_modulus_is_exact_newtonian_without_passive_transport(monkeypatch) -> None:
+    problem, equations, captured = _define_problem(
+        monkeypatch, elastic_modulus=0.0, passive=False
+    )
 
-    with pytest.raises(
-        ValueError, match="elastic_modulus=0 requires passive_conformation=True"
-    ):
+    assert equations is None
+    assert captured == {}
+    assert problem.viscoelastic_parameters is None
+
+
+@pytest.mark.parametrize("passive", [False, True])
+def test_zero_relaxation_is_exact_newtonian_regardless_of_mode(
+    monkeypatch, passive: bool
+) -> None:
+    problem, equations, captured = _define_problem(
+        monkeypatch,
+        elastic_modulus=1.0,
+        passive=passive,
+        relaxation_time=0.0,
+    )
+
+    assert equations is None
+    assert captured == {}
+    assert problem.viscoelastic_parameters is None
+    assert problem.polymer_diagnostic_extrema() == {}
+
+
+@pytest.mark.parametrize("relaxation_time", [-1.0, float("nan")])
+def test_invalid_relaxation_time_is_rejected(monkeypatch, relaxation_time: float) -> None:
+    problem = axisymmetric.AxisymmetricViscoelasticProblem()
+    problem.relaxation_time = relaxation_time
+
+    with pytest.raises(ValueError, match="relaxation_time must be non-negative"):
         problem.define_problem()
 
 

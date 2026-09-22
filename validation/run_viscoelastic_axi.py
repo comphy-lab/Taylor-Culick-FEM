@@ -2,8 +2,9 @@
 
 Time is the physical capillary time used by the FEM problem.  This driver does
 not use the viscous ``t*`` clock, which is undefined when the solvent
-Ohnesorge number is zero.  ``lambda=inf`` selects the exact non-relaxing
-Oldroyd-B/Kelvin--Voigt limit.
+Ohnesorge number is zero.  ``lambda=0`` selects the exact Newtonian endpoint,
+while ``lambda=inf`` selects the exact non-relaxing Oldroyd-B/Kelvin--Voigt
+limit.
 
 The modulus is non-dimensionalised as ``G = G_dim h0 / sigma`` using the full
 sheet thickness, consistently with the inherited FEM problem.
@@ -28,7 +29,10 @@ from pyoomph.output.states import copy_state_file
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "simulationCases"))
 
-from axisymmetric_viscoelastic import AxisymmetricViscoelasticProblem
+from axisymmetric_viscoelastic import (
+    AxisymmetricViscoelasticProblem,
+    evolves_conformation,
+)
 from planar_comoving import V_TAYLOR_CULICK
 
 from taylor_culick_fem.absorbing_layer import RayleighSpongeParameters
@@ -51,7 +55,44 @@ def _nonnegative_float(text: str) -> float:
 def _relaxation_time(text: str) -> float:
     if text.strip().lower() in {"inf", "+inf", "infinity", "+infinity"}:
         return math.inf
-    return _positive_float(text)
+    return _nonnegative_float(text)
+
+
+def _constitutive_metadata(
+    elastic_modulus: float,
+    relaxation_time: float,
+    passive_conformation: bool,
+) -> dict[str, str | None]:
+    """Describe the equations actually assembled for this parameter endpoint."""
+
+    if not evolves_conformation(
+        elastic_modulus, relaxation_time, passive_conformation
+    ):
+        return {
+            "constitutive_model": "Newtonian",
+            "polymer_stress": None,
+            "conformation_formulation": None,
+        }
+    return {
+        "constitutive_model": "Oldroyd-B",
+        "polymer_stress": "G*(C-I)",
+        "conformation_formulation": "log-conf",
+    }
+
+
+def _initial_step(
+    *,
+    maxstep: float,
+    interval: float,
+    relaxation_time: float,
+    conformation_evolved: bool,
+) -> float:
+    """Choose the BDF startup step, resolving finite conformation relaxation."""
+
+    startstep = min(maxstep, max(interval * 1e-2, 1e-6))
+    if conformation_evolved and math.isfinite(relaxation_time):
+        startstep = min(startstep, 0.1 * relaxation_time)
+    return startstep
 
 
 def _parameter_label(value: float) -> str:
@@ -209,7 +250,13 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "field_stride": args.field_stride,
         "max_step": args.max_step,
         "stabilization_option": args.stabilization,
-        "conformation_supg_factor": args.supg_factor,
+        "conformation_supg_factor": (
+            args.supg_factor
+            if evolves_conformation(
+                args.elastic_modulus, args.relaxation_time, passive_conformation
+            )
+            else None
+        ),
         "temporal_error": args.temporal_error,
         "sponge": (
             _sponge_parameters(args).as_json_dict()
@@ -221,7 +268,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         observed = metadata.get(key)
         if key == "field_stride" and observed is None:
             observed = 1
-        if key == "conformation_supg_factor" and observed is None:
+        if key == "conformation_supg_factor" and key not in metadata:
             # Attempts written before this control was exposed used the
             # problem class's factor-one default.
             observed = 1.0
@@ -604,8 +651,10 @@ def _enforce_launcher_affinity() -> dict[str, object]:
 
 def run_case(args: argparse.Namespace) -> dict:
     passive_conformation = _passive_conformation(args)
-    if args.elastic_modulus == 0 and not passive_conformation:
-        raise ValueError("elastic_modulus=0 requires passive_conformation=True")
+    conformation_evolved = evolves_conformation(
+        args.elastic_modulus, args.relaxation_time, passive_conformation
+    )
+    active_polymer_feedback = conformation_evolved and not passive_conformation
     restart = _read_restart(args)
     sponge = _sponge_parameters(args)
     affinity = _enforce_launcher_affinity()
@@ -625,12 +674,16 @@ def run_case(args: argparse.Namespace) -> dict:
         "elastic_modulus_definition": "G_dim*h0/sigma",
         "passive_conformation": passive_conformation,
         "relaxation_time": relaxation_json,
-        "constitutive_model": "Oldroyd-B",
-        "polymer_stress": "G*(C-I)",
-        "conformation_formulation": "log-conf",
+        **_constitutive_metadata(
+            args.elastic_modulus, args.relaxation_time, passive_conformation
+        ),
+        "conformation_evolved": conformation_evolved,
+        "polymer_feedback": active_polymer_feedback,
         "stabilization_option": args.stabilization,
-        "conformation_stabilization": "SUPG" if args.stabilization == "supg" else None,
-        "conformation_supg_factor": args.supg_factor,
+        "conformation_stabilization": (
+            "SUPG" if conformation_evolved and args.stabilization == "supg" else None
+        ),
+        "conformation_supg_factor": args.supg_factor if conformation_evolved else None,
         "coordinate_system": "axisymmetric",
         "velocity_frame": "laboratory",
         "time_scale": "capillary",
@@ -901,12 +954,22 @@ def run_case(args: argparse.Namespace) -> dict:
                     # internal step is identical: BDF starts smaller to build
                     # its history, and output landing can add a short sliver.
                     maxstep = min(args.fixed_step, interval)
-                    startstep = min(maxstep, max(interval * 1e-2, 1e-6))
+                    startstep = _initial_step(
+                        maxstep=maxstep,
+                        interval=interval,
+                        relaxation_time=args.relaxation_time,
+                        conformation_evolved=conformation_evolved,
+                    )
                 else:
                     maxstep = (
                         min(args.max_step, interval) if args.max_step is not None else interval
                     )
-                    startstep = min(maxstep, max(interval * 1e-2, 1e-6))
+                    startstep = _initial_step(
+                        maxstep=maxstep,
+                        interval=interval,
+                        relaxation_time=args.relaxation_time,
+                        conformation_evolved=conformation_evolved,
+                    )
                 problem.run(
                     float(target),
                     startstep=startstep,
@@ -999,7 +1062,11 @@ def run_case(args: argparse.Namespace) -> dict:
             # normal velocity is -U.  Psi=0 is an inflow condition only while
             # U>=0; elastic recoil would turn that edge into outflow and make
             # the strong conformation condition invalid.
-            if args.max_recoil_speed is not None and minimum_sampled_speed < -args.max_recoil_speed:
+            if (
+                conformation_evolved
+                and args.max_recoil_speed is not None
+                and minimum_sampled_speed < -args.max_recoil_speed
+            ):
                 failures.append(
                     "far boundary ceased to be inflow at an output sample "
                     f"(minimum sampled U={minimum_sampled_speed:.6e})"
@@ -1128,14 +1195,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "evolve log-conformation diagnostics without feeding polymer stress "
-            "back into momentum; required when G=0"
+            "back into momentum; at G=0 this opts into diagnostic transport"
         ),
     )
     parser.add_argument(
         "--relaxation-time",
         type=_relaxation_time,
         default=math.inf,
-        help="dimensionless lambda, or 'inf' for no relaxation",
+        help="dimensionless lambda (0 is Newtonian), or 'inf' for no relaxation",
     )
     parser.add_argument(
         "--results",
@@ -1286,11 +1353,9 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Apply cross-argument checks shared by CLI and serialized-case runners."""
     try:
-        passive_conformation = _passive_conformation(args)
+        _passive_conformation(args)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.elastic_modulus == 0 and not passive_conformation:
-        parser.error("--elastic-modulus=0 requires --passive-conformation")
     if args.n_outputs < 1:
         parser.error("--n-outputs must be at least 1")
     if args.max_newton < 1:

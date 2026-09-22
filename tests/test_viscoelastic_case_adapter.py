@@ -144,15 +144,13 @@ def test_passive_conformation_maps_and_allows_zero_modulus(tmp_path: Path) -> No
     assert args.passive_conformation is True
 
 
-def test_missing_passive_conformation_rejects_zero_modulus(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_missing_passive_conformation_selects_newtonian_zero_modulus(tmp_path: Path) -> None:
     case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
     case["physics"]["elastic_modulus"] = 0.0
 
-    with pytest.raises(SystemExit):
-        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
-    assert "--elastic-modulus=0 requires --passive-conformation" in capsys.readouterr().err
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    assert args.elastic_modulus == 0
+    assert not args.passive_conformation
 
 
 def test_adapter_rejects_non_boolean_passive_conformation(tmp_path: Path) -> None:
@@ -700,11 +698,14 @@ def test_legacy_restart_without_rim_height_is_rejected(tmp_path, restart_case):
         _read_restart(args)
 
 
-def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
+@pytest.mark.parametrize("relaxation", ["inf", 0.0])
+def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path, relaxation):
     """A short coarse-mesh solve checks the real state/output API, not convergence."""
     import run_viscoelastic_axi as driver
 
     case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["physics"]["relaxation_time"] = relaxation
+    case_name = driver._case_name(1.0, 1.0, float(relaxation))
     case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
     case["output"].update(cadence=0.02, checkpoint_every=1)
     scratch = tmp_path / "project-scratch"
@@ -713,7 +714,7 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     parent_input = scratch / "parent-input.json"
     parent_input.write_text(json.dumps(case))
     parent_metadata = driver.run_case(adapter.case_to_driver_args(parent_input, bundle / "parent"))
-    parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+    parent = bundle / "parent" / case_name
     assert (parent / "input-case.json").read_bytes() == parent_input.read_bytes()
     assert parent_metadata["input_case"]["sha256"] == _reference(parent_input)["sha256"]
     parent_output = parent / "run_viscoelastic_axi"
@@ -748,7 +749,7 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     reference_input = scratch / "reference-input.json"
     reference_input.write_text(json.dumps(continued))
     driver.run_case(adapter.case_to_driver_args(reference_input, bundle / "reference"))
-    suffix = Path("axi_viscoelastic_Oh_1_G_1_lambda_inf/run_viscoelastic_axi/control.txt")
+    suffix = Path(case_name) / "run_viscoelastic_axi/control.txt"
     resumed = np.loadtxt(bundle / "next" / suffix)
     reference = np.loadtxt(bundle / "reference" / suffix)
     np.testing.assert_allclose(resumed, reference, rtol=1e-9, atol=1e-10)
@@ -856,3 +857,25 @@ def test_small_fem_passive_zero_modulus_evolves_conformation(tmp_path):
     assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_min"] == 0
     assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_max"] == 0
     assert (root / "run_viscoelastic_axi/liquid/liquid_000000.vtu").is_file()
+
+
+def test_zero_ec_or_de_produces_identical_newtonian_histories(tmp_path):
+    """Actual coarse FEM endpoints coincide without passive tensor unknowns."""
+    import run_viscoelastic_axi as driver
+
+    histories = []
+    for index, (ec, de) in enumerate([(1.0, 0.0), (0.0, "inf"), (0.0, 0.0)]):
+        case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+        case["physics"].update(elastic_modulus=ec, relaxation_time=de)
+        case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+        case["output"].update(cadence=0.02, checkpoint_every=0)
+        args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / str(index))
+        metadata = driver.run_case(args)
+        assert metadata["status"] == "passed"
+        assert metadata["constitutive_model"] == "Newtonian"
+        assert metadata["conformation_evolved"] is False
+        assert metadata["polymer_diagnostics_available"] is False
+        root = args.results / driver._case_name(1.0, ec, float(de))
+        histories.append(np.loadtxt(root / "run_viscoelastic_axi/control.txt"))
+    for history in histories[1:]:
+        np.testing.assert_allclose(history, histories[0], rtol=1e-11, atol=1e-12)

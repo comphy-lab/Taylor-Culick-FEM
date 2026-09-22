@@ -8,8 +8,10 @@ the polymer conformation equation and its stress ``G (C - I)``.
 The dimensionless modulus used here is ``G = G_dim h0 / sigma``, on the same
 full-thickness ``h0`` and surface-tension scale as the inherited problem.
 ``passive_conformation=True`` retains the log-conformation transport and
-diagnostic output while omitting polymer feedback in the momentum equation;
-it is required when ``G=0``.
+diagnostic output while omitting polymer feedback in the momentum equation.
+At ``lambda=0``, or at ``G=0`` without that explicit diagnostic mode, the
+problem is exactly the inherited Newtonian problem and has no conformation
+unknowns.
 
 ``relaxation_time=math.inf`` is an exact non-relaxing limit: no large finite
 surrogate is used.  The incoming film is unstretched (``log(C)=0``), while the
@@ -42,6 +44,19 @@ from taylor_culick_fem.viscoelastic import (
 )
 
 
+def evolves_conformation(
+    elastic_modulus: float, relaxation_time: float, passive_conformation: bool
+) -> bool:
+    """Return whether this case carries conformation unknowns.
+
+    Zero relaxation time is the exact Newtonian endpoint.  Zero modulus is
+    also Newtonian unless positive-time passive transport was explicitly
+    requested for diagnostics.
+    """
+
+    return relaxation_time > 0 and (elastic_modulus > 0 or passive_conformation)
+
+
 class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
     """Co-moving axisymmetric sheet with solvent viscosity and polymer elasticity.
 
@@ -69,12 +84,10 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             raise ValueError("solvent_oh must be finite and non-negative")
         if not math.isfinite(self.elastic_modulus) or self.elastic_modulus < 0:
             raise ValueError("elastic_modulus must be finite and non-negative")
-        if not (self.relaxation_time > 0):
-            raise ValueError("relaxation_time must be positive (or infinity)")
+        if math.isnan(self.relaxation_time) or self.relaxation_time < 0:
+            raise ValueError("relaxation_time must be non-negative (or infinity)")
         if type(self.passive_conformation) is not bool:
             raise TypeError("passive_conformation must be a boolean")
-        if self.elastic_modulus == 0 and not self.passive_conformation:
-            raise ValueError("elastic_modulus=0 requires passive_conformation=True")
 
         # NavierStokesEquations in the inherited problem carries the solvent
         # stress only.  Velocities remain laboratory-frame velocities.
@@ -98,6 +111,12 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
                     sponge_core_volume=core,
                 )
                 self += sponge_eqs @ "liquid"
+
+        self.viscoelastic_parameters = None
+        if not evolves_conformation(
+            self.elastic_modulus, self.relaxation_time, self.passive_conformation
+        ):
+            return
 
         params = GLambdaOldroydBParameters(
             elastic_modulus=self.elastic_modulus,

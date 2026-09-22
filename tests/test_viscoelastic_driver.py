@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
 from run_viscoelastic_axi import (
     ArrestTracker,
     HeightPlateauTracker,
+    _constitutive_metadata,
+    _initial_step,
     _output_times,
     _zero_crossing,
     build_parser,
@@ -126,12 +128,16 @@ def test_allow_recoil_is_an_explicit_fixed_horizon_option(tmp_path) -> None:
     assert not args.stop_when_arrested
 
 
-def test_zero_modulus_requires_explicit_passive_conformation(tmp_path, capsys) -> None:
+def test_zero_modulus_defaults_to_exact_newtonian(tmp_path) -> None:
     parser = build_parser()
     args = parser.parse_args(["--results", str(tmp_path), "--elastic-modulus", "0"])
-    with pytest.raises(SystemExit):
-        validate_args(parser, args)
-    assert "--elastic-modulus=0 requires --passive-conformation" in capsys.readouterr().err
+    validate_args(parser, args)
+    assert args.passive_conformation is False
+    assert _constitutive_metadata(0.0, args.relaxation_time, False) == {
+        "constitutive_model": "Newtonian",
+        "polymer_stress": None,
+        "conformation_formulation": None,
+    }
 
     passive = parser.parse_args(
         [
@@ -144,6 +150,43 @@ def test_zero_modulus_requires_explicit_passive_conformation(tmp_path, capsys) -
     )
     validate_args(parser, passive)
     assert passive.passive_conformation is True
+    assert _constitutive_metadata(0.0, passive.relaxation_time, True)[
+        "constitutive_model"
+    ] == "Oldroyd-B"
+
+
+def test_zero_relaxation_cli_is_newtonian(tmp_path) -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--results", str(tmp_path), "--relaxation-time", "0"]
+    )
+    validate_args(parser, args)
+    assert args.relaxation_time == 0.0
+    assert _constitutive_metadata(1.0, 0.0, False)["constitutive_model"] == "Newtonian"
+
+
+@pytest.mark.parametrize("value", ["-1", "nan"])
+def test_invalid_relaxation_cli_is_rejected(value: str, tmp_path) -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["--results", str(tmp_path), "--relaxation-time", value]
+        )
+
+
+def test_active_finite_relaxation_caps_only_the_startup_step() -> None:
+    assert _initial_step(
+        maxstep=0.01,
+        interval=0.5,
+        relaxation_time=1e-3,
+        conformation_evolved=True,
+    ) == pytest.approx(1e-4)
+    assert _initial_step(
+        maxstep=0.01,
+        interval=0.5,
+        relaxation_time=1e-3,
+        conformation_evolved=False,
+    ) == pytest.approx(0.005)
 
 
 def test_tip_arrest_requires_a_field_at_every_scalar_sample(tmp_path, capsys) -> None:
