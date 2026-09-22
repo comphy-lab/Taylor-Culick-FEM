@@ -698,7 +698,7 @@ def test_legacy_restart_without_rim_height_is_rejected(tmp_path, restart_case):
         _read_restart(args)
 
 
-@pytest.mark.parametrize("relaxation", ["inf", 0.0])
+@pytest.mark.parametrize("relaxation", ["inf", 0.0, 0.001])
 def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path, relaxation):
     """A short coarse-mesh solve checks the real state/output API, not convergence."""
     import run_viscoelastic_axi as driver

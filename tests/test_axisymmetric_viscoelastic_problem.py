@@ -63,6 +63,20 @@ def test_active_mode_preserves_polymer_feedback_default(monkeypatch) -> None:
     assert equations.output_conformation is True
 
 
+@pytest.mark.parametrize("relaxation_time", [0.001, 1.0, 1000.0])
+def test_finite_relaxation_registers_velocity_and_tensor_error(monkeypatch, relaxation_time):
+    problem, _, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False, relaxation_time=relaxation_time
+    )
+    equations = problem.additional_equations._children["liquid"]._equation_list
+    estimators = [e for e in equations if isinstance(e, axisymmetric.TemporalErrorEstimator)]
+    assert len(estimators) == 1
+    assert dict(estimators[0].fieldfactors) == {
+        "velocity": 1, "log_conformation_xx": 1, "log_conformation_xy": 1,
+        "log_conformation_yy": 1, "log_conformation_aa": 1,
+    }
+
+
 def test_zero_modulus_passive_mode_retains_log_conformation_and_boundaries(monkeypatch) -> None:
     problem, equations, captured = _define_problem(
         monkeypatch, elastic_modulus=0.0, passive=True

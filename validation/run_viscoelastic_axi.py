@@ -95,6 +95,15 @@ def _initial_step(
     return startstep
 
 
+def _temporal_estimator(args: argparse.Namespace) -> str | None:
+    """Identify the estimator contract, including for restart compatibility."""
+    if math.isfinite(args.relaxation_time) and evolves_conformation(
+        args.elastic_modulus, args.relaxation_time, _passive_conformation(args)
+    ):
+        return "velocity-log-conformation-v1"
+    return None
+
+
 def _parameter_label(value: float) -> str:
     return "inf" if math.isinf(value) else f"{value:g}"
 
@@ -258,6 +267,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             else None
         ),
         "temporal_error": args.temporal_error,
+        "temporal_estimator": _temporal_estimator(args),
         "sponge": (
             _sponge_parameters(args).as_json_dict()
             if _sponge_parameters(args) is not None
@@ -713,6 +723,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "fixed_step_semantics": "maximum-step cap after smaller BDF startup",
         "max_step": args.max_step,
         "temporal_error": None if args.fixed_step is not None else args.temporal_error,
+        "temporal_estimator": _temporal_estimator(args),
         "write_states": False,
         "checkpoint_policy": (
             f"every {args.checkpoint_every} scalar samples" if args.checkpoint_every else "none"

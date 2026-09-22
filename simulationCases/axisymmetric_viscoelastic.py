@@ -31,7 +31,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 from axisymmetric_comoving import AxisymmetricComovingProblem
-from pyoomph import DirichletBC, IntegralObservables, WeakContribution
+from pyoomph import DirichletBC, IntegralObservables, TemporalErrorEstimator, WeakContribution
 from pyoomph.expressions import dot, piecewise_geq0, var, var_and_test
 
 from taylor_culick_fem.absorbing_layer import (
@@ -132,6 +132,17 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             add_polymer_stress_to_momentum=not self.passive_conformation,
             output_conformation=True,
         )
+        # Finite relaxation needs an actual field-error estimate; passing a
+        # tolerance to Problem.run alone does not register one. Preserve the
+        # inherited endpoint discretisations for reference comparisons.
+        if math.isfinite(self.relaxation_time):
+            eqs += TemporalErrorEstimator(
+                velocity=1,
+                log_conformation_xx=1,
+                log_conformation_xy=1,
+                log_conformation_yy=1,
+                log_conformation_aa=1,
+            )
 
         # Undisturbed material enters through the translating far boundary.
         # In axisymmetry the azimuthal tensor component is named ``aa``.
