@@ -162,6 +162,31 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
                 str(sponge["profile"]),
             ]
         )
+    far_field = physics.get("far_field")
+    if far_field is not None:
+        if not isinstance(far_field, dict):
+            raise TypeError("physics.far_field must be an object")
+        mode = far_field.get("mode")
+        if mode == "rest":
+            if set(far_field) != {"mode"}:
+                raise ValueError("physics.far_field mode 'rest' takes no other keys")
+        elif mode == "radial":
+            allowed = {"mode", "probe_offset_fraction", "trigger_fraction", "ramp_time"}
+            if not set(far_field) <= allowed:
+                raise ValueError(
+                    "physics.far_field radial accepts only probe_offset_fraction, "
+                    "trigger_fraction and ramp_time"
+                )
+            arguments.extend(["--far-field", "radial"])
+            for key, flag in (
+                ("probe_offset_fraction", "--far-field-probe-offset"),
+                ("trigger_fraction", "--far-field-trigger"),
+                ("ramp_time", "--far-field-ramp"),
+            ):
+                if key in far_field:
+                    arguments.extend([flag, str(far_field[key])])
+        else:
+            raise ValueError(f"unsupported physics.far_field mode: {mode!r}")
     if "max_positive_sponge_power" in tolerances:
         arguments.extend(
             [

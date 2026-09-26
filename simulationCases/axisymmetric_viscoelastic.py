@@ -13,7 +13,11 @@ it is required when ``G=0``.
 
 ``relaxation_time=math.inf`` is an exact non-relaxing limit: no large finite
 surrogate is used.  The incoming film is unstretched (``log(C)=0``), while the
-midplane imposes only the tensor symmetry condition.  The free surface has no
+midplane imposes only the tensor symmetry condition.  With the opt-in
+``far_field="radial"`` the incoming film instead carries the planar
+area-conserving stretch of the radial far field, ``log(C)_rr = -q`` and
+``log(C)_aa = +q`` with ``q = log(r^2 / r0^2)``, supplied through the global
+parameter ``far_field_hoop_log_stretch``.  The free surface has no
 conformation boundary condition because it is a material boundary.
 """
 
@@ -116,20 +120,45 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
 
         # Undisturbed material enters through the translating far boundary.
         # In axisymmetry the azimuthal tensor component is named ``aa``.
-        eqs += (
-            DirichletBC(
-                log_conformation_xx=0,
-                log_conformation_xy=0,
-                log_conformation_yy=0,
-                log_conformation_aa=0,
+        if self.far_field == "radial":
+            # Material displaced radially at constant thickness: lambda_theta
+            # = r/r0 = 1/lambda_r and C = diag(lambda_r^2, 1, lambda_theta^2).
+            # A parameter, not an unknown, exactly as for far_field_velocity.
+            q = self.define_global_parameter(far_field_hoop_log_stretch=0.0)
+            eqs += (
+                DirichletBC(
+                    log_conformation_xx=-q,
+                    log_conformation_xy=0,
+                    log_conformation_yy=0,
+                    log_conformation_aa=q,
+                )
+                @ "far"
             )
-            @ "far"
-        )
+        else:
+            eqs += (
+                DirichletBC(
+                    log_conformation_xx=0,
+                    log_conformation_xy=0,
+                    log_conformation_yy=0,
+                    log_conformation_aa=0,
+                )
+                @ "far"
+            )
         # Reflection symmetry forbids only the r-z shear component.  The
         # normal components are evolved, not prescribed.  There is
         # deliberately no conformation condition on ``interface``.
         eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
         self += eqs @ "liquid"
+
+    def set_far_field(self, velocity: float, hoop_log_stretch: float) -> None:
+        """Set the radial far-field edge velocity and incoming hoop log-stretch."""
+
+        if self.far_field != "radial":
+            raise RuntimeError("set_far_field requires far_field='radial'")
+        if not (math.isfinite(velocity) and math.isfinite(hoop_log_stretch)):
+            raise ValueError("far-field state must be finite")
+        self.get_global_parameter("far_field_velocity").value = velocity
+        self.get_global_parameter("far_field_hoop_log_stretch").value = hoop_log_stretch
 
     def sponge_diagnostics(self) -> dict[str, float]:
         """Return instantaneous damping power and undamped-core velocity RMS."""

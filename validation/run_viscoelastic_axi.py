@@ -96,6 +96,100 @@ def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | N
     return parameters
 
 
+FAR_FIELD_DEFAULTS = {
+    "probe_offset_fraction": 0.1,
+    "trigger_fraction": 0.5,
+    "ramp_time": 5.0,
+}
+
+
+def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
+    """Return the far-edge condition carried by CLI args, defaults filled in."""
+
+    mode = getattr(args, "far_field", "rest")
+    tuning = {
+        "probe_offset_fraction": getattr(args, "far_field_probe_offset", None),
+        "trigger_fraction": getattr(args, "far_field_trigger", None),
+        "ramp_time": getattr(args, "far_field_ramp", None),
+    }
+    if mode == "rest":
+        if any(value is not None for value in tuning.values()):
+            raise ValueError("far-field probe, trigger and ramp require --far-field=radial")
+        return {"mode": "rest"}
+    if mode != "radial":
+        raise ValueError(f"unknown far-field mode {mode!r}")
+    config: dict[str, object] = {"mode": "radial"}
+    for key, value in tuning.items():
+        config[key] = FAR_FIELD_DEFAULTS[key] if value is None else float(value)
+    if not 0 < config["probe_offset_fraction"] < 1:
+        raise ValueError("far-field probe offset must lie strictly inside the window")
+    if not 0 < config["trigger_fraction"] <= 1:
+        raise ValueError("far-field trigger fraction must lie in (0, 1]")
+    if not config["ramp_time"] >= 0:
+        raise ValueError("far-field ramp time must be non-negative")
+    return config
+
+
+@dataclass
+class FarFieldSwitch:
+    """Latch the radial far field on once the elastic disturbance reaches the edge.
+
+    Ahead of an elastic rim the film flows as ``u_r = c/r`` at constant
+    thickness with ``c = X U``.  Before that field reaches the window edge the
+    film there is at rest, so the switch starts off and watches a midplane
+    probe ``probe_offset_fraction * L`` inside the edge.  It latches on when
+    the probe carries ``trigger_fraction`` of the rim flux ``X U``, then ramps
+    the imposed edge velocity ``weight * X U / (X + L)`` in over
+    ``ramp_time``.  ``outflow`` integrates ``(X + L) u_far`` dt: it is the
+    volume correction divided by ``pi``, and ``2 * outflow`` is the swept
+    area ``r^2 - r0^2`` shared by all film beyond the edge, which fixes the
+    incoming hoop log-stretch ``q = log(r^2 / (r^2 - 2 outflow))``.
+    """
+
+    probe_offset_fraction: float
+    trigger_fraction: float
+    ramp_time: float
+    on_time: float | None = None
+    outflow: float = 0.0
+
+    def weight(self, time: float) -> float:
+        if self.on_time is None or time <= self.on_time:
+            return 0.0
+        if self.ramp_time == 0:
+            return 1.0
+        return min(1.0, (time - self.on_time) / self.ramp_time)
+
+    def probe_radius(self, radius: float, length: float) -> float:
+        return radius + length * (1.0 - self.probe_offset_fraction)
+
+    def edge_state(
+        self, target: float, radius: float, speed: float, length: float, interval: float
+    ) -> tuple[float, float]:
+        """Return (edge velocity, hoop log-stretch) to hold over the next interval."""
+
+        outer = radius + length
+        velocity = self.weight(target) * radius * speed / outer
+        outer_end = outer + speed * interval
+        swept = 2.0 * (self.outflow + velocity * 0.5 * (outer + outer_end) * interval)
+        if swept >= outer_end**2:
+            raise RuntimeError("far-field swept area exceeds the edge radius squared")
+        return velocity, math.log(outer_end**2 / (outer_end**2 - swept))
+
+    def advance(self, velocity: float, outer_start: float, outer_end: float, interval: float) -> None:
+        self.outflow += velocity * 0.5 * (outer_start + outer_end) * interval
+
+    def observe(
+        self, time: float, radius: float, speed: float, probe_radius: float, probe_velocity: float
+    ) -> float:
+        """Return the probe-to-rim flux ratio and latch the switch on when due."""
+
+        rim_flux = radius * speed
+        ratio = probe_radius * probe_velocity / rim_flux if rim_flux > 0 else 0.0
+        if self.on_time is None and ratio >= self.trigger_fraction:
+            self.on_time = time
+        return ratio
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
@@ -193,6 +287,9 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
                 **expected,
                 "passive_conformation": expected.get("passive_conformation", False),
             }
+            # A missing far field predates the radial mode and means "rest".
+            current["far_field"] = current.get("far_field", {"mode": "rest"})
+            expected["far_field"] = expected.get("far_field", {"mode": "rest"})
         if key not in case or current != expected:
             raise ValueError(f"restart case mismatch: {key}")
     metadata = json.loads(paths["metadata"].read_text())
@@ -201,6 +298,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "elastic_modulus": args.elastic_modulus,
         "relaxation_time": "inf" if math.isinf(args.relaxation_time) else args.relaxation_time,
         "passive_conformation": passive_conformation,
+        "far_field": _far_field_config(args),
         "length": args.length,
         "r0": args.r0,
         "resolution": args.resolution,
@@ -229,6 +327,8 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             # Attempts written before passive conformation was exposed were
             # active by construction.
             observed = False
+        if key == "far_field" and key not in metadata:
+            observed = {"mode": "rest"}
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
     control_index = restart["output_index"] if legacy else restart["control_index"]
@@ -289,6 +389,19 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         height_rows = height_rows[:control_index]
         if not np.allclose(height_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
             raise ValueError("restart rim-height and control times disagree")
+    far_rows = None
+    if _far_field_config(args)["mode"] == "radial":
+        far_path = paths["control"].parent / "far-field.txt"
+        far_rows = np.loadtxt(far_path, ndmin=2) if far_path.is_file() else np.empty((0, 7))
+        if (
+            far_rows.shape[1] != 7
+            or len(far_rows) < control_index
+            or not np.all(np.isfinite(far_rows))
+        ):
+            raise ValueError("restart far-field history is incomplete or invalid")
+        far_rows = far_rows[:control_index]
+        if not np.allclose(far_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
+            raise ValueError("restart far-field and control times disagree")
     if paths["checkpoint"].parent != root / "checkpoints":
         raise ValueError("restart checkpoint does not belong to the parent case")
     if paths["control"].parent != root / "run_viscoelastic_axi":
@@ -303,6 +416,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "metadata": metadata,
         "rows": rows,
         "height_rows": height_rows,
+        "far_rows": far_rows,
         "fields": fields,
         "time": float(time),
         "control_index": control_index,
@@ -608,6 +722,7 @@ def run_case(args: argparse.Namespace) -> dict:
         raise ValueError("elastic_modulus=0 requires passive_conformation=True")
     restart = _read_restart(args)
     sponge = _sponge_parameters(args)
+    far_field = _far_field_config(args)
     affinity = _enforce_launcher_affinity()
     run_dir = args.results.resolve() / _case_name(
         args.oh, args.elastic_modulus, args.relaxation_time, passive_conformation
@@ -647,6 +762,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "allow_recoil": args.allow_recoil,
         "sponge": sponge.as_json_dict() if sponge is not None else None,
         "sponge_force": "-rho*gamma(x_rel)*u_lab" if sponge is not None else None,
+        "far_field": far_field,
         "arrest_ustar_threshold": args.arrest_ustar,
         "arrest_consecutive_samples": args.arrest_consecutive,
         "arrest_trend_tolerance": args.arrest_trend_tolerance,
@@ -721,6 +837,7 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.relaxation_time = args.relaxation_time
             problem.passive_conformation = passive_conformation
             problem.sponge = sponge
+            problem.far_field = far_field["mode"]
             problem.conformation_stabilization = "SUPG" if args.stabilization == "supg" else None
             problem.conformation_supg_factor = args.supg_factor
             problem.X0 = args.r0
@@ -732,6 +849,17 @@ def run_case(args: argparse.Namespace) -> dict:
             # Preserve the original ALE reference before restoring the deformed state.
             volume0 = problem.volume()
             radius0 = problem.window_position()
+            switch = None
+            if far_field["mode"] == "radial":
+                switch = FarFieldSwitch(
+                    probe_offset_fraction=far_field["probe_offset_fraction"],
+                    trigger_fraction=far_field["trigger_fraction"],
+                    ramp_time=far_field["ramp_time"],
+                )
+                if restart is not None:
+                    last_far = restart["far_rows"][-1]
+                    switch.on_time = None if last_far[6] < 0 else float(last_far[6])
+                    switch.outflow = float(last_far[4])
             if restart is not None:
                 checkpoint = restart["paths"]["checkpoint"]
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
@@ -775,6 +903,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 inferred_volume0 = float(
                     row[5]
                     - math.pi / 2 * ((row[1] + args.length) ** 2 - (radius0 + args.length) ** 2)
+                    + math.pi * (switch.outflow if switch is not None else 0.0)
                 )
                 volume0 = restart["metadata"].get("volume_initial_reference", inferred_volume0)
                 if not math.isfinite(volume0) or not math.isclose(
@@ -830,6 +959,15 @@ def run_case(args: argparse.Namespace) -> dict:
             height_segment = problem.create_text_file_output(
                 "rim-height-segment.txt", header=["t", "H"]
             )
+            far_header = [
+                "t", "weight", "u_far", "hoop_log_stretch", "outflow", "probe_ratio", "on_time"
+            ]
+            far_history = far_segment = None
+            if switch is not None:
+                far_history = problem.create_text_file_output("far-field.txt", header=far_header)
+                far_segment = problem.create_text_file_output(
+                    "far-field-segment.txt", header=far_header
+                )
             sponge_history = None
             if sponge is not None and sponge.gamma_max > 0:
                 sponge_history = problem.create_text_file_output(
@@ -884,6 +1022,9 @@ def run_case(args: argparse.Namespace) -> dict:
                     for time, height in restart["height_rows"]:
                         height_history.add_row(time, height)
                         height_tracker.observe(float(time), float(height))
+                if far_history is not None:
+                    for far_row in restart["far_rows"]:
+                        far_history.add_row(*far_row)
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
                 previous_target = restart["time"]
@@ -907,6 +1048,19 @@ def run_case(args: argparse.Namespace) -> dict:
                         min(args.max_step, interval) if args.max_step is not None else interval
                     )
                     startstep = min(maxstep, max(interval * 1e-2, 1e-6))
+                if switch is not None:
+                    # Integrate over the solver's own clock, not the nominal
+                    # targets, so a restart lands on the same outflow history.
+                    start_now = float(problem.get_current_time(as_float=True))
+                    outer_start = problem.window_position() + args.length
+                    far_velocity, far_stretch = switch.edge_state(
+                        float(target),
+                        problem.window_position(),
+                        problem.retraction_speed(),
+                        args.length,
+                        float(target) - start_now,
+                    )
+                    problem.set_far_field(far_velocity, far_stretch)
                 problem.run(
                     float(target),
                     startstep=startstep,
@@ -918,7 +1072,29 @@ def run_case(args: argparse.Namespace) -> dict:
                 radius = problem.window_position()
                 speed = problem.retraction_speed()
                 volume = problem.volume()
-                expected = problem.expected_volume(volume0, radius0)
+                if switch is not None:
+                    switch.advance(far_velocity, outer_start, radius + args.length, now - start_now)
+                    probe = switch.probe_radius(radius, args.length)
+                    ratio = switch.observe(
+                        now, radius, speed, probe, problem.midplane_radial_velocity(probe)
+                    )
+                    far_row = [
+                        now,
+                        switch.weight(now),
+                        far_velocity,
+                        far_stretch,
+                        switch.outflow,
+                        ratio,
+                        -1.0 if switch.on_time is None else switch.on_time,
+                    ]
+                    _assert_finite("far-field row", far_row)
+                    far_history.add_row(*far_row)
+                    far_segment.add_row(*far_row)
+                expected = (
+                    problem.expected_volume(volume0, radius0)
+                    if switch is None
+                    else problem.expected_volume(volume0, radius0, far_outflow=switch.outflow)
+                )
                 volume_error = abs(volume - expected) / max(abs(expected), 1e-300)
                 tip_pin = abs(radius - problem.hole_radius())
                 last_row = [
@@ -1076,6 +1252,8 @@ def run_case(args: argparse.Namespace) -> dict:
                     "sponge_diagnostics_available": bool(sponge_diagnostics),
                     "sponge_diagnostics_final": sponge_diagnostics,
                     "largest_positive_sponge_power": largest_positive_sponge_power,
+                    "far_field_on_time": switch.on_time if switch is not None else None,
+                    "far_field_outflow": switch.outflow if switch is not None else None,
                     "opening_established": arrest_tracker.opening_established,
                     "arrest_detected": arrest is not None,
                     "arrest": arrest,
@@ -1190,6 +1368,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=1e-12,
         help="largest tolerated positive value of integral f_sponge dot u",
     )
+    parser.add_argument(
+        "--far-field",
+        choices=("rest", "radial"),
+        default="rest",
+        help="far-edge film: at rest (default) or the radial elastic far field X U / r",
+    )
+    parser.add_argument("--far-field-probe-offset", type=_positive_float, default=None)
+    parser.add_argument("--far-field-trigger", type=_positive_float, default=None)
+    parser.add_argument("--far-field-ramp", type=_nonnegative_float, default=None)
     parser.add_argument(
         "--fixed-step",
         type=_positive_float,
@@ -1311,6 +1498,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--length must exceed --resolution")
     try:
         _sponge_parameters(args)
+        _far_field_config(args)
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 

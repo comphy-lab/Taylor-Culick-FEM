@@ -33,6 +33,11 @@ throughout. Consequently:
     (``velocity_x = velocity_y = 0``), which is exactly the undisturbed
     semi-infinite far field. Contrast the planar co-moving case, where the
     far film enters at ``-U`` because THERE the frame really does move.
+    ``far_field="radial"`` is an opt-in alternative for elastic films whose
+    disturbance reaches the edge: the edge velocity is then the area-
+    conserving far field ``X U / r``, supplied through the global parameter
+    ``far_field_velocity`` (see ``define_problem``). The default ``"rest"``
+    is the formulation above, unchanged.
   * volume is therefore **not** conserved (the lab case's sharpest
     diagnostic). It is replaced by an exact modified check -- see
     ``expected_volume()`` below, which is just as sharp.
@@ -282,6 +287,10 @@ class AxisymmetricComovingProblem(Problem):
         # module docstring's Newton-floor section.
         self.newton_scale_uses_window = True
         self.remesh_active = True
+        # "rest": the swallowed film is at rest in the laboratory. "radial":
+        # its radial velocity is the global parameter far_field_velocity,
+        # which the driver updates between output intervals.
+        self.far_field = "rest"
 
     @property
     def R_out(self) -> float:
@@ -335,7 +344,18 @@ class AxisymmetricComovingProblem(Problem):
         # undisturbed and at rest in the laboratory frame, and its thickness is
         # held at the half-thickness rather than left free under the kinematic
         # condition (same reasoning as planar's pinned inflow cross-section).
-        eqs += DirichletBC(mesh_y=True, velocity_x=0, velocity_y=0) @ "far"
+        if self.far_field == "rest":
+            eqs += DirichletBC(mesh_y=True, velocity_x=0, velocity_y=0) @ "far"
+        elif self.far_field == "radial":
+            # The area-conserving far field u_r = c(t)/r keeps the film at its
+            # undisturbed thickness, so mesh_y and velocity_y stay pinned. Its
+            # value depends on X and U, but it enters as a parameter updated
+            # between output intervals, never as an unknown: DirichletBC is
+            # legal, and the dof layout (hence the checkpoints) matches "rest".
+            far_velocity = self.define_global_parameter(far_field_velocity=0.0)
+            eqs += DirichletBC(mesh_y=True, velocity_x=far_velocity, velocity_y=0) @ "far"
+        else:
+            raise ValueError(f"far_field must be 'rest' or 'radial', not {self.far_field!r}")
         # TRAP (measured, see the module docstring's CORNER section): the
         # free-surface kinematic multiplier at the far/interface CORNER must be
         # pinned, or the Jacobian is exactly singular.
@@ -411,6 +431,23 @@ class AxisymmetricComovingProblem(Problem):
         mesh = self.get_mesh("liquid/interface")
         return min(n.x(0) for n in mesh.nodes())
 
+    def midplane_radial_velocity(self, radius: float) -> float:
+        """Radial velocity on the midplane at ``radius``, linearly interpolated.
+
+        Reads nodal values on ``"symmetry"`` so the far-field switch can see
+        the disturbance arrive without optional field output.
+        """
+
+        index = self.get_mesh("liquid").get_nodal_field_indices()["velocity_x"]
+        samples = sorted(
+            (float(n.x(0)), float(n.value(index)))
+            for n in self.get_mesh("liquid/symmetry").nodes()
+        )
+        radii = np.asarray([item[0] for item in samples])
+        if not radii[0] <= radius <= radii[-1]:
+            raise ValueError(f"probe radius {radius} lies outside the window")
+        return float(np.interp(radius, radii, [item[1] for item in samples]))
+
     def rim_height(self) -> float:
         """Return full rim height from the quadratic free-surface geometry.
 
@@ -458,7 +495,9 @@ class AxisymmetricComovingProblem(Problem):
         """Current liquid volume of the meshed window (half sheet, z >= 0)."""
         return float(self.get_mesh("liquid").evaluate_observable("volume"))
 
-    def expected_volume(self, volume0: float, x0: float | None = None) -> float:
+    def expected_volume(
+        self, volume0: float, x0: float | None = None, far_outflow: float = 0.0
+    ) -> float:
         """Volume the window MUST hold, given how far it has swept outward.
 
         The lab case's exact global volume conservation is unavailable here by
@@ -479,8 +518,13 @@ class AxisymmetricComovingProblem(Problem):
         A drift in ``V - V_expected`` is therefore exactly as diagnostic as a
         drift in ``V`` is for the lab case: it indicts the ALE mass balance,
         the ``EnforcedBC`` on the far edge, or the free-surface kinematics.
+
+        With ``far_field="radial"`` the edge film moves at ``u_far`` and the
+        inflow is reduced by ``pi*(X+L)*u_far``. ``far_outflow`` is the
+        caller's running integral of ``(X+L)*u_far`` dt, subtracted as
+        ``pi*far_outflow``; it is zero for ``"rest"``.
         """
         x_start = self.X0 if x0 is None else x0
         outer_now = self.window_position() + self.window_length
         outer_0 = x_start + self.window_length
-        return volume0 + 0.5 * math.pi * (outer_now**2 - outer_0**2)
+        return volume0 + 0.5 * math.pi * (outer_now**2 - outer_0**2) - math.pi * far_outflow

@@ -308,6 +308,100 @@ def test_adapter_rejects_sponge_extending_beyond_window(
     assert "must not exceed window length" in capsys.readouterr().err
 
 
+def test_far_field_maps_to_driver_and_preserves_absent_default(tmp_path: Path) -> None:
+    baseline = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    args = adapter.case_to_driver_args(_write_case(tmp_path, baseline), tmp_path / "a")
+    assert args.far_field == "rest"
+    assert args.far_field_trigger is None
+
+    radial = copy.deepcopy(baseline)
+    radial["physics"]["far_field"] = {"mode": "radial", "trigger_fraction": 0.3}
+    path = tmp_path / "radial.json"
+    path.write_text(json.dumps(radial))
+    args = adapter.case_to_driver_args(path, tmp_path / "b")
+    assert args.far_field == "radial"
+    assert args.far_field_trigger == 0.3
+    assert args.far_field_probe_offset is None
+
+
+@pytest.mark.parametrize(
+    "far_field,match",
+    [
+        ({"mode": "rest", "ramp_time": 1.0}, "takes no other keys"),
+        ({"mode": "radial", "damping": 1.0}, "accepts only"),
+        ({"mode": "sponge"}, "unsupported"),
+        ("radial", "must be an object"),
+    ],
+)
+def test_adapter_rejects_invalid_far_field(tmp_path: Path, far_field, match) -> None:
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["far_field"] = far_field
+    with pytest.raises((TypeError, ValueError), match=match):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+def test_small_fem_radial_far_field_conserves_volume_and_restarts(tmp_path):
+    """A real coarse solve with the far field latched on from the first sample."""
+    import run_viscoelastic_axi as driver
+
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["output"].update(cadence=0.02, checkpoint_every=1)
+    case["physics"]["far_field"] = {
+        "mode": "radial",
+        "probe_offset_fraction": 0.5,
+        "trigger_fraction": 1e-12,
+        "ramp_time": 0.0,
+    }
+    scratch = tmp_path / "project-scratch"
+    scratch.mkdir()
+    bundle = tmp_path / "attempt-bundle"
+    parent_input = scratch / "parent-input.json"
+    parent_input.write_text(json.dumps(case))
+    parent_metadata = driver.run_case(adapter.case_to_driver_args(parent_input, bundle / "parent"))
+    parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+    parent_output = parent / "run_viscoelastic_axi"
+    far = np.loadtxt(parent_output / "far-field.txt", ndmin=2)
+    assert parent_metadata["far_field"]["mode"] == "radial"
+    assert parent_metadata["far_field_on_time"] == pytest.approx(far[0, 0])
+    # Latched at the first sample, imposed from the second interval on.
+    assert far[0, 2] == 0.0 and far[1, 2] > 0.0 and far[1, 3] > 0.0
+    assert parent_metadata["far_field_outflow"] > 0.0
+    assert parent_metadata["worst_volume_rel_error"] < 1e-6
+
+    rows = np.loadtxt(parent_output / "control.txt", ndmin=2)
+    continued = copy.deepcopy(case)
+    continued["completion"]["value"] = 0.08
+    continued["restart"] = {
+        **{
+            key: _reference(path)
+            for key, path in {
+                "checkpoint": parent / "checkpoints" / "ckpt_00002.dump",
+                "input_case": parent_input,
+                "metadata": parent / "case.json",
+                "control": parent_output / "control.txt",
+                "rim_height": parent_output / "rim-height.txt",
+                "pvd": parent_output / "liquid.pvd",
+            }.items()
+        },
+        "time": float(rows[-1, 0]),
+        "control_index": 2,
+        "field_index": 2,
+    }
+    next_input = scratch / "next-input.json"
+    next_input.write_text(json.dumps(continued))
+    driver.run_case(adapter.case_to_driver_args(next_input, bundle / "next"))
+    del continued["restart"]
+    reference_input = scratch / "reference-input.json"
+    reference_input.write_text(json.dumps(continued))
+    driver.run_case(adapter.case_to_driver_args(reference_input, bundle / "reference"))
+    suffix = Path("axi_viscoelastic_Oh_1_G_1_lambda_inf/run_viscoelastic_axi")
+    for filename in ("control.txt", "far-field.txt"):
+        resumed = np.loadtxt(bundle / "next" / suffix / filename)
+        reference = np.loadtxt(bundle / "reference" / suffix / filename)
+        np.testing.assert_allclose(resumed, reference, rtol=1e-9, atol=1e-10)
+
+
 def test_adapter_rejects_nonlaboratory_axisymmetric_case(tmp_path: Path) -> None:
     case = _case({"kind": "time", "value": 1.0})
     case["geometry"]["frame"] = "co-moving"
