@@ -312,25 +312,26 @@ def test_far_field_maps_to_driver_and_preserves_absent_default(tmp_path: Path) -
     baseline = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
     args = adapter.case_to_driver_args(_write_case(tmp_path, baseline), tmp_path / "a")
     assert args.far_field == "rest"
-    assert args.far_field_trigger is None
+    assert args.far_field_extension is None
 
-    radial = copy.deepcopy(baseline)
-    radial["physics"]["far_field"] = {"mode": "radial", "trigger_fraction": 0.3}
-    path = tmp_path / "radial.json"
-    path.write_text(json.dumps(radial))
+    membrane = copy.deepcopy(baseline)
+    membrane["physics"]["far_field"] = {"mode": "membrane", "extension": 800.0}
+    path = tmp_path / "membrane.json"
+    path.write_text(json.dumps(membrane))
     args = adapter.case_to_driver_args(path, tmp_path / "b")
-    assert args.far_field == "radial"
-    assert args.far_field_trigger == 0.3
-    assert args.far_field_probe_offset is None
+    assert args.far_field == "membrane"
+    assert args.far_field_extension == 800.0
+    assert args.far_field_inner_fraction is None
 
 
 @pytest.mark.parametrize(
     "far_field,match",
     [
         ({"mode": "rest", "ramp_time": 1.0}, "takes no other keys"),
-        ({"mode": "radial", "damping": 1.0}, "accepts only"),
+        ({"mode": "membrane", "extension": 10.0, "damping": 1.0}, "accepts only"),
+        ({"mode": "membrane"}, "requires extension"),
         ({"mode": "sponge"}, "unsupported"),
-        ("radial", "must be an object"),
+        ("membrane", "must be an object"),
     ],
 )
 def test_adapter_rejects_invalid_far_field(tmp_path: Path, far_field, match) -> None:
@@ -340,19 +341,14 @@ def test_adapter_rejects_invalid_far_field(tmp_path: Path, far_field, match) -> 
         adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
 
 
-def test_small_fem_radial_far_field_conserves_volume_and_restarts(tmp_path):
-    """A real coarse solve with the far field latched on from the first sample."""
+def test_small_fem_membrane_far_field_conserves_volume_and_restarts(tmp_path):
+    """A real coarse solve coupled to the far-field membrane, and its restart."""
     import run_viscoelastic_axi as driver
 
     case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
     case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
     case["output"].update(cadence=0.02, checkpoint_every=1)
-    case["physics"]["far_field"] = {
-        "mode": "radial",
-        "probe_offset_fraction": 0.5,
-        "trigger_fraction": 1e-12,
-        "ramp_time": 0.0,
-    }
+    case["physics"]["far_field"] = {"mode": "membrane", "extension": 20.0, "node_spacing": 0.25}
     scratch = tmp_path / "project-scratch"
     scratch.mkdir()
     bundle = tmp_path / "attempt-bundle"
@@ -362,12 +358,15 @@ def test_small_fem_radial_far_field_conserves_volume_and_restarts(tmp_path):
     parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
     parent_output = parent / "run_viscoelastic_axi"
     far = np.loadtxt(parent_output / "far-field.txt", ndmin=2)
-    assert parent_metadata["far_field"]["mode"] == "radial"
-    assert parent_metadata["far_field_on_time"] == pytest.approx(far[0, 0])
-    # Latched at the first sample, imposed from the second interval on.
-    assert far[0, 2] == 0.0 and far[1, 2] > 0.0 and far[1, 3] > 0.0
-    assert parent_metadata["far_field_outflow"] > 0.0
+    assert far.shape == (2, len(driver.FAR_FIELD_HEADER))
+    assert parent_metadata["far_field"]["mode"] == "membrane"
+    # The drive reaches the membrane, and its edge state is a thin film.
+    assert np.any(far[:, 1] != 0.0)
+    assert np.all(np.abs(far[:, 3] - 1.0) < 0.1)
+    assert np.all(np.abs(far[:, 4:7].sum(axis=1)) < 1e-12)
+    assert (parent / "checkpoints" / "ckpt_00002.farfield.npz").is_file()
     assert parent_metadata["worst_volume_rel_error"] < 1e-6
+    assert parent_metadata["far_field_outer_velocity_max"] < driver.FAR_FIELD_OUTER_TOLERANCE
 
     rows = np.loadtxt(parent_output / "control.txt", ndmin=2)
     continued = copy.deepcopy(case)

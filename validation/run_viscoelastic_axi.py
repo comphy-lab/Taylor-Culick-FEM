@@ -96,98 +96,111 @@ def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | N
     return parameters
 
 
-FAR_FIELD_DEFAULTS = {
-    "probe_offset_fraction": 0.1,
-    "trigger_fraction": 0.5,
-    "ramp_time": 5.0,
-}
+# Largest |u| tolerated in the outer tenth of the membrane extension.
+FAR_FIELD_OUTER_TOLERANCE = 1e-6
+FAR_FIELD_HEADER = [
+    "t", "drive", "u_edge", "h_edge", "log_c_rr", "log_c_zz", "log_c_th", "outflow",
+    "outer_velocity",
+]
 
 
 def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
-    """Return the far-edge condition carried by CLI args, defaults filled in."""
+    """Return the far-edge condition carried by CLI args."""
 
     mode = getattr(args, "far_field", "rest")
     tuning = {
-        "probe_offset_fraction": getattr(args, "far_field_probe_offset", None),
-        "trigger_fraction": getattr(args, "far_field_trigger", None),
-        "ramp_time": getattr(args, "far_field_ramp", None),
+        "inner_fraction": getattr(args, "far_field_inner_fraction", None),
+        "extension": getattr(args, "far_field_extension", None),
+        "node_spacing": getattr(args, "far_field_node_spacing", None),
     }
     if mode == "rest":
         if any(value is not None for value in tuning.values()):
-            raise ValueError("far-field probe, trigger and ramp require --far-field=radial")
+            raise ValueError("far-field membrane settings require --far-field=membrane")
         return {"mode": "rest"}
-    if mode != "radial":
+    if mode != "membrane":
         raise ValueError(f"unknown far-field mode {mode!r}")
-    config: dict[str, object] = {"mode": "radial"}
-    for key, value in tuning.items():
-        config[key] = FAR_FIELD_DEFAULTS[key] if value is None else float(value)
-    if not 0 < config["probe_offset_fraction"] < 1:
-        raise ValueError("far-field probe offset must lie strictly inside the window")
-    if not 0 < config["trigger_fraction"] <= 1:
-        raise ValueError("far-field trigger fraction must lie in (0, 1]")
-    if not config["ramp_time"] >= 0:
-        raise ValueError("far-field ramp time must be non-negative")
+    if tuning["extension"] is None:
+        raise ValueError("--far-field=membrane requires an explicit --far-field-extension")
+    config: dict[str, object] = {
+        "mode": "membrane",
+        "inner_fraction": 0.5 if tuning["inner_fraction"] is None else float(tuning["inner_fraction"]),
+        "extension": float(tuning["extension"]),
+        "node_spacing": 0.5 if tuning["node_spacing"] is None else float(tuning["node_spacing"]),
+    }
+    if not 0 < config["inner_fraction"] < 1:
+        raise ValueError("far-field inner fraction must lie strictly inside the window")
+    if not config["extension"] > 0 or not config["node_spacing"] > 0:
+        raise ValueError("far-field extension and node spacing must be positive")
     return config
 
 
-@dataclass
-class FarFieldSwitch:
-    """Latch the radial far field on once the elastic disturbance reaches the edge.
+class MembraneCoupling:
+    """Overlapping coupling of the 2D window with the far-field membrane.
 
-    Ahead of an elastic rim the film flows as ``u_r = c/r`` at constant
-    thickness with ``c = X U``.  Before that field reaches the window edge the
-    film there is at rest, so the switch starts off and watches a midplane
-    probe ``probe_offset_fraction * L`` inside the edge.  It latches on when
-    the probe carries ``trigger_fraction`` of the rim flux ``X U``, then ramps
-    the imposed edge velocity ``weight * X U / (X + L)`` in over
-    ``ramp_time``.  ``outflow`` integrates ``(X + L) u_far`` dt: it is the
-    volume correction divided by ``pi``, and ``2 * outflow`` is the swept
-    area ``r^2 - r0^2`` shared by all film beyond the edge, which fixes the
-    incoming hoop log-stretch ``q = log(r^2 / (r^2 - 2 outflow))``.
+    The membrane covers ``[X + a L, X0 + L + extension]``. Each output interval
+    it is advanced first, driven at its inner end with the 2D midplane
+    velocity there (linearly extrapolated from the last two samples), and its
+    state at the coming edge radius ``X + L`` then fixes the 2D edge velocity,
+    thickness and conformation for that interval. Waves leave the window
+    through the membrane instead of reflecting off a rest condition; ahead of
+    the pulse the membrane is at rest, so this reduces to ``"rest"`` there.
+    ``outflow`` integrates ``(X+L)(h_e u_e - (h_e-1) Xdot)`` dt for the
+    window-volume identity.
     """
 
-    probe_offset_fraction: float
-    trigger_fraction: float
-    ramp_time: float
-    on_time: float | None = None
-    outflow: float = 0.0
+    def __init__(self, membrane, *, inner_fraction: float, length: float) -> None:
+        self.membrane = membrane
+        self.inner_fraction = inner_fraction
+        self.length = length
+        self.previous: tuple[float, float] | None = None
+        self.outflow = 0.0
+        self.outer_velocity = 0.0
 
-    def weight(self, time: float) -> float:
-        if self.on_time is None or time <= self.on_time:
-            return 0.0
-        if self.ramp_time == 0:
-            return 1.0
-        return min(1.0, (time - self.on_time) / self.ramp_time)
+    def before_interval(self, time: float, target: float, radius: float, speed: float,
+                        drive: float):
+        interval = target - time
+        if self.previous is None or not time > self.previous[0]:
+            drive_end = drive
+        else:
+            slope = (drive - self.previous[1]) / (time - self.previous[0])
+            drive_end = drive + slope * interval
+        self.previous = (time, drive)
+        predicted = radius + speed * interval
+        self.membrane.advance(
+            target, predicted + self.inner_fraction * self.length, drive, drive_end
+        )
+        tail = self.membrane.radii() >= self.membrane.outer - 0.1 * (
+            self.membrane.outer - self.membrane.inner
+        )
+        self.outer_velocity = max(self.outer_velocity, float(np.max(np.abs(self.membrane.u[tail]))))
+        return self.membrane.state_at(predicted + self.length)
 
-    def probe_radius(self, radius: float, length: float) -> float:
-        return radius + length * (1.0 - self.probe_offset_fraction)
+    def after_interval(self, edge, time_end: float, outer_start: float, outer_end: float,
+                       speed_start: float, speed_end: float, interval: float) -> None:
+        h, u = edge.thickness, edge.velocity
+        # The 2D solver lands a hair past its target; carry the membrane clock
+        # with it so the next interval, and any restart, starts from one time.
+        self.membrane.time = time_end
+        self.outflow += 0.5 * interval * (
+            outer_start * (h * u - (h - 1.0) * speed_start)
+            + outer_end * (h * u - (h - 1.0) * speed_end)
+        )
 
-    def edge_state(
-        self, target: float, radius: float, speed: float, length: float, interval: float
-    ) -> tuple[float, float]:
-        """Return (edge velocity, hoop log-stretch) to hold over the next interval."""
+    def save(self, path: Path) -> None:
+        previous = np.array(self.previous if self.previous is not None else (np.nan, np.nan))
+        with path.open("xb") as stream:
+            np.savez(stream, **self.membrane.to_arrays(), previous=previous,
+                     outflow=np.array(self.outflow), outer_velocity=np.array(self.outer_velocity))
 
-        outer = radius + length
-        velocity = self.weight(target) * radius * speed / outer
-        outer_end = outer + speed * interval
-        swept = 2.0 * (self.outflow + velocity * 0.5 * (outer + outer_end) * interval)
-        if swept >= outer_end**2:
-            raise RuntimeError("far-field swept area exceeds the edge radius squared")
-        return velocity, math.log(outer_end**2 / (outer_end**2 - swept))
+    def load(self, path: Path) -> None:
+        from taylor_culick_fem.farfield_membrane import FarFieldMembrane
 
-    def advance(self, velocity: float, outer_start: float, outer_end: float, interval: float) -> None:
-        self.outflow += velocity * 0.5 * (outer_start + outer_end) * interval
-
-    def observe(
-        self, time: float, radius: float, speed: float, probe_radius: float, probe_velocity: float
-    ) -> float:
-        """Return the probe-to-rim flux ratio and latch the switch on when due."""
-
-        rim_flux = radius * speed
-        ratio = probe_radius * probe_velocity / rim_flux if rim_flux > 0 else 0.0
-        if self.on_time is None and ratio >= self.trigger_fraction:
-            self.on_time = time
-        return ratio
+        with np.load(path) as data:
+            self.membrane = FarFieldMembrane.from_arrays(data)
+            previous = data["previous"]
+            self.previous = None if np.isnan(previous).any() else (float(previous[0]), float(previous[1]))
+            self.outflow = float(data["outflow"])
+            self.outer_velocity = float(data["outer_velocity"])
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -287,7 +300,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
                 **expected,
                 "passive_conformation": expected.get("passive_conformation", False),
             }
-            # A missing far field predates the radial mode and means "rest".
+            # A missing far field predates the far-field modes and means "rest".
             current["far_field"] = current.get("far_field", {"mode": "rest"})
             expected["far_field"] = expected.get("far_field", {"mode": "rest"})
         if key not in case or current != expected:
@@ -390,11 +403,13 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         if not np.allclose(height_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
             raise ValueError("restart rim-height and control times disagree")
     far_rows = None
-    if _far_field_config(args)["mode"] == "radial":
+    far_state = None
+    if _far_field_config(args)["mode"] == "membrane":
         far_path = paths["control"].parent / "far-field.txt"
-        far_rows = np.loadtxt(far_path, ndmin=2) if far_path.is_file() else np.empty((0, 7))
+        width = len(FAR_FIELD_HEADER)
+        far_rows = np.loadtxt(far_path, ndmin=2) if far_path.is_file() else np.empty((0, width))
         if (
-            far_rows.shape[1] != 7
+            far_rows.shape[1] != width
             or len(far_rows) < control_index
             or not np.all(np.isfinite(far_rows))
         ):
@@ -402,6 +417,9 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         far_rows = far_rows[:control_index]
         if not np.allclose(far_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
             raise ValueError("restart far-field and control times disagree")
+        far_state = paths["checkpoint"].with_suffix(".farfield.npz")
+        if not far_state.is_file():
+            raise ValueError("restart checkpoint has no far-field membrane state")
     if paths["checkpoint"].parent != root / "checkpoints":
         raise ValueError("restart checkpoint does not belong to the parent case")
     if paths["control"].parent != root / "run_viscoelastic_axi":
@@ -417,6 +435,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "rows": rows,
         "height_rows": height_rows,
         "far_rows": far_rows,
+        "far_state": far_state,
         "fields": fields,
         "time": float(time),
         "control_index": control_index,
@@ -849,17 +868,30 @@ def run_case(args: argparse.Namespace) -> dict:
             # Preserve the original ALE reference before restoring the deformed state.
             volume0 = problem.volume()
             radius0 = problem.window_position()
-            switch = None
-            if far_field["mode"] == "radial":
-                switch = FarFieldSwitch(
-                    probe_offset_fraction=far_field["probe_offset_fraction"],
-                    trigger_fraction=far_field["trigger_fraction"],
-                    ramp_time=far_field["ramp_time"],
+            coupling = None
+            if far_field["mode"] == "membrane":
+                from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+
+                inner = radius0 + far_field["inner_fraction"] * args.length
+                outer = radius0 + args.length + far_field["extension"]
+                coupling = MembraneCoupling(
+                    FarFieldMembrane(
+                        elastic_modulus=args.elastic_modulus,
+                        viscosity=math.sqrt(2.0) * args.oh,
+                        inner=inner,
+                        outer=outer,
+                        nodes=math.ceil((outer - inner) / far_field["node_spacing"]) + 1,
+                    ),
+                    inner_fraction=far_field["inner_fraction"],
+                    length=args.length,
                 )
                 if restart is not None:
-                    last_far = restart["far_rows"][-1]
-                    switch.on_time = None if last_far[6] < 0 else float(last_far[6])
-                    switch.outflow = float(last_far[4])
+                    coupling.load(restart["far_state"])
+                    if not math.isclose(
+                        coupling.membrane.time, restart["time"], rel_tol=1e-10, abs_tol=1e-10
+                    ):
+                        raise ValueError("far-field membrane state time disagrees with lineage")
+                    metadata["restart_far_field_state"] = _file_reference(restart["far_state"])
             if restart is not None:
                 checkpoint = restart["paths"]["checkpoint"]
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
@@ -903,7 +935,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 inferred_volume0 = float(
                     row[5]
                     - math.pi / 2 * ((row[1] + args.length) ** 2 - (radius0 + args.length) ** 2)
-                    + math.pi * (switch.outflow if switch is not None else 0.0)
+                    + math.pi * (coupling.outflow if coupling is not None else 0.0)
                 )
                 volume0 = restart["metadata"].get("volume_initial_reference", inferred_volume0)
                 if not math.isfinite(volume0) or not math.isclose(
@@ -959,14 +991,13 @@ def run_case(args: argparse.Namespace) -> dict:
             height_segment = problem.create_text_file_output(
                 "rim-height-segment.txt", header=["t", "H"]
             )
-            far_header = [
-                "t", "weight", "u_far", "hoop_log_stretch", "outflow", "probe_ratio", "on_time"
-            ]
             far_history = far_segment = None
-            if switch is not None:
-                far_history = problem.create_text_file_output("far-field.txt", header=far_header)
+            if coupling is not None:
+                far_history = problem.create_text_file_output(
+                    "far-field.txt", header=FAR_FIELD_HEADER
+                )
                 far_segment = problem.create_text_file_output(
-                    "far-field-segment.txt", header=far_header
+                    "far-field-segment.txt", header=FAR_FIELD_HEADER
                 )
             sponge_history = None
             if sponge is not None and sponge.gamma_max > 0:
@@ -1048,19 +1079,19 @@ def run_case(args: argparse.Namespace) -> dict:
                         min(args.max_step, interval) if args.max_step is not None else interval
                     )
                     startstep = min(maxstep, max(interval * 1e-2, 1e-6))
-                if switch is not None:
+                if coupling is not None:
                     # Integrate over the solver's own clock, not the nominal
                     # targets, so a restart lands on the same outflow history.
                     start_now = float(problem.get_current_time(as_float=True))
-                    outer_start = problem.window_position() + args.length
-                    far_velocity, far_stretch = switch.edge_state(
-                        float(target),
-                        problem.window_position(),
-                        problem.retraction_speed(),
-                        args.length,
-                        float(target) - start_now,
+                    radius_start = problem.window_position()
+                    speed_start = problem.retraction_speed()
+                    drive = problem.midplane_radial_velocity(
+                        radius_start + far_field["inner_fraction"] * args.length
                     )
-                    problem.set_far_field(far_velocity, far_stretch)
+                    edge = coupling.before_interval(
+                        start_now, float(target), radius_start, speed_start, drive
+                    )
+                    problem.set_far_field(edge.velocity, edge.thickness, edge.log_conformation())
                 problem.run(
                     float(target),
                     startstep=startstep,
@@ -1072,28 +1103,32 @@ def run_case(args: argparse.Namespace) -> dict:
                 radius = problem.window_position()
                 speed = problem.retraction_speed()
                 volume = problem.volume()
-                if switch is not None:
-                    switch.advance(far_velocity, outer_start, radius + args.length, now - start_now)
-                    probe = switch.probe_radius(radius, args.length)
-                    ratio = switch.observe(
-                        now, radius, speed, probe, problem.midplane_radial_velocity(probe)
+                if coupling is not None:
+                    coupling.after_interval(
+                        edge,
+                        now,
+                        radius_start + args.length,
+                        radius + args.length,
+                        speed_start,
+                        speed,
+                        now - start_now,
                     )
                     far_row = [
                         now,
-                        switch.weight(now),
-                        far_velocity,
-                        far_stretch,
-                        switch.outflow,
-                        ratio,
-                        -1.0 if switch.on_time is None else switch.on_time,
+                        drive,
+                        edge.velocity,
+                        edge.thickness,
+                        *edge.log_conformation(),
+                        coupling.outflow,
+                        coupling.outer_velocity,
                     ]
                     _assert_finite("far-field row", far_row)
                     far_history.add_row(*far_row)
                     far_segment.add_row(*far_row)
                 expected = (
                     problem.expected_volume(volume0, radius0)
-                    if switch is None
-                    else problem.expected_volume(volume0, radius0, far_outflow=switch.outflow)
+                    if coupling is None
+                    else problem.expected_volume(volume0, radius0, far_outflow=coupling.outflow)
                 )
                 volume_error = abs(volume - expected) / max(abs(expected), 1e-300)
                 tip_pin = abs(radius - problem.hole_radius())
@@ -1154,6 +1189,8 @@ def run_case(args: argparse.Namespace) -> dict:
                     problem.save_state(
                         str(checkpoint_dir / f"ckpt_{control_index:05d}.dump"), quiet=True
                     )
+                    if coupling is not None:
+                        coupling.save(checkpoint_dir / f"ckpt_{control_index:05d}.farfield.npz")
                     _write_field_history(
                         Path(problem.get_output_directory()), restart["fields"] if restart else []
                     )
@@ -1175,6 +1212,11 @@ def run_case(args: argparse.Namespace) -> dict:
             # normal velocity is -U.  Psi=0 is an inflow condition only while
             # U>=0; elastic recoil would turn that edge into outflow and make
             # the strong conformation condition invalid.
+            if coupling is not None and coupling.outer_velocity > FAR_FIELD_OUTER_TOLERANCE:
+                failures.append(
+                    "far-field pulse reached the end of the membrane extension "
+                    f"(|u| = {coupling.outer_velocity:.3e} in its outer tenth)"
+                )
             if args.max_recoil_speed is not None and minimum_sampled_speed < -args.max_recoil_speed:
                 failures.append(
                     "far boundary ceased to be inflow at an output sample "
@@ -1252,8 +1294,10 @@ def run_case(args: argparse.Namespace) -> dict:
                     "sponge_diagnostics_available": bool(sponge_diagnostics),
                     "sponge_diagnostics_final": sponge_diagnostics,
                     "largest_positive_sponge_power": largest_positive_sponge_power,
-                    "far_field_on_time": switch.on_time if switch is not None else None,
-                    "far_field_outflow": switch.outflow if switch is not None else None,
+                    "far_field_outflow": coupling.outflow if coupling is not None else None,
+                    "far_field_outer_velocity_max": (
+                        coupling.outer_velocity if coupling is not None else None
+                    ),
                     "opening_established": arrest_tracker.opening_established,
                     "arrest_detected": arrest is not None,
                     "arrest": arrest,
@@ -1370,13 +1414,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--far-field",
-        choices=("rest", "radial"),
+        choices=("rest", "membrane"),
         default="rest",
-        help="far-edge film: at rest (default) or the radial elastic far field X U / r",
+        help="far-edge film: at rest (default) or coupled to the thin-film far-field membrane",
     )
-    parser.add_argument("--far-field-probe-offset", type=_positive_float, default=None)
-    parser.add_argument("--far-field-trigger", type=_positive_float, default=None)
-    parser.add_argument("--far-field-ramp", type=_nonnegative_float, default=None)
+    parser.add_argument("--far-field-inner-fraction", type=_positive_float, default=None)
+    parser.add_argument("--far-field-extension", type=_positive_float, default=None)
+    parser.add_argument("--far-field-node-spacing", type=_positive_float, default=None)
     parser.add_argument(
         "--fixed-step",
         type=_positive_float,

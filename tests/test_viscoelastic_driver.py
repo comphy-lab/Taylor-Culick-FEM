@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 from pathlib import Path
@@ -19,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
 
 from run_viscoelastic_axi import (
     ArrestTracker,
-    FarFieldSwitch,
     HeightPlateauTracker,
+    MembraneCoupling,
     _output_times,
     _zero_crossing,
     build_parser,
@@ -195,58 +194,68 @@ def test_non_saturated_height_histories_do_not_pass(height) -> None:
     assert _height_certificate(height) is None
 
 
-def _switch(**overrides) -> FarFieldSwitch:
-    values = {"probe_offset_fraction": 0.1, "trigger_fraction": 0.5, "ramp_time": 5.0}
-    values.update(overrides)
-    return FarFieldSwitch(**values)
+class _StubMembrane:
+    """Stands in for the far-field solver: records calls, returns a fixed edge."""
+
+    def __init__(self, edge):
+        self.edge, self.calls = edge, []
+        self.inner, self.outer = 10.0, 100.0
+        self.u = np.zeros(11)
+
+    def radii(self):
+        return np.linspace(self.inner, self.outer, 11)
+
+    def advance(self, t1, inner1, drive0, drive1):
+        self.calls.append((t1, inner1, drive0, drive1))
+
+    def state_at(self, radius):
+        self.calls.append(("state", radius))
+        return self.edge
 
 
-def test_far_field_is_off_until_the_probe_carries_the_trigger_flux() -> None:
-    switch = _switch()
-    assert switch.edge_state(1.0, radius=10.0, speed=1.0, length=100.0, interval=0.05) == (
-        0.0,
-        0.0,
-    )
-    # Probe at r=100 carries 40% of the rim flux X U = 10: not yet.
-    assert switch.observe(1.0, 10.0, 1.0, 100.0, 0.04) == pytest.approx(0.4)
-    assert switch.on_time is None
-    assert switch.observe(2.0, 10.0, 1.0, 100.0, 0.06) == pytest.approx(0.6)
-    assert switch.on_time == 2.0
-    # Latched: a later quiet probe does not switch it off.
-    switch.observe(3.0, 10.0, 1.0, 100.0, 0.0)
-    assert switch.on_time == 2.0
+def test_membrane_coupling_extrapolates_the_drive_and_predicts_the_edge() -> None:
+    from taylor_culick_fem.farfield_membrane import EdgeState
+
+    edge = EdgeState(0.1, 1.0, 1.0, 1.0)
+    stub = _StubMembrane(edge)
+    coupling = MembraneCoupling(stub, inner_fraction=0.5, length=40.0)
+    assert coupling.before_interval(0.0, 0.5, 5.0, 2.0, 0.2) is edge
+    assert stub.calls[0] == (0.5, 5.0 + 1.0 + 20.0, 0.2, 0.2)
+    assert stub.calls[1] == ("state", 5.0 + 1.0 + 40.0)
+    coupling.before_interval(0.5, 1.0, 6.0, 2.0, 0.3)
+    # Linear extrapolation of the drive from (0, 0.2) and (0.5, 0.3).
+    assert stub.calls[2][3] == pytest.approx(0.4)
 
 
-def test_far_field_weight_ramps_linearly_and_saturates() -> None:
-    switch = _switch(ramp_time=4.0)
-    switch.on_time = 10.0
-    assert switch.weight(10.0) == 0.0
-    assert switch.weight(11.0) == pytest.approx(0.25)
-    assert switch.weight(20.0) == 1.0
-    instant = _switch(ramp_time=0.0)
-    instant.on_time = 10.0
-    assert instant.weight(10.0 + 1e-9) == 1.0
+def test_membrane_coupling_outflow_is_the_edge_volume_correction() -> None:
+    from taylor_culick_fem.farfield_membrane import EdgeState
+
+    coupling = MembraneCoupling(_StubMembrane(None), inner_fraction=0.5, length=40.0)
+    coupling.after_interval(EdgeState(0.0, 1.0, 1.0, 1.0), 0.5, 50.0, 51.0, 2.0, 2.0, 0.5)
+    assert coupling.outflow == 0.0
+    # Film moving at u_e with unit thickness: outflow is the integral of r u_e.
+    coupling.after_interval(EdgeState(0.1, 1.0, 1.0, 1.0), 1.0, 50.0, 51.0, 2.0, 2.0, 0.5)
+    assert coupling.outflow == pytest.approx(0.5 * 0.5 * (50.0 + 51.0) * 0.1)
+    # A thicker film at rest swallowed at Xdot = 2 adds (h - 1) Xdot of inflow.
+    thick = MembraneCoupling(_StubMembrane(None), inner_fraction=0.5, length=40.0)
+    thick.after_interval(EdgeState(0.0, 1.1, 1.0, 1.0), 1.0, 50.0, 50.0, 2.0, 2.0, 1.0)
+    assert thick.outflow == pytest.approx(-50.0 * 0.1 * 2.0)
 
 
-def test_far_field_edge_state_is_the_area_conserving_map() -> None:
-    switch = _switch(ramp_time=0.0)
-    switch.on_time = 0.0
-    radius, speed, length, interval = 10.0, 1.0, 90.0, 0.5
-    velocity, stretch = switch.edge_state(1.0, radius, speed, length, interval)
-    assert velocity == pytest.approx(radius * speed / (radius + length))
-    # c = r u_far = 10 over the interval; the edge moves from 100 to 100.5.
-    swept = 2.0 * velocity * 0.5 * (100.0 + 100.5) * interval
-    assert stretch == pytest.approx(math.log(100.5**2 / (100.5**2 - swept)))
-    switch.advance(velocity, 100.0, 100.5, interval)
-    assert switch.outflow == pytest.approx(swept / 2)
-
-
-def test_rest_far_field_rejects_radial_tuning(tmp_path, capsys) -> None:
+@pytest.mark.parametrize(
+    "extra,message",
+    [
+        (["--far-field-extension", "100"], "require --far-field=membrane"),
+        (["--far-field", "membrane"], "explicit --far-field-extension"),
+        (["--far-field", "membrane", "--far-field-extension", "100",
+          "--far-field-inner-fraction", "1.5"], "strictly inside the window"),
+    ],
+)
+def test_far_field_membrane_settings_are_validated(tmp_path, capsys, extra, message) -> None:
     parser = build_parser()
     args = parser.parse_args(
-        ["--results", str(tmp_path), "--oh", "1", "--elastic-modulus", "1",
-         "--far-field-trigger", "0.5"]
+        ["--results", str(tmp_path), "--oh", "1", "--elastic-modulus", "1", *extra]
     )
     with pytest.raises(SystemExit):
         validate_args(parser, args)
-    assert "require --far-field=radial" in capsys.readouterr().err
+    assert message in capsys.readouterr().err

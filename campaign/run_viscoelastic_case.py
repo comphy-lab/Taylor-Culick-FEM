@@ -170,18 +170,18 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         if mode == "rest":
             if set(far_field) != {"mode"}:
                 raise ValueError("physics.far_field mode 'rest' takes no other keys")
-        elif mode == "radial":
-            allowed = {"mode", "probe_offset_fraction", "trigger_fraction", "ramp_time"}
-            if not set(far_field) <= allowed:
+        elif mode == "membrane":
+            allowed = {"mode", "inner_fraction", "extension", "node_spacing"}
+            if not set(far_field) <= allowed or "extension" not in far_field:
                 raise ValueError(
-                    "physics.far_field radial accepts only probe_offset_fraction, "
-                    "trigger_fraction and ramp_time"
+                    "physics.far_field membrane requires extension and accepts only "
+                    "inner_fraction, extension and node_spacing"
                 )
-            arguments.extend(["--far-field", "radial"])
+            arguments.extend(["--far-field", "membrane"])
             for key, flag in (
-                ("probe_offset_fraction", "--far-field-probe-offset"),
-                ("trigger_fraction", "--far-field-trigger"),
-                ("ramp_time", "--far-field-ramp"),
+                ("inner_fraction", "--far-field-inner-fraction"),
+                ("extension", "--far-field-extension"),
+                ("node_spacing", "--far-field-node-spacing"),
             ):
                 if key in far_field:
                     arguments.extend([flag, str(far_field[key])])

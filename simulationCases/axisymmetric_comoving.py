@@ -33,11 +33,12 @@ throughout. Consequently:
     (``velocity_x = velocity_y = 0``), which is exactly the undisturbed
     semi-infinite far field. Contrast the planar co-moving case, where the
     far film enters at ``-U`` because THERE the frame really does move.
-    ``far_field="radial"`` is an opt-in alternative for elastic films whose
-    disturbance reaches the edge: the edge velocity is then the area-
-    conserving far field ``X U / r``, supplied through the global parameter
-    ``far_field_velocity`` (see ``define_problem``). The default ``"rest"``
-    is the formulation above, unchanged.
+    ``far_field="membrane"`` is an opt-in alternative for elastic films,
+    whose far field is an outgoing pulse that reaches the edge: the edge then
+    takes its radial velocity and thickness from a coupled thin-film model
+    (``taylor_culick_fem.farfield_membrane``) through global parameters (see
+    ``define_problem``). The default ``"rest"`` is the formulation above,
+    unchanged.
   * volume is therefore **not** conserved (the lab case's sharpest
     diagnostic). It is replaced by an exact modified check -- see
     ``expected_volume()`` below, which is just as sharp.
@@ -287,9 +288,9 @@ class AxisymmetricComovingProblem(Problem):
         # module docstring's Newton-floor section.
         self.newton_scale_uses_window = True
         self.remesh_active = True
-        # "rest": the swallowed film is at rest in the laboratory. "radial":
-        # its radial velocity is the global parameter far_field_velocity,
-        # which the driver updates between output intervals.
+        # "rest": the swallowed film is at rest in the laboratory. "membrane":
+        # its radial velocity and thickness are global parameters, updated by
+        # the driver from the coupled far-field membrane between intervals.
         self.far_field = "rest"
 
     @property
@@ -346,16 +347,18 @@ class AxisymmetricComovingProblem(Problem):
         # condition (same reasoning as planar's pinned inflow cross-section).
         if self.far_field == "rest":
             eqs += DirichletBC(mesh_y=True, velocity_x=0, velocity_y=0) @ "far"
-        elif self.far_field == "radial":
-            # The area-conserving far field u_r = c(t)/r keeps the film at its
-            # undisturbed thickness, so mesh_y and velocity_y stay pinned. Its
-            # value depends on X and U, but it enters as a parameter updated
-            # between output intervals, never as an unknown: DirichletBC is
-            # legal, and the dof layout (hence the checkpoints) matches "rest".
+        elif self.far_field == "membrane":
+            # A thin film in plane motion: u_r uniform across the thickness,
+            # shear-free (velocity_y natural), and the thickness set by the far
+            # field through the corner height; edge nodes slide vertically
+            # under the mesh equations. The values are parameters updated
+            # between output intervals, never unknowns, so DirichletBC is legal.
             far_velocity = self.define_global_parameter(far_field_velocity=0.0)
-            eqs += DirichletBC(mesh_y=True, velocity_x=far_velocity, velocity_y=0) @ "far"
+            half = self.define_global_parameter(far_field_half_thickness=0.5)
+            eqs += DirichletBC(velocity_x=far_velocity) @ "far"
+            eqs += DirichletBC(mesh_y=half) @ "interface/far"
         else:
-            raise ValueError(f"far_field must be 'rest' or 'radial', not {self.far_field!r}")
+            raise ValueError(f"far_field must be 'rest' or 'membrane', not {self.far_field!r}")
         # TRAP (measured, see the module docstring's CORNER section): the
         # free-surface kinematic multiplier at the far/interface CORNER must be
         # pinned, or the Jacobian is exactly singular.
@@ -434,8 +437,8 @@ class AxisymmetricComovingProblem(Problem):
     def midplane_radial_velocity(self, radius: float) -> float:
         """Radial velocity on the midplane at ``radius``, linearly interpolated.
 
-        Reads nodal values on ``"symmetry"`` so the far-field switch can see
-        the disturbance arrive without optional field output.
+        Reads nodal values on ``"symmetry"``: the far-field membrane is driven
+        with this velocity inside the window.
         """
 
         index = self.get_mesh("liquid").get_nodal_field_indices()["velocity_x"]
@@ -519,9 +522,10 @@ class AxisymmetricComovingProblem(Problem):
         drift in ``V`` is for the lab case: it indicts the ALE mass balance,
         the ``EnforcedBC`` on the far edge, or the free-surface kinematics.
 
-        With ``far_field="radial"`` the edge film moves at ``u_far`` and the
-        inflow is reduced by ``pi*(X+L)*u_far``. ``far_outflow`` is the
-        caller's running integral of ``(X+L)*u_far`` dt, subtracted as
+        With ``far_field="membrane"`` the edge film has thickness ``h_e`` and
+        moves at ``u_e``, so the inflow is ``pi*(X+L)*h_e*(Xdot - u_e)``.
+        ``far_outflow`` is the caller's running integral of
+        ``(X+L)*(h_e*u_e - (h_e-1)*Xdot)`` dt, subtracted as
         ``pi*far_outflow``; it is zero for ``"rest"``.
         """
         x_start = self.X0 if x0 is None else x0
