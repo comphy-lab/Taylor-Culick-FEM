@@ -134,6 +134,23 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
     return config
 
 
+def _without_extension(config: object) -> object:
+    """Far-field config minus the membrane length, which a restart may grow."""
+
+    if isinstance(config, dict) and config.get("mode") == "membrane":
+        return {key: value for key, value in config.items() if key != "extension"}
+    return config
+
+
+def _check_extension_not_shorter(current: object, parent: object) -> None:
+    if (
+        isinstance(current, dict) and isinstance(parent, dict)
+        and current.get("mode") == parent.get("mode") == "membrane"
+        and current["extension"] < parent["extension"]
+    ):
+        raise ValueError("restart may lengthen but never shorten the far-field extension")
+
+
 class MembraneCoupling:
     """Overlapping coupling of the 2D window with the far-field membrane.
 
@@ -303,6 +320,9 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             # A missing far field predates the far-field modes and means "rest".
             current["far_field"] = current.get("far_field", {"mode": "rest"})
             expected["far_field"] = expected.get("far_field", {"mode": "rest"})
+            _check_extension_not_shorter(current["far_field"], expected["far_field"])
+            current["far_field"] = _without_extension(current["far_field"])
+            expected["far_field"] = _without_extension(expected["far_field"])
         if key not in case or current != expected:
             raise ValueError(f"restart case mismatch: {key}")
     metadata = json.loads(paths["metadata"].read_text())
@@ -342,6 +362,9 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             observed = False
         if key == "far_field" and key not in metadata:
             observed = {"mode": "rest"}
+        if key == "far_field":
+            _check_extension_not_shorter(value, observed)
+            value, observed = _without_extension(value), _without_extension(observed)
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
     control_index = restart["output_index"] if legacy else restart["control_index"]
@@ -892,6 +915,13 @@ def run_case(args: argparse.Namespace) -> dict:
                     ):
                         raise ValueError("far-field membrane state time disagrees with lineage")
                     metadata["restart_far_field_state"] = _file_reference(restart["far_state"])
+                    if outer > coupling.membrane.outer + 1e-9:
+                        metadata["restart_far_field_extended"] = {
+                            "from_outer": coupling.membrane.outer, "to_outer": outer,
+                        }
+                        coupling.membrane = coupling.membrane.extended(
+                            outer, far_field["node_spacing"]
+                        )
             if restart is not None:
                 checkpoint = restart["paths"]["checkpoint"]
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))

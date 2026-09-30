@@ -125,6 +125,31 @@ class FarFieldMembrane:
         self.u, self.h, self.Y = (np.array(data[k], dtype=float) for k in ("u", "h", "Y"))
         return self
 
+    def extended(self, outer: float, node_spacing: float) -> FarFieldMembrane:
+        """Return this state on a longer domain, padded with undisturbed film.
+
+        Used when a restart lengthens the membrane: beyond the old end the film
+        is taken to be at rest, which is exact while the pulse has not reached
+        that end.  Existing values are linearly interpolated onto the new nodes.
+        """
+
+        if not outer > self.outer:
+            raise ValueError("extended outer end must exceed the current one")
+        if not node_spacing > 0:
+            raise ValueError("node spacing must be positive")
+        nodes = math.ceil((outer - self.inner) / node_spacing) + 1
+        new = FarFieldMembrane(
+            elastic_modulus=self.G, viscosity=self.mu, inner=self.inner, outer=outer,
+            nodes=nodes, rtol=self.rtol, atol=self.atol,
+        )
+        old_r, new_r = self.radii(), new.radii()
+        beyond = new_r > self.outer
+        new.u = np.where(beyond, 0.0, np.interp(new_r, old_r, self.u))
+        new.h = np.where(beyond, 1.0, np.interp(new_r, old_r, self.h))
+        new.Y = np.where(beyond, new_r, np.interp(new_r, old_r, self.Y))
+        new.time = self.time
+        return new
+
     # --------------------------------------------------------------- dynamics
     @staticmethod
     def _upwind(f: np.ndarray, a: np.ndarray, dr: float) -> np.ndarray:

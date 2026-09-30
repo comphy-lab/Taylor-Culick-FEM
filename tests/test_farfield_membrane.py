@@ -79,3 +79,29 @@ def test_domain_and_time_are_validated() -> None:
         membrane.advance(0.0, 50.0, 0.0, 0.0)
     with pytest.raises(ValueError, match="outside"):
         membrane.state_at(10.0)
+
+
+def test_extended_membrane_pads_undisturbed_film_and_keeps_the_state() -> None:
+    membrane = _membrane(nodes=351)
+    membrane.advance(1.0, 50.5, 0.0, 0.02)
+    longer = membrane.extended(outer=600.0, node_spacing=1.0)
+    assert longer.outer == 600.0 and longer.time == membrane.time
+    assert longer.inner == membrane.inner
+    # Inside the old domain the state is reproduced (linear interpolation).
+    for radius in (60.0, 120.0, 300.0):
+        old, new = membrane.state_at(radius), longer.state_at(radius)
+        assert new.velocity == pytest.approx(old.velocity, abs=1e-6)
+        assert new.thickness == pytest.approx(old.thickness, abs=1e-6)
+    # Beyond the old end the film is at rest, unstretched.
+    beyond = longer.state_at(500.0)
+    assert (beyond.velocity, beyond.thickness) == (0.0, 1.0)
+    assert beyond.log_conformation() == pytest.approx((0.0, 0.0, 0.0), abs=1e-12)
+    longer.advance(1.5, 51.0, 0.02, 0.03)
+
+
+def test_extending_needs_a_longer_domain() -> None:
+    membrane = _membrane()
+    with pytest.raises(ValueError, match="must exceed"):
+        membrane.extended(outer=membrane.outer, node_spacing=0.5)
+    with pytest.raises(ValueError, match="spacing"):
+        membrane.extended(outer=membrane.outer + 10, node_spacing=0.0)

@@ -949,3 +949,60 @@ def test_small_fem_passive_zero_modulus_evolves_conformation(tmp_path):
     assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_min"] == 0
     assert metadata["polymer_diagnostics_final"]["polymer_stress_eigenvalue_max"] == 0
     assert (root / "run_viscoelastic_axi/liquid/liquid_000000.vtu").is_file()
+
+
+def test_small_fem_membrane_restart_may_lengthen_but_not_shorten_the_extension(tmp_path):
+    import run_viscoelastic_axi as driver
+
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["output"].update(cadence=0.02, checkpoint_every=1)
+    case["physics"]["far_field"] = {"mode": "membrane", "extension": 20.0, "node_spacing": 0.5}
+    scratch = tmp_path / "project-scratch"
+    scratch.mkdir()
+    bundle = tmp_path / "attempt-bundle"
+    parent_input = scratch / "parent-input.json"
+    parent_input.write_text(json.dumps(case))
+    driver.run_case(adapter.case_to_driver_args(parent_input, bundle / "parent"))
+    parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+    output = parent / "run_viscoelastic_axi"
+    rows = np.loadtxt(output / "control.txt", ndmin=2)
+
+    def restart_case(extension: float) -> dict:
+        continued = copy.deepcopy(case)
+        continued["completion"]["value"] = 0.08
+        continued["physics"]["far_field"]["extension"] = extension
+        continued["restart"] = {
+            **{
+                key: _reference(path)
+                for key, path in {
+                    "checkpoint": parent / "checkpoints" / "ckpt_00002.dump",
+                    "input_case": parent_input,
+                    "metadata": parent / "case.json",
+                    "control": output / "control.txt",
+                    "rim_height": output / "rim-height.txt",
+                    "pvd": output / "liquid.pvd",
+                }.items()
+            },
+            "time": float(rows[-1, 0]),
+            "control_index": 2,
+            "field_index": 2,
+        }
+        return continued
+
+    shorter = scratch / "shorter.json"
+    shorter.write_text(json.dumps(restart_case(10.0)))
+    with pytest.raises(ValueError, match="never shorten"):
+        driver.run_case(adapter.case_to_driver_args(shorter, bundle / "shorter"))
+
+    longer = scratch / "longer.json"
+    longer.write_text(json.dumps(restart_case(60.0)))
+    metadata = driver.run_case(adapter.case_to_driver_args(longer, bundle / "longer"))
+    extended = metadata["restart_far_field_extended"]
+    assert extended["to_outer"] == pytest.approx(1.0 + 3.0 + 60.0)
+    assert extended["from_outer"] == pytest.approx(1.0 + 3.0 + 20.0)
+    resumed = np.loadtxt(
+        bundle / "longer" / "axi_viscoelastic_Oh_1_G_1_lambda_inf" / "run_viscoelastic_axi"
+        / "far-field.txt", ndmin=2)
+    assert len(resumed) == 4 and np.all(np.isfinite(resumed))
+    assert metadata["status"] == "passed"

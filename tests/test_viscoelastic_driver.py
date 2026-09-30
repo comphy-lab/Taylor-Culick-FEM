@@ -20,7 +20,9 @@ from run_viscoelastic_axi import (
     ArrestTracker,
     HeightPlateauTracker,
     MembraneCoupling,
+    _check_extension_not_shorter,
     _output_times,
+    _without_extension,
     _zero_crossing,
     build_parser,
     main,
@@ -259,3 +261,16 @@ def test_far_field_membrane_settings_are_validated(tmp_path, capsys, extra, mess
     with pytest.raises(SystemExit):
         validate_args(parser, args)
     assert message in capsys.readouterr().err
+
+
+def test_restart_identity_ignores_but_bounds_the_membrane_extension() -> None:
+    parent = {"mode": "membrane", "inner_fraction": 0.5, "extension": 1000.0, "node_spacing": 0.5}
+    longer = {**parent, "extension": 2000.0}
+    assert _without_extension(parent) == _without_extension(longer)
+    _check_extension_not_shorter(longer, parent)
+    _check_extension_not_shorter(parent, parent)
+    with pytest.raises(ValueError, match="never shorten"):
+        _check_extension_not_shorter(parent, longer)
+    assert _without_extension({"mode": "rest"}) == {"mode": "rest"}
+    # Anything other than the extension must still agree.
+    assert _without_extension({**parent, "inner_fraction": 0.4}) != _without_extension(parent)
