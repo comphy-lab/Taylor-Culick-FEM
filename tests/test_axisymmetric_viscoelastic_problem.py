@@ -28,6 +28,7 @@ def _define_problem(
     elastic_modulus: float,
     passive: bool,
     relaxation_time: float = float("inf"),
+    far_field: str = "rest",
 ):
     captured: dict[str, object] = {}
 
@@ -48,6 +49,7 @@ def _define_problem(
     problem.elastic_modulus = elastic_modulus
     problem.passive_conformation = passive
     problem.relaxation_time = relaxation_time
+    problem.far_field = far_field
     problem.define_problem()
     return problem, captured.get("equations"), captured
 
@@ -166,6 +168,50 @@ def test_passive_mode_requires_a_boolean(monkeypatch) -> None:
 
     with pytest.raises(TypeError, match="passive_conformation must be a boolean"):
         problem.define_problem()
+
+
+@pytest.mark.parametrize("relaxation_time", [1.0, 31.622776601683793, float("inf")])
+def test_membrane_incoming_conformation_accepts_finite_and_infinite_relaxation(
+    monkeypatch, relaxation_time
+):
+    problem, equations, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False,
+        relaxation_time=relaxation_time, far_field="membrane",
+    )
+    assert equations is not None
+    assert problem.viscoelastic_parameters.relaxation_time == relaxation_time
+    for component in ("xx", "yy", "aa"):
+        assert problem.get_global_parameter(f"far_field_log_c_{component}").value == 0
+
+
+@pytest.mark.parametrize("elastic_modulus,relaxation_time,passive", [
+    (0.0, 1.0, False), (1.0, 0.0, False), (1.0, 1.0, True),
+])
+def test_membrane_requires_active_positive_time_elasticity(
+    monkeypatch, elastic_modulus, relaxation_time, passive
+):
+    with pytest.raises(ValueError, match="requires active Oldroyd-B elasticity"):
+        _define_problem(
+            monkeypatch, elastic_modulus=elastic_modulus, passive=passive,
+            relaxation_time=relaxation_time, far_field="membrane",
+        )
+
+
+def test_set_far_field_maps_full_thickness_and_diagonal_log_tensor(monkeypatch):
+    problem, _, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False,
+        relaxation_time=1.0, far_field="membrane",
+    )
+    # The base setup was skipped for this software test; register its two
+    # boundary parameters explicitly, without assembling a native FEM problem.
+    problem.define_global_parameter(far_field_velocity=0.0)
+    problem.define_global_parameter(far_field_half_thickness=0.5)
+    problem.set_far_field(0.2, 0.8, (0.1, -0.2, 0.3))
+    assert problem.get_global_parameter("far_field_velocity").value == pytest.approx(0.2)
+    assert problem.get_global_parameter("far_field_half_thickness").value == pytest.approx(0.4)
+    assert problem.get_global_parameter("far_field_log_c_yy").value == pytest.approx(-0.2)
+    with pytest.raises(ValueError, match="positive"):
+        problem.set_far_field(0.2, 0.0, (0.1, -0.2, 0.3))
 
 
 def test_rim_height_finds_quadratic_maximum_between_interface_nodes(monkeypatch) -> None:

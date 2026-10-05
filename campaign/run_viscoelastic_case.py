@@ -162,6 +162,30 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
                 str(sponge["profile"]),
             ]
         )
+    far_field = physics.get("far_field")
+    if far_field is not None:
+        if not isinstance(far_field, dict):
+            raise TypeError("physics.far_field must be an object")
+        mode = far_field.get("mode")
+        if mode == "rest":
+            if set(far_field) != {"mode"}:
+                raise ValueError("physics.far_field mode 'rest' takes no other keys")
+        elif mode == "membrane":
+            required = {"mode", "inner_fraction", "extension", "node_spacing"}
+            if set(far_field) != required:
+                raise ValueError(
+                    "physics.far_field membrane requires exactly mode, inner_fraction, "
+                    "extension and node_spacing"
+                )
+            arguments.extend(["--far-field", "membrane"])
+            for key, flag in (
+                ("inner_fraction", "--far-field-inner-fraction"),
+                ("extension", "--far-field-extension"),
+                ("node_spacing", "--far-field-node-spacing"),
+            ):
+                arguments.extend([flag, str(far_field[key])])
+        else:
+            raise ValueError(f"unsupported physics.far_field mode: {mode!r}")
     if "max_positive_sponge_power" in tolerances:
         arguments.extend(
             [
@@ -233,6 +257,7 @@ def main() -> None:
     append_progress("started", case=str(case_path), launcher_affinity=affinity)
     try:
         driver_args = case_to_driver_args(case_path, Path.cwd())
+        driver_args.progress_callback = append_progress
         metadata = run_case(driver_args)
     except BaseException as exc:
         append_progress("failed", error_type=type(exc).__name__, error=str(exc))

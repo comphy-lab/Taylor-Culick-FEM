@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "validation"))
 from run_viscoelastic_axi import (
     ArrestTracker,
     HeightPlateauTracker,
+    MembraneCoupling,
+    _characteristic_valid,
     _constitutive_metadata,
     _initial_step,
     _output_times,
@@ -234,3 +236,70 @@ def test_height_plateau_requires_the_full_ten_time_unit_hold() -> None:
 )
 def test_non_saturated_height_histories_do_not_pass(height) -> None:
     assert _height_certificate(height) is None
+
+
+def test_characteristic_gate_accepts_only_roundoff_neutrality():
+    assert _characteristic_valid(0.0, 0.0, 0.0)
+    assert _characteristic_valid(-np.finfo(float).eps, 0.0, 0.0)
+    assert not _characteristic_valid(-1e-10, 0.0, 0.0)
+    # Positive rim velocity alone is insufficient if edge material is faster.
+    assert not _characteristic_valid(0.1-0.2, 0.1, 0.2)
+
+
+def test_membrane_coupling_rejects_inner_material_inflow_before_advance():
+    class Membrane:
+        time, inner = 0.0, 5.0
+
+        def advance(self, *_):
+            pytest.fail("invalid characteristic must reject before advancing")
+
+    coupling = MembraneCoupling(Membrane(), inner_fraction=0.5, length=8.0)
+    with pytest.raises(RuntimeError, match="inner material outflow validity rejected"):
+        coupling.before_interval(0.0, 0.1, radius=1.0, speed=0.1, drive=0.2)
+
+
+def test_membrane_outflow_is_half_sheet_full_thickness_identity():
+    from types import SimpleNamespace
+
+    coupling = MembraneCoupling(SimpleNamespace(time=0.0), inner_fraction=0.5, length=8.0)
+    coupling.predicted_edge_radius = 9.1
+    edge = SimpleNamespace(thickness=0.8, velocity=0.1)
+    coupling.after_interval(edge, 0.1, 9.0, 9.1, 1.0, 1.0, 0.1)
+    # The half-sheet factor pi belongs in expected_volume, not this integral.
+    assert coupling.outflow == pytest.approx(0.1 * 9.05 * (0.8*0.1 - (0.8-1.0)*1.0))
+
+
+def test_membrane_sidecar_roundtrip_binds_checkpoint_and_finite_relaxation(tmp_path):
+    import hashlib
+
+    from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+
+    def make(relaxation_time=1.0):
+        return MembraneCoupling(
+            FarFieldMembrane(
+                elastic_modulus=1.0, relaxation_time=relaxation_time, viscosity=1.0,
+                inner=5.0, outer=20.0, nodes=31,
+            ), inner_fraction=0.5, length=8.0,
+        )
+
+    original = make()
+    # A homogeneous exterior is a deterministic zero state; this exercises
+    # the sidecar contract without running a native FEM solve.
+    edge = original.before_interval(0.0, 0.1, 1.0, 0.0, 0.0)
+    original.after_interval(edge, 0.1, 9.0, 9.0, 0.0, 0.0, 0.1)
+    checkpoint = tmp_path / "ckpt.dump"
+    checkpoint.write_bytes(b"selected FEM state")
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    sidecar = tmp_path / "ckpt.farfield.npz"
+    original.save(sidecar, checkpoint)
+    restored = make()
+    restored.load(sidecar, digest)
+    assert restored.membrane.relaxation_time == 1.0
+    assert restored.previous == original.previous
+    assert restored.outflow == original.outflow
+    for name in ("u", "h", "log_c_rr", "log_c_zz", "log_c_th"):
+        np.testing.assert_array_equal(getattr(restored.membrane, name), getattr(original.membrane, name))
+    with pytest.raises(ValueError, match="does not bind"):
+        restored.load(sidecar, "0" * 64)
+    with pytest.raises(ValueError, match="constitutive identity"):
+        make(2.0).load(sidecar, digest)

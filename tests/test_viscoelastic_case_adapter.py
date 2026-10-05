@@ -89,6 +89,41 @@ def test_time_case_explicitly_allows_recoil(tmp_path: Path) -> None:
     assert args.t_end == 200.0
 
 
+@pytest.mark.parametrize("relaxation_time", [1.0, 31.622776601683793, "inf"])
+def test_explicit_membrane_config_maps_to_finite_or_infinite_driver(tmp_path, relaxation_time):
+    case = _case({"kind": "time", "value": 200.0})
+    case["physics"]["relaxation_time"] = relaxation_time
+    case["physics"]["far_field"] = {
+        "mode": "membrane", "inner_fraction": 0.5, "extension": 1000.0, "node_spacing": 0.5,
+    }
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    assert args.far_field == "membrane"
+    assert args.far_field_inner_fraction == 0.5
+    assert args.far_field_extension == 1000.0
+    assert args.far_field_node_spacing == 0.5
+    assert args.relaxation_time == float(relaxation_time)
+
+
+@pytest.mark.parametrize("missing", ["inner_fraction", "extension", "node_spacing"])
+def test_membrane_case_never_invents_missing_coupling_settings(tmp_path, missing):
+    case = _case({"kind": "time", "value": 1.0})
+    config = {"mode": "membrane", "inner_fraction": 0.5, "extension": 1000.0, "node_spacing": 0.5}
+    config.pop(missing)
+    case["physics"]["far_field"] = config
+    with pytest.raises(ValueError, match="requires exactly"):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+def test_membrane_and_sponge_are_rejected_as_two_exterior_treatments(tmp_path):
+    case = _case({"kind": "time", "value": 1.0})
+    case["physics"].update(
+        far_field={"mode": "membrane", "inner_fraction": 0.5, "extension": 1000.0, "node_spacing": 0.5},
+        sponge={"start": 50.0, "width": 25.0, "gamma_max": 1.0, "profile": "quintic"},
+    )
+    with pytest.raises(SystemExit):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
 def test_height_plateau_case_maps_explicit_certificate_thresholds(tmp_path: Path) -> None:
     completion = {
         "kind": "height_plateau",
@@ -424,6 +459,200 @@ def test_restart_selector_maps_to_driver_and_validates_prefix(tmp_path, restart_
     assert restart["paths"]["input_case"].name == "input-case.json"
     assert restart["paths"]["input_case"].is_relative_to(tmp_path / "attempt-bundle")
     np.testing.assert_allclose(restart["rows"][:, 0], [0.05, 0.1])
+
+
+@pytest.fixture
+def membrane_restart_case(restart_case):
+    from run_viscoelastic_axi import FAR_FIELD_HEADER
+
+    case = copy.deepcopy(restart_case)
+    config = {"mode": "membrane", "inner_fraction": 0.5, "extension": 1000.0, "node_spacing": 0.5}
+    case["physics"]["far_field"] = config
+    root = Path(case["restart"]["metadata"]["path"]).parent
+    parent = json.loads((root / "input-case.json").read_text())
+    parent["physics"]["far_field"] = config
+    (root / "input-case.json").write_text(json.dumps(parent))
+    case["restart"]["input_case"] = _reference(root / "input-case.json")
+    metadata = json.loads((root / "case.json").read_text())
+    metadata["far_field"] = config
+    (root / "case.json").write_text(json.dumps(metadata))
+    case["restart"]["metadata"] = _reference(root / "case.json")
+    far_history = root / "run_viscoelastic_axi" / "far-field.txt"
+    rows = np.zeros((2, len(FAR_FIELD_HEADER)))
+    rows[:, 0] = [0.05, 0.1]
+    rows[:, 3] = 1.0
+    rows[:, 12:14] = 0.1
+    np.savetxt(far_history, rows)
+    far_state = Path(case["restart"]["checkpoint"]["path"]).with_suffix(".farfield.npz")
+    np.savez(
+        far_state, time=np.array(0.1), outflow=np.array(0.0), outer_deviation=np.zeros(4),
+        checkpoint_sha256=np.array(case["restart"]["checkpoint"]["sha256"]),
+    )
+    case["restart"]["far_field_state"] = _reference(far_state)
+    case["restart"]["far_field_history"] = _reference(far_history)
+    return case
+
+
+def test_membrane_restart_requires_sha_bound_state_and_history(tmp_path, membrane_restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    args = adapter.case_to_driver_args(_write_case(tmp_path, membrane_restart_case), tmp_path / "next")
+    restart = _read_restart(args)
+    assert restart["far_state"] == Path(membrane_restart_case["restart"]["far_field_state"]["path"])
+    np.testing.assert_allclose(restart["far_rows"][:, 0], [0.05, 0.1])
+
+
+@pytest.mark.parametrize("mutation,match", [
+    ("missing", "hash-bound far_field_state"),
+    ("hash", "hash mismatch"),
+    ("binding", "does not bind"),
+    ("rest", "case mismatch: physics"),
+    ("characteristic", "characteristic gate"),
+    ("outer", "already reached the outer boundary"),
+])
+def test_membrane_restart_rejects_missing_or_incompatible_exterior(
+    tmp_path, membrane_restart_case, mutation, match
+):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(membrane_restart_case)
+    if mutation == "missing":
+        case["restart"].pop("far_field_state")
+    elif mutation == "hash":
+        case["restart"]["far_field_state"]["sha256"] = "0" * 64
+    elif mutation == "binding":
+        path = Path(case["restart"]["far_field_state"]["path"])
+        np.savez(path, checkpoint_sha256=np.array("0" * 64))
+        case["restart"]["far_field_state"] = _reference(path)
+    elif mutation == "rest":
+        parent = Path(case["restart"]["input_case"]["path"])
+        payload = json.loads(parent.read_text())
+        payload["physics"].pop("far_field")
+        parent.write_text(json.dumps(payload))
+        case["restart"]["input_case"] = _reference(parent)
+    else:
+        path = Path(case["restart"]["far_field_history"]["path"])
+        rows = np.loadtxt(path)
+        rows[-1, 12 if mutation == "characteristic" else 9] = -0.1 if mutation == "characteristic" else 1e-3
+        np.savetxt(path, rows)
+        case["restart"]["far_field_history"] = _reference(path)
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "next")
+    with pytest.raises(ValueError, match=match):
+        _read_restart(args)
+
+
+def test_coupled_driver_forwards_finite_de_and_saves_bound_endpoint(tmp_path, monkeypatch):
+    import xml.etree.ElementTree as ET
+
+    import run_viscoelastic_axi as driver
+
+    class History:
+        def __init__(self, path, header):
+            self.path = path
+            path.write_text("#" + " ".join(header) + "\n")
+
+        def add_row(self, *row):
+            with self.path.open("a") as stream:
+                stream.write(" ".join(map(str, row)) + "\n")
+
+    class Problem:
+        def __init__(self):
+            self.time, self._output_step = 0.0, 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def set_output_directory(self, path):
+            self.output_dir = Path(path)
+
+        def get_output_directory(self):
+            return str(self.output_dir)
+
+        def initialise(self):
+            self.output_dir.mkdir()
+            assert self.far_field == "membrane"
+            assert self.relaxation_time == 31.622776601683793
+
+        def get_current_time(self, **_):
+            return self.time
+
+        def window_position(self):
+            return 1.0 + 0.1*self.time
+
+        def hole_radius(self):
+            return self.window_position()
+
+        def retraction_speed(self):
+            return 0.1
+
+        def rim_height(self):
+            return 1.0
+
+        def midplane_radial_velocity(self, radius):
+            assert radius == pytest.approx(self.window_position()+0.5*self.window_length)
+            return 0.0
+
+        def set_far_field(self, velocity, thickness, logs):
+            assert velocity == pytest.approx(0.0)
+            assert thickness == pytest.approx(1.0)
+            assert logs == pytest.approx((0.0, 0.0, 0.0))
+
+        def volume(self):
+            return self.expected_volume(1.0, 1.0)
+
+        def expected_volume(self, volume0, radius0, far_outflow=0.0):
+            return volume0 + np.pi/2*((self.window_position()+self.window_length)**2
+                                     - (radius0+self.window_length)**2) - np.pi*far_outflow
+
+        def create_text_file_output(self, filename, header):
+            return History(self.output_dir / filename, header)
+
+        def run(self, target, **_):
+            self.time = target
+
+        def output(self, **_):
+            field = self.output_dir / f"liquid_{self._output_step:06d}.vtu"
+            field.write_text("mock field")
+            pvd = self.output_dir / "liquid.pvd"
+            root = ET.parse(pvd).getroot() if pvd.exists() else ET.fromstring("<VTKFile><Collection/></VTKFile>")
+            ET.SubElement(root.find("Collection"), "DataSet", timestep=str(self.time), file=field.name)
+            ET.ElementTree(root).write(pvd)
+            self._output_step += 1
+
+        def save_state(self, path, **_):
+            Path(path).write_bytes(b"mock FEM endpoint")
+
+        def polymer_diagnostic_extrema(self):
+            return {}
+
+    monkeypatch.setattr(driver, "AxisymmetricViscoelasticProblem", Problem)
+    monkeypatch.setattr(driver, "_enforce_launcher_affinity", dict)
+    case = _case({"kind": "time", "value": 0.1})
+    case["physics"].update(
+        relaxation_time=31.622776601683793,
+        far_field={"mode": "membrane", "inner_fraction": 0.5, "extension": 20.0, "node_spacing": 0.5},
+    )
+    case["mesh"]["length"] = 8.0
+    case["output"]["checkpoint_every"] = 0
+    events = []
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    args.progress_callback = lambda event, **values: events.append((event, values))
+    metadata = driver.run_case(args)
+    assert metadata["status"] == "passed"
+    assert metadata["minimum_relative_edge_inflow"] == pytest.approx(0.1)
+    assert metadata["far_field_maximum_radius_prediction_error"] == pytest.approx(0.0)
+    assert len(events) == 2
+    receipt = metadata["latest_checkpoint"]
+    root = args.results / driver._case_name(1.0, 1.0, args.relaxation_time)
+    with np.load(root / receipt["far_field_state"]["path"], allow_pickle=False) as sidecar:
+        assert float(sidecar["relaxation_time"]) == args.relaxation_time
+        assert str(sidecar["checkpoint_sha256"]) == receipt["checkpoint"]["sha256"]
+    far_rows = np.loadtxt(root / "run_viscoelastic_axi" / "far-field.txt")
+    assert far_rows.shape == (2, len(driver.FAR_FIELD_HEADER))
+    np.testing.assert_allclose(far_rows[:, 12], 0.1)
 
 
 def test_restart_snapshot_removes_dependency_on_external_source(tmp_path, restart_case):

@@ -282,6 +282,8 @@ class AxisymmetricComovingProblem(Problem):
         # module docstring's Newton-floor section.
         self.newton_scale_uses_window = True
         self.remesh_active = True
+        # The driver can replace undisturbed film with a coupled thin membrane.
+        self.far_field = "rest"
 
     @property
     def R_out(self) -> float:
@@ -335,7 +337,17 @@ class AxisymmetricComovingProblem(Problem):
         # undisturbed and at rest in the laboratory frame, and its thickness is
         # held at the half-thickness rather than left free under the kinematic
         # condition (same reasoning as planar's pinned inflow cross-section).
-        eqs += DirichletBC(mesh_y=True, velocity_x=0, velocity_y=0) @ "far"
+        if self.far_field == "rest":
+            eqs += DirichletBC(mesh_y=True, velocity_x=0, velocity_y=0) @ "far"
+        elif self.far_field == "membrane":
+            # Parameters are updated between intervals, so strong Dirichlet
+            # conditions are legal. The transverse velocity is natural.
+            far_velocity = self.define_global_parameter(far_field_velocity=0.0)
+            half = self.define_global_parameter(far_field_half_thickness=0.5)
+            eqs += DirichletBC(velocity_x=far_velocity) @ "far"
+            eqs += DirichletBC(mesh_y=half) @ "interface/far"
+        else:
+            raise ValueError(f"far_field must be 'rest' or 'membrane', not {self.far_field!r}")
         # TRAP (measured, see the module docstring's CORNER section): the
         # free-surface kinematic multiplier at the far/interface CORNER must be
         # pinned, or the Jacobian is exactly singular.
@@ -411,6 +423,18 @@ class AxisymmetricComovingProblem(Problem):
         mesh = self.get_mesh("liquid/interface")
         return min(n.x(0) for n in mesh.nodes())
 
+    def midplane_radial_velocity(self, radius: float) -> float:
+        """Interpolate the laboratory radial velocity on the midplane."""
+        index = self.get_mesh("liquid").get_nodal_field_indices()["velocity_x"]
+        samples = sorted(
+            (float(n.x(0)), float(n.value(index)))
+            for n in self.get_mesh("liquid/symmetry").nodes()
+        )
+        radii = np.asarray([item[0] for item in samples])
+        if not radii[0] <= radius <= radii[-1]:
+            raise ValueError(f"probe radius {radius} lies outside the window")
+        return float(np.interp(radius, radii, [item[1] for item in samples]))
+
     def rim_height(self) -> float:
         """Return full rim height from the quadratic free-surface geometry.
 
@@ -458,7 +482,9 @@ class AxisymmetricComovingProblem(Problem):
         """Current liquid volume of the meshed window (half sheet, z >= 0)."""
         return float(self.get_mesh("liquid").evaluate_observable("volume"))
 
-    def expected_volume(self, volume0: float, x0: float | None = None) -> float:
+    def expected_volume(
+        self, volume0: float, x0: float | None = None, far_outflow: float = 0.0
+    ) -> float:
         """Volume the window MUST hold, given how far it has swept outward.
 
         The lab case's exact global volume conservation is unavailable here by
@@ -479,8 +505,12 @@ class AxisymmetricComovingProblem(Problem):
         A drift in ``V - V_expected`` is therefore exactly as diagnostic as a
         drift in ``V`` is for the lab case: it indicts the ALE mass balance,
         the ``EnforcedBC`` on the far edge, or the free-surface kinematics.
+
+        For full membrane thickness ``h_e`` and edge velocity ``u_e``, the
+        half-sheet influx is ``pi*(X+L)*h_e*(Xdot-u_e)``. ``far_outflow`` is
+        the running integral of ``(X+L)*(h_e*u_e-(h_e-1)*Xdot)`` dt.
         """
         x_start = self.X0 if x0 is None else x0
         outer_now = self.window_position() + self.window_length
         outer_0 = x_start + self.window_length
-        return volume0 + 0.5 * math.pi * (outer_now**2 - outer_0**2)
+        return volume0 + 0.5 * math.pi * (outer_now**2 - outer_0**2) - math.pi * far_outflow

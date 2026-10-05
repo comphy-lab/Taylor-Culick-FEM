@@ -146,6 +146,190 @@ def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | N
     return parameters
 
 
+FAR_FIELD_OUTER_TOLERANCE = 1e-6
+FAR_FIELD_HEADER = [
+    "t", "drive", "u_edge", "h_edge", "log_c_rr", "log_c_zz", "log_c_th", "outflow",
+    "outer_velocity", "outer_thickness_deviation", "outer_log_conformation",
+    "outer_polymer_stress", "relative_edge_inflow", "inner_material_outflow",
+    "predicted_edge_radius", "realised_edge_radius", "edge_radius_prediction_error",
+    "predicted_inner_radius", "realised_inner_radius", "inner_radius_prediction_error",
+]
+
+
+def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
+    """Return the explicit boundary/coupling configuration carried by CLI args."""
+    mode = getattr(args, "far_field", "rest")
+    tuning = {
+        "inner_fraction": getattr(args, "far_field_inner_fraction", None),
+        "extension": getattr(args, "far_field_extension", None),
+        "node_spacing": getattr(args, "far_field_node_spacing", None),
+    }
+    if mode == "rest":
+        if any(value is not None for value in tuning.values()):
+            raise ValueError("far-field membrane settings require --far-field=membrane")
+        return {"mode": "rest"}
+    if mode != "membrane":
+        raise ValueError(f"unknown far-field mode {mode!r}")
+    if any(value is None for value in tuning.values()):
+        raise ValueError("membrane far field requires explicit inner fraction, extension and node spacing")
+    config = {"mode": mode, **{key: float(value) for key, value in tuning.items()}}
+    if not all(math.isfinite(config[key]) for key in tuning):
+        raise ValueError("far-field membrane settings must be finite")
+    if not 0 < config["inner_fraction"] < 1:
+        raise ValueError("far-field inner fraction must lie strictly inside the window")
+    if config["extension"] <= 0 or config["node_spacing"] <= 0:
+        raise ValueError("far-field extension and node spacing must be positive")
+    if _passive_conformation(args) or not evolves_conformation(
+        args.elastic_modulus, args.relaxation_time, False
+    ):
+        raise ValueError("membrane far field requires active Oldroyd-B elasticity")
+    sponge = _sponge_parameters(args)
+    if sponge is not None and sponge.gamma_max > 0:
+        raise ValueError("a membrane far field cannot be combined with a sponge")
+    return config
+
+
+def _without_extension(config: object) -> object:
+    if isinstance(config, dict) and config.get("mode") == "membrane":
+        return {key: value for key, value in config.items() if key != "extension"}
+    return config
+
+
+def _check_extension_not_shorter(current: object, parent: object) -> None:
+    if (
+        isinstance(current, dict) and isinstance(parent, dict)
+        and current.get("mode") == parent.get("mode") == "membrane"
+        and current["extension"] < parent["extension"]
+    ):
+        raise ValueError("restart may lengthen but never shorten the far-field extension")
+
+
+def _characteristic_valid(relative_velocity: float, *speeds: float) -> bool:
+    """Accept a neutral characteristic only within floating-point roundoff."""
+    tolerance = 32 * np.finfo(float).eps * max(1.0, *(abs(v) for v in speeds))
+    return bool(math.isfinite(relative_velocity) and relative_velocity >= -tolerance)
+
+
+class MembraneCoupling:
+    """Predict the exterior state before an interval and integrate edge flux.
+
+    The membrane's inner radius is ``X+inner_fraction*L`` and its outer
+    radius is fixed. Boundary values are held over each 2D output interval;
+    the temporal estimator does not estimate this coupling error.
+    """
+
+    def __init__(self, membrane, *, inner_fraction: float, length: float) -> None:
+        self.membrane = membrane
+        self.inner_fraction = inner_fraction
+        self.length = length
+        self.previous: tuple[float, float] | None = None
+        self.outflow = 0.0
+        self.outer_deviation = dict.fromkeys(
+            ("velocity", "thickness", "log_conformation", "polymer_stress"), 0.0
+        )
+        self.minimum_inner_outflow = math.inf
+        self.predicted_edge_radius = 0.0
+        self.maximum_radius_prediction_error = 0.0
+
+    @property
+    def outer_velocity(self) -> float:
+        return self.outer_deviation["velocity"]
+
+    def before_interval(self, time: float, target: float, radius: float, speed: float,
+                        drive: float):
+        interval = target - time
+        if interval <= 0:
+            raise ValueError("membrane coupling requires a later output target")
+        if self.previous is None or time <= self.previous[0]:
+            drive_end = drive
+        else:
+            slope = (drive - self.previous[1]) / (time - self.previous[0])
+            drive_end = drive + slope * interval
+        predicted = radius + speed * interval
+        inner_end = predicted + self.inner_fraction * self.length
+        # Use the actual linear membrane motion, including any accumulated
+        # discrepancy between the previous radius prediction and the 2D solve.
+        actual_adot = (inner_end - self.membrane.inner) / (target - self.membrane.time)
+        inner_outflow = min(actual_adot - drive, actual_adot - drive_end)
+        self.minimum_inner_outflow = min(self.minimum_inner_outflow, inner_outflow)
+        if not _characteristic_valid(inner_outflow, actual_adot, drive, drive_end):
+            raise RuntimeError("far-field inner material outflow validity rejected")
+        self.previous = (time, drive)
+        self.predicted_edge_radius = predicted + self.length
+        self.membrane.advance(target, inner_end, drive, drive_end)
+        deviations = self.membrane.outer_state_deviation()
+        _assert_finite("membrane outer state", deviations.values())
+        for key in self.outer_deviation:
+            self.outer_deviation[key] = max(self.outer_deviation[key], deviations[key])
+        return self.membrane.state_at(self.predicted_edge_radius)
+
+    def after_interval(self, edge, time_end: float, outer_start: float, outer_end: float,
+                       speed_start: float, speed_end: float, interval: float) -> None:
+        h, u = edge.thickness, edge.velocity
+        self.membrane.time = time_end
+        self.outflow += 0.5 * interval * (
+            outer_start * (h * u - (h - 1.0) * speed_start)
+            + outer_end * (h * u - (h - 1.0) * speed_end)
+        )
+        self.maximum_radius_prediction_error = max(
+            self.maximum_radius_prediction_error, abs(outer_end - self.predicted_edge_radius)
+        )
+
+    def save(self, path: Path, checkpoint: Path) -> None:
+        previous = np.array(self.previous if self.previous is not None else (np.nan, np.nan))
+        with path.open("xb") as stream:
+            np.savez(
+                stream, **self.membrane.to_arrays(), previous=previous,
+                outflow=np.array(self.outflow),
+                outer_deviation=np.array(list(self.outer_deviation.values())),
+                minimum_inner_outflow=np.array(self.minimum_inner_outflow),
+                predicted_edge_radius=np.array(self.predicted_edge_radius),
+                maximum_radius_prediction_error=np.array(self.maximum_radius_prediction_error),
+                coupling_inner_fraction=np.array(self.inner_fraction),
+                coupling_length=np.array(self.length),
+                checkpoint_sha256=np.array(_file_reference(checkpoint)["sha256"]),
+                coupling_version=np.array("finite-de-membrane-coupling-v1"),
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def load(self, path: Path, checkpoint_sha256: str) -> None:
+        from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+
+        with np.load(path, allow_pickle=False) as data:
+            if str(data["coupling_version"]) != "finite-de-membrane-coupling-v1":
+                raise ValueError("restart membrane coupling version mismatch")
+            if str(data["checkpoint_sha256"]) != checkpoint_sha256:
+                raise ValueError("restart membrane sidecar does not bind the selected checkpoint")
+            if (
+                float(data["coupling_inner_fraction"]) != self.inner_fraction
+                or float(data["coupling_length"]) != self.length
+            ):
+                raise ValueError("restart membrane coupling geometry mismatch")
+            restored = FarFieldMembrane.from_arrays(data)
+            if (
+                restored.G != self.membrane.G or restored.mu != self.membrane.mu
+                or restored.relaxation_time != self.membrane.relaxation_time
+            ):
+                raise ValueError("restart membrane constitutive identity mismatch")
+            self.membrane = restored
+            previous = data["previous"]
+            self.previous = None if np.isnan(previous).all() else tuple(map(float, previous))
+            self.outflow = float(data["outflow"])
+            deviation = np.asarray(data["outer_deviation"], dtype=float)
+            if deviation.shape != (4,) or np.any(deviation < 0):
+                raise ValueError("restart membrane outer diagnostics are invalid")
+            self.outer_deviation = dict(zip(self.outer_deviation, deviation, strict=True))
+            self.minimum_inner_outflow = float(data["minimum_inner_outflow"])
+            self.predicted_edge_radius = float(data["predicted_edge_radius"])
+            self.maximum_radius_prediction_error = float(data["maximum_radius_prediction_error"])
+            _assert_finite("restart coupling state", [
+                self.outflow, *deviation, self.minimum_inner_outflow,
+                self.predicted_edge_radius, self.maximum_radius_prediction_error,
+                *(self.previous or ()),
+            ])
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False) + "\n")
 
@@ -190,11 +374,15 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "checkpoint", "input_case", "metadata", "control", "rim_height", "pvd", "time",
         "control_index", "field_index",
     }
+    membrane_mode = _far_field_config(args)["mode"] == "membrane"
+    if membrane_mode:
+        decoupled_required |= {"far_field_state", "far_field_history"}
     keys = set(restart) if isinstance(restart, dict) else set()
     if keys not in (legacy_required, decoupled_required):
         raise ValueError(
             "restart requires either legacy output_index lineage or decoupled "
-            "control_index, field_index and rim_height lineage"
+            "control_index, field_index and rim_height lineage; membrane also "
+            "requires hash-bound far_field_state and far_field_history"
         )
     legacy = keys == legacy_required
     if legacy:
@@ -243,6 +431,11 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
                 **expected,
                 "passive_conformation": expected.get("passive_conformation", False),
             }
+            current["far_field"] = current.get("far_field", {"mode": "rest"})
+            expected["far_field"] = expected.get("far_field", {"mode": "rest"})
+            _check_extension_not_shorter(current["far_field"], expected["far_field"])
+            current["far_field"] = _without_extension(current["far_field"])
+            expected["far_field"] = _without_extension(expected["far_field"])
         if key not in case or current != expected:
             raise ValueError(f"restart case mismatch: {key}")
     metadata = json.loads(paths["metadata"].read_text())
@@ -251,6 +444,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "elastic_modulus": args.elastic_modulus,
         "relaxation_time": "inf" if math.isinf(args.relaxation_time) else args.relaxation_time,
         "passive_conformation": passive_conformation,
+        "far_field": _far_field_config(args),
         "length": args.length,
         "r0": args.r0,
         "resolution": args.resolution,
@@ -286,6 +480,12 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             # Attempts written before passive conformation was exposed were
             # active by construction.
             observed = False
+        if key == "far_field":
+            if observed is None:
+                observed = {"mode": "rest"}
+            _check_extension_not_shorter(value, observed)
+            observed = _without_extension(observed)
+            value = _without_extension(value)
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
     control_index = restart["output_index"] if legacy else restart["control_index"]
@@ -346,6 +546,47 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         height_rows = height_rows[:control_index]
         if not np.allclose(height_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
             raise ValueError("restart rim-height and control times disagree")
+    far_rows = None
+    far_state = None
+    if membrane_mode:
+        far_state = paths["far_field_state"]
+        if far_state != paths["checkpoint"].with_suffix(".farfield.npz"):
+            raise ValueError("restart membrane state does not belong to the selected checkpoint")
+        far_path = paths["far_field_history"]
+        if far_path != paths["control"].parent / "far-field.txt":
+            raise ValueError("restart membrane history does not belong to the parent case")
+        far_rows = np.loadtxt(far_path, ndmin=2)
+        if (
+            far_rows.shape[1] != len(FAR_FIELD_HEADER)
+            or len(far_rows) < control_index
+            or not np.all(np.isfinite(far_rows))
+        ):
+            raise ValueError("restart far-field history is incomplete or invalid")
+        far_rows = far_rows[:control_index]
+        if not np.allclose(far_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
+            raise ValueError("restart far-field and control times disagree")
+        if any(
+            not _characteristic_valid(relative, speed, edge_speed)
+            for relative, speed, edge_speed in zip(
+                far_rows[:, 12], rows[:, 2], far_rows[:, 2], strict=True
+            )
+        ) or any(not _characteristic_valid(value, value) for value in far_rows[:, 13]):
+            raise ValueError("restart membrane history failed a characteristic gate")
+        if np.max(far_rows[:, 8:12]) > FAR_FIELD_OUTER_TOLERANCE:
+            raise ValueError("restart membrane pulse had already reached the outer boundary")
+        with np.load(far_state, allow_pickle=False) as sidecar:
+            if str(sidecar["checkpoint_sha256"]) != restart["checkpoint"]["sha256"]:
+                raise ValueError("restart membrane sidecar does not bind the selected checkpoint")
+            if not math.isclose(float(sidecar["time"]), time, rel_tol=1e-10, abs_tol=1e-10):
+                raise ValueError("restart membrane state time disagrees with lineage")
+            if not math.isclose(
+                float(sidecar["outflow"]), far_rows[-1, 7], rel_tol=1e-10, abs_tol=1e-10
+            ):
+                raise ValueError("restart membrane flux state disagrees with history")
+            if not np.allclose(
+                sidecar["outer_deviation"], far_rows[-1, 8:12], rtol=1e-10, atol=1e-10
+            ):
+                raise ValueError("restart membrane outer diagnostics disagree with history")
     if paths["checkpoint"].parent != root / "checkpoints":
         raise ValueError("restart checkpoint does not belong to the parent case")
     if paths["control"].parent != root / "run_viscoelastic_axi":
@@ -360,6 +601,8 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "metadata": metadata,
         "rows": rows,
         "height_rows": height_rows,
+        "far_rows": far_rows,
+        "far_state": far_state,
         "fields": fields,
         "time": float(time),
         "control_index": control_index,
@@ -665,6 +908,7 @@ def run_case(args: argparse.Namespace) -> dict:
         args.elastic_modulus, args.relaxation_time, passive_conformation
     )
     active_polymer_feedback = conformation_evolved and not passive_conformation
+    far_field = _far_field_config(args)
     restart = _read_restart(args)
     sponge = _sponge_parameters(args)
     affinity = _enforce_launcher_affinity()
@@ -683,6 +927,22 @@ def run_case(args: argparse.Namespace) -> dict:
         "elastic_modulus": args.elastic_modulus,
         "elastic_modulus_definition": "G_dim*h0/sigma",
         "passive_conformation": passive_conformation,
+        "far_field": far_field,
+        "far_field_coupling": (
+            {
+                "scheme": "linear-drive-predictor-held-edge-v1",
+                "interval": args.output_step,
+                "error_estimated_by_bulk_temporal_estimator": False,
+                "outer_state_tolerance": FAR_FIELD_OUTER_TOLERANCE,
+            } if far_field["mode"] == "membrane" else None
+        ),
+        "boundary_gate": {
+            "allow_recoil": args.allow_recoil,
+            "rim_speed_floor": None if args.allow_recoil else 0.0,
+            "relative_edge_inflow_required": far_field["mode"] == "membrane",
+            "inner_material_outflow_required": far_field["mode"] == "membrane",
+            "neutral_characteristic_tolerance": "32 machine eps times velocity scale",
+        },
         "relaxation_time": relaxation_json,
         **_constitutive_metadata(
             args.elastic_modulus, args.relaxation_time, passive_conformation
@@ -785,6 +1045,7 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.relaxation_time = args.relaxation_time
             problem.passive_conformation = passive_conformation
             problem.sponge = sponge
+            problem.far_field = far_field["mode"]
             problem.conformation_stabilization = "SUPG" if args.stabilization == "supg" else None
             problem.conformation_supg_factor = args.supg_factor
             problem.X0 = args.r0
@@ -796,6 +1057,38 @@ def run_case(args: argparse.Namespace) -> dict:
             # Preserve the original ALE reference before restoring the deformed state.
             volume0 = problem.volume()
             radius0 = problem.window_position()
+            coupling = None
+            if far_field["mode"] == "membrane":
+                from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+
+                inner = radius0 + far_field["inner_fraction"] * args.length
+                outer = radius0 + args.length + far_field["extension"]
+                coupling = MembraneCoupling(
+                    FarFieldMembrane(
+                        elastic_modulus=args.elastic_modulus,
+                        relaxation_time=args.relaxation_time,
+                        viscosity=math.sqrt(2.0) * args.oh,
+                        inner=inner, outer=outer,
+                        nodes=math.ceil((outer-inner) / far_field["node_spacing"]) + 1,
+                    ),
+                    inner_fraction=far_field["inner_fraction"], length=args.length,
+                )
+                if restart is not None:
+                    coupling.load(
+                        restart["far_state"], restart["evidence"]["checkpoint"]["sha256"]
+                    )
+                    if not math.isclose(
+                        coupling.membrane.time, restart["time"], rel_tol=1e-10, abs_tol=1e-10
+                    ):
+                        raise ValueError("far-field membrane state time disagrees with lineage")
+                    metadata["restart_far_field_state"] = restart["evidence"]["far_field_state"]
+                    if outer > coupling.membrane.outer + 1e-9:
+                        metadata["restart_far_field_extended"] = {
+                            "from_outer": coupling.membrane.outer, "to_outer": outer,
+                        }
+                        coupling.membrane = coupling.membrane.extended(
+                            outer, far_field["node_spacing"]
+                        )
             if restart is not None:
                 checkpoint = restart["paths"]["checkpoint"]
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
@@ -839,6 +1132,7 @@ def run_case(args: argparse.Namespace) -> dict:
                 inferred_volume0 = float(
                     row[5]
                     - math.pi / 2 * ((row[1] + args.length) ** 2 - (radius0 + args.length) ** 2)
+                    + math.pi * (coupling.outflow if coupling is not None else 0.0)
                 )
                 volume0 = restart["metadata"].get("volume_initial_reference", inferred_volume0)
                 if not math.isfinite(volume0) or not math.isclose(
@@ -858,7 +1152,7 @@ def run_case(args: argparse.Namespace) -> dict:
             # arrest run may retain explicit output-indexed checkpoints.
             problem.write_states = False
             checkpoint_dir = run_dir / "checkpoints"
-            if args.checkpoint_every:
+            if args.checkpoint_every or coupling is not None:
                 checkpoint_dir.mkdir()
 
             metadata["volume_initial_reference"] = volume0
@@ -894,6 +1188,12 @@ def run_case(args: argparse.Namespace) -> dict:
             height_segment = problem.create_text_file_output(
                 "rim-height-segment.txt", header=["t", "H"]
             )
+            far_history = far_segment = None
+            if coupling is not None:
+                far_history = problem.create_text_file_output("far-field.txt", header=FAR_FIELD_HEADER)
+                far_segment = problem.create_text_file_output(
+                    "far-field-segment.txt", header=FAR_FIELD_HEADER
+                )
             sponge_history = None
             if sponge is not None and sponge.gamma_max > 0:
                 sponge_history = problem.create_text_file_output(
@@ -905,6 +1205,8 @@ def run_case(args: argparse.Namespace) -> dict:
             worst_volume_error = 0.0
             worst_tip_pin = 0.0
             minimum_sampled_speed = math.inf
+            minimum_relative_edge_inflow = math.inf
+            boundary_failures: list[str] = []
             last_row: list[float] | None = None
             diagnostics: dict[str, float] = {}
             sponge_diagnostics: dict[str, float] = {}
@@ -940,6 +1242,7 @@ def run_case(args: argparse.Namespace) -> dict:
             )
             control_offset = 0
             field_index = 0
+            metadata["status"] = "running"
             if restart is not None:
                 for row in restart["rows"]:
                     history.add_row(*row)
@@ -948,6 +1251,10 @@ def run_case(args: argparse.Namespace) -> dict:
                     for time, height in restart["height_rows"]:
                         height_history.add_row(time, height)
                         height_tracker.observe(float(time), float(height))
+                if coupling is not None:
+                    for far_row in restart["far_rows"]:
+                        far_history.add_row(*far_row)
+                    minimum_relative_edge_inflow = float(np.min(restart["far_rows"][:, 12]))
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
                 previous_target = restart["time"]
@@ -981,6 +1288,21 @@ def run_case(args: argparse.Namespace) -> dict:
                         relaxation_time=args.relaxation_time,
                         conformation_evolved=conformation_evolved,
                     )
+                if coupling is not None:
+                    start_now = float(problem.get_current_time(as_float=True))
+                    radius_start = problem.window_position()
+                    speed_start = problem.retraction_speed()
+                    drive = problem.midplane_radial_velocity(
+                        radius_start + far_field["inner_fraction"] * args.length
+                    )
+                    edge = coupling.before_interval(
+                        start_now, float(target), radius_start, speed_start, drive
+                    )
+                    if not _characteristic_valid(
+                        speed_start-edge.velocity, speed_start, edge.velocity
+                    ):
+                        raise RuntimeError("far-boundary inflow validity rejected before interval")
+                    problem.set_far_field(edge.velocity, edge.thickness, edge.log_conformation())
                 problem.run(
                     float(target),
                     startstep=startstep,
@@ -992,7 +1314,58 @@ def run_case(args: argparse.Namespace) -> dict:
                 radius = problem.window_position()
                 speed = problem.retraction_speed()
                 volume = problem.volume()
-                expected = problem.expected_volume(volume0, radius0)
+                if coupling is not None:
+                    coupling.after_interval(
+                        edge, now, radius_start+args.length, radius+args.length,
+                        speed_start, speed, now-start_now,
+                    )
+                    relative_inflow = speed-edge.velocity
+                    minimum_relative_edge_inflow = min(
+                        minimum_relative_edge_inflow, relative_inflow, speed_start-edge.velocity
+                    )
+                    outer = coupling.outer_deviation
+                    far_row = [
+                        now, drive, edge.velocity, edge.thickness, *edge.log_conformation(),
+                        coupling.outflow, outer["velocity"], outer["thickness"],
+                        outer["log_conformation"], outer["polymer_stress"],
+                        relative_inflow, coupling.minimum_inner_outflow,
+                        coupling.predicted_edge_radius, radius+args.length,
+                        radius+args.length-coupling.predicted_edge_radius,
+                        coupling.predicted_edge_radius-(1-far_field["inner_fraction"])*args.length,
+                        radius+far_field["inner_fraction"]*args.length,
+                        radius+args.length-coupling.predicted_edge_radius,
+                    ]
+                    _assert_finite("far-field row", far_row)
+                    far_history.add_row(*far_row)
+                    far_segment.add_row(*far_row)
+                    if not _characteristic_valid(relative_inflow, speed, edge.velocity):
+                        boundary_failures.append("far-boundary inflow validity rejected")
+                    if not args.allow_recoil and not _characteristic_valid(speed, speed):
+                        boundary_failures.append("negative rim speed rejected by allow_recoil=false")
+                    reached = {
+                        key: value for key, value in outer.items()
+                        if value > FAR_FIELD_OUTER_TOLERANCE
+                    }
+                    if reached:
+                        boundary_failures.append(
+                            "far-field pulse reached the end of the membrane extension: "
+                            + ", ".join(f"{key}={value:.3e}" for key, value in reached.items())
+                        )
+                    callback = getattr(args, "progress_callback", None)
+                    if callback is not None:
+                        callback(
+                            "far_field_sample", physical_time=now, control_index=control_index,
+                            relative_edge_inflow=relative_inflow,
+                            inner_material_outflow=coupling.minimum_inner_outflow,
+                            outer_state_deviation=outer,
+                            edge_radius_prediction_error=far_row[-1],
+                            boundary_gate_passed=not boundary_failures,
+                        )
+                expected = (
+                    problem.expected_volume(volume0, radius0)
+                    if coupling is None
+                    else problem.expected_volume(volume0, radius0, far_outflow=coupling.outflow)
+                )
                 volume_error = abs(volume - expected) / max(abs(expected), 1e-300)
                 tip_pin = abs(radius - problem.hole_radius())
                 last_row = [
@@ -1044,18 +1417,45 @@ def run_case(args: argparse.Namespace) -> dict:
                     ):
                         height_plateau = plateau_candidate
 
-                if control_index % args.field_stride == 0:
+                if control_index % args.field_stride == 0 or boundary_failures:
                     problem.output(quiet=True)
                     field_index += 1
 
-                if args.checkpoint_every and control_index % args.checkpoint_every == 0:
-                    problem.save_state(
-                        str(checkpoint_dir / f"ckpt_{control_index:05d}.dump"), quiet=True
+                scheduled_checkpoint = (
+                    args.checkpoint_every and control_index % args.checkpoint_every == 0
+                )
+                membrane_endpoint = coupling is not None and (
+                    bool(boundary_failures)
+                    or (
+                        control_index % args.field_stride == 0
+                        and (target == out_times[-1] or arrest is not None or height_plateau is not None)
                     )
+                )
+                if scheduled_checkpoint or membrane_endpoint:
+                    checkpoint = checkpoint_dir / f"ckpt_{control_index:05d}.dump"
+                    problem.save_state(
+                        str(checkpoint), quiet=True
+                    )
+                    checkpoint_receipt = {
+                        "time": now, "control_index": control_index, "field_index": field_index,
+                        "checkpoint": {**_file_reference(checkpoint), "path": os.path.relpath(checkpoint, run_dir)},
+                        "boundary_gate_passed": not boundary_failures,
+                    }
+                    if coupling is not None:
+                        sidecar = checkpoint.with_suffix(".farfield.npz")
+                        coupling.save(sidecar, checkpoint)
+                        checkpoint_receipt["far_field_state"] = {
+                            **_file_reference(sidecar), "path": os.path.relpath(sidecar, run_dir)
+                        }
+                    metadata["latest_checkpoint"] = checkpoint_receipt
+                    metadata["t_reached"] = now
+                    metadata["scalar_samples_written"] = control_index
+                    metadata["fields_written"] = field_index
+                    _write_json(run_dir / "case.json", metadata)
                     _write_field_history(
                         Path(problem.get_output_directory()), restart["fields"] if restart else []
                     )
-                if arrest is not None or height_plateau is not None:
+                if arrest is not None or height_plateau is not None or boundary_failures:
                     break
 
             assert last_row is not None
@@ -1064,12 +1464,12 @@ def run_case(args: argparse.Namespace) -> dict:
             )
             radius_final = last_row[1]
             radius_increase = radius_final - radius0
-            failures = []
+            failures = list(boundary_failures)
             if radius_increase < args.min_radius_increase:
                 failures.append(
                     f"hole growth {radius_increase:.6e} is below {args.min_radius_increase:.6e}"
                 )
-            # At the far edge u=0 and the mesh moves with +U, so the relative
+            # At a rest edge u=0 and the mesh moves with +U, so the relative
             # normal velocity is -U.  Psi=0 is an inflow condition only while
             # U>=0; elastic recoil would turn that edge into outflow and make
             # the strong conformation condition invalid.
@@ -1144,7 +1544,18 @@ def run_case(args: argparse.Namespace) -> dict:
                     "R_final": radius_final,
                     "R_increase": radius_increase,
                     "minimum_sampled_U": minimum_sampled_speed,
-                    "far_boundary_remained_sampled_inflow": minimum_sampled_speed >= 0,
+                    "far_boundary_remained_sampled_inflow": (
+                        not any("far-boundary inflow validity rejected" in reason for reason in boundary_failures)
+                        if coupling is not None else minimum_sampled_speed >= 0
+                    ),
+                    "minimum_relative_edge_inflow": (
+                        minimum_relative_edge_inflow if coupling is not None else minimum_sampled_speed
+                    ),
+                    "far_field_outflow": coupling.outflow if coupling is not None else None,
+                    "far_field_outer_velocity_max": coupling.outer_velocity if coupling is not None else None,
+                    "far_field_outer_state_deviation": coupling.outer_deviation if coupling is not None else None,
+                    "far_field_minimum_inner_material_outflow": coupling.minimum_inner_outflow if coupling is not None else None,
+                    "far_field_maximum_radius_prediction_error": coupling.maximum_radius_prediction_error if coupling is not None else None,
                     "U_final": last_row[2],
                     "ustar_final": last_row[3],
                     "worst_volume_rel_error": worst_volume_error,
@@ -1172,6 +1583,9 @@ def run_case(args: argparse.Namespace) -> dict:
         metadata["status"] = "error"
         metadata["error_type"] = type(exc).__name__
         metadata["error"] = str(exc)
+        callback = getattr(args, "progress_callback", None)
+        if callback is not None and "validity rejected" in str(exc):
+            callback("boundary_gate_rejected", reason=str(exc))
         _write_json(run_dir / "case.json", metadata)
         raise
     finally:
@@ -1262,6 +1676,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sponge-width", type=_positive_float, default=None)
     parser.add_argument("--sponge-gamma-max", type=_nonnegative_float, default=None)
     parser.add_argument("--sponge-profile", choices=("quintic",), default="quintic")
+    parser.add_argument("--far-field", choices=("rest", "membrane"), default="rest")
+    parser.add_argument("--far-field-inner-fraction", type=_positive_float, default=None)
+    parser.add_argument("--far-field-extension", type=_positive_float, default=None)
+    parser.add_argument("--far-field-node-spacing", type=_positive_float, default=None)
     parser.add_argument(
         "--max-positive-sponge-power",
         type=_nonnegative_float,
@@ -1387,6 +1805,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--length must exceed --resolution")
     try:
         _sponge_parameters(args)
+        _far_field_config(args)
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 

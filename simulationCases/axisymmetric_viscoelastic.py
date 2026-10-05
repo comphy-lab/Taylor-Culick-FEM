@@ -14,8 +14,10 @@ problem is exactly the inherited Newtonian problem and has no conformation
 unknowns.
 
 ``relaxation_time=math.inf`` is an exact non-relaxing limit: no large finite
-surrogate is used.  The incoming film is unstretched (``log(C)=0``), while the
-midplane imposes only the tensor symmetry condition.  The free surface has no
+surrogate is used. At the default rest boundary, the incoming film is
+unstretched (``log(C)=0``). An opt-in membrane boundary supplies independently
+evolved diagonal log-conformation, including finite relaxation. The midplane
+imposes only the tensor symmetry condition. The free surface has no
 conformation boundary condition because it is a material boundary.
 """
 
@@ -88,6 +90,13 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             raise ValueError("relaxation_time must be non-negative (or infinity)")
         if type(self.passive_conformation) is not bool:
             raise TypeError("passive_conformation must be a boolean")
+        if self.far_field == "membrane":
+            if self.passive_conformation or not evolves_conformation(
+                self.elastic_modulus, self.relaxation_time, False
+            ):
+                raise ValueError("far_field='membrane' requires active Oldroyd-B elasticity")
+            if self.sponge is not None and self.sponge.gamma_max > 0:
+                raise ValueError("a membrane far field cannot be combined with a sponge")
 
         # NavierStokesEquations in the inherited problem carries the solvent
         # stress only.  Velocities remain laboratory-frame velocities.
@@ -144,22 +153,47 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
                 log_conformation_aa=1,
             )
 
-        # Undisturbed material enters through the translating far boundary.
-        # In axisymmetry the azimuthal tensor component is named ``aa``.
-        eqs += (
-            DirichletBC(
-                log_conformation_xx=0,
-                log_conformation_xy=0,
-                log_conformation_yy=0,
-                log_conformation_aa=0,
+        # The incoming tensor is diagonal in (r,z,theta). The membrane values
+        # are known parameters; finite relaxation is evolved in both domains.
+        if self.far_field == "membrane":
+            eqs += (
+                DirichletBC(
+                    log_conformation_xx=self.define_global_parameter(far_field_log_c_xx=0.0),
+                    log_conformation_xy=0,
+                    log_conformation_yy=self.define_global_parameter(far_field_log_c_yy=0.0),
+                    log_conformation_aa=self.define_global_parameter(far_field_log_c_aa=0.0),
+                ) @ "far"
             )
-            @ "far"
-        )
+        else:
+            eqs += (
+                DirichletBC(
+                    log_conformation_xx=0,
+                    log_conformation_xy=0,
+                    log_conformation_yy=0,
+                    log_conformation_aa=0,
+                ) @ "far"
+            )
         # Reflection symmetry forbids only the r-z shear component.  The
         # normal components are evolved, not prescribed.  There is
         # deliberately no conformation condition on ``interface``.
         eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
         self += eqs @ "liquid"
+
+    def set_far_field(
+        self, velocity: float, thickness: float, log_conformation: tuple[float, float, float]
+    ) -> None:
+        """Set laboratory edge velocity, full thickness and (r,z,theta) log C."""
+        if self.far_field != "membrane":
+            raise RuntimeError("set_far_field requires far_field='membrane'")
+        values = (velocity, thickness, *log_conformation)
+        if len(log_conformation) != 3 or not all(math.isfinite(v) for v in values):
+            raise ValueError("far-field state must be finite with three log C components")
+        if thickness <= 0:
+            raise ValueError("far-field thickness must be positive")
+        self.get_global_parameter("far_field_velocity").value = velocity
+        self.get_global_parameter("far_field_half_thickness").value = 0.5 * thickness
+        for name, value in zip(("xx", "yy", "aa"), log_conformation, strict=True):
+            self.get_global_parameter(f"far_field_log_c_{name}").value = value
 
     def sponge_diagnostics(self) -> dict[str, float]:
         """Return instantaneous damping power and undamped-core velocity RMS."""
