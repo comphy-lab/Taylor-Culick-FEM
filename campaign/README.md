@@ -2,12 +2,13 @@
 
 The exact scripts used to run the `Oh` sweep on Stokes, kept here so a result
 can be traced to the commands that produced it. They are **operational
-records**, not a portable driver: run roots, mount points and cpusets are
-hardcoded to the machine the campaign ran on. Read them before reusing them.
+records**, not a portable driver: cpusets, memory limits and case parameters
+are those of the machine the campaign ran on. Run roots come from the
+environment (`SWEEP_ROOT` for the sweep batches, `DT_STUDY_ROOT` for the
+time-step study; the checkout defaults to this repository). Read them before reusing them.
 
-Simulation data is not in this repository. These write to
-`/mnt/stokesInt1/running-simulations/elastic-taylor-culick/`; custody is
-recorded in the project tracker.
+Simulation data is not in this repository. These write to the project run root
+on the compute host; custody is recorded in the project tracker.
 
 | script | what it does |
 |---|---|

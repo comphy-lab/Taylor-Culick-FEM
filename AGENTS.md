@@ -14,14 +14,14 @@ still resolves and `python -m pyoomph check all` passes.
 ```bash
 uv sync                                # build/refresh the environment
 uv run python simulationCases/planar_comoving.py
-uv sync --upgrade-package pyoomph      # move to a newer develop commit
 ```
 
-pyoomph is a **source build** from the CoMPhy fork's `develop` branch, declared
-through `[tool.uv.sources]`. It compiles vendored oomph-lib plus downloaded
-CLN/GiNaC, so a cold `uv sync` is slow. `uv.lock` pins the exact pyoomph commit;
-commit the lockfile whenever it changes so a result can be traced to a solver
-build.
+pyoomph is a **source build** of an immutable CoMPhy release commit
+(`comphy-2026.09.07.1`, `a186e07e`), declared through `[tool.uv.sources]`. Do
+not follow `develop`; move the pin only deliberately, to another release tag.
+It compiles vendored oomph-lib plus downloaded CLN/GiNaC, so a cold `uv sync`
+is slow. `uv.lock` pins the exact pyoomph commit; commit the lockfile whenever
+it changes so a result can be traced to a solver build.
 
 ## Physics invariants
 

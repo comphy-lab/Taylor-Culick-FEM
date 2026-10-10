@@ -152,10 +152,10 @@ def collapse_const(ts, u, oh, frac=0.5):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--oned", type=Path, default=Path(
-        "/mnt/stokesInt1/running-simulations/elastic-taylor-culick/trouton1d-oh-sweep"))
-    ap.add_argument("--twod", type=Path, default=Path(
-        "/mnt/stokesInt1/running-simulations/elastic-taylor-culick/u995-sweep"))
+    ap.add_argument("--oned", type=Path, required=True,
+                    help="run root of the 1D Trouton Oh sweep")
+    ap.add_argument("--twod", type=Path, required=True,
+                    help="run root of the 2D u995 Oh sweep")
     ap.add_argument("--out", type=Path, default=Path("docs/planar-campaign/figures"))
     ap.add_argument("--json-out", type=Path, default=None)
     args = ap.parse_args()

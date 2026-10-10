@@ -22,8 +22,8 @@
 # bit-identical values: PARDISO is threaded.
 set -euo pipefail
 
-B=/mnt/stokesInt1/running-simulations/elastic-taylor-culick/u995-sweep
-C=/home/vatsal/CMP-codes/Taylor-Culick-FEM
+B=${SWEEP_ROOT:?set SWEEP_ROOT to the u995 sweep run root}
+C=${FEM_CHECKOUT:-$(cd "$(dirname "$0")/.." && pwd)}
 D=$B/Oh_SB_0.035_u995
 
 # Refuse to oversubscribe: no batch 1 or batch 2 case may still be running.
@@ -47,7 +47,7 @@ systemd-run --user --unit=etc-u995-oh0.035-rerun \
   --property=MemoryHigh=44G --property=MemoryMax=52G \
   --property=AllowedCPUs=8-31 \
   --setenv=OMP_NUM_THREADS=12 --setenv=HWLOC_COMPONENTS=-gl --collect \
-  /home/vatsal/.local/bin/uv run python validation/run_validation.py \
+  uv run python validation/run_validation.py \
     --oh 0.035 --tag u995 --results "$B" \
     --tstar-end 243614.0 --length 160.0 --resolution 0.06 --temporal-error 0.001 \
     --checkpoint-every 20

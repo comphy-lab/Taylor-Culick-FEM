@@ -62,14 +62,14 @@ METHOD
    estimate. Overlay PNGs are produced for visual verification.
 
 Run with the project's venv:
-    /home/vatsal/CMP-codes/Taylor-Culick-FEM/.venv/bin/python digitize_savva_bush.py
+    uv run python validation/digitize_savva_bush.py
 """
 import subprocess
 import numpy as np
 import imageio.v3 as iio
 from pathlib import Path
 
-ROOT = Path("/home/vatsal/CMP-codes/Taylor-Culick-FEM")
+ROOT = Path(__file__).resolve().parents[1]
 PDF = ROOT / "validation/literature/savva_bush_JFM2009.pdf"
 DATA_DIR = ROOT / "validation/data"
 WORK_DIR = Path("/tmp/savva_digitize")

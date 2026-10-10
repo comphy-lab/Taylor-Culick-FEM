@@ -17,10 +17,10 @@ Three panels, each answering one question the campaign was set up to ask:
 
 from __future__ import annotations
 
+import argparse
 import glob
 import math
 import os
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -34,8 +34,7 @@ matplotlib.rcParams["mathtext.fontset"] = "cm"
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
-RUNS = Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
-            "newtonian-comoving-pyoomph/validation")
+RUNS = Path(".")  # set from --results in main()
 
 
 def load(tag: str):
@@ -49,6 +48,14 @@ def load(tag: str):
 
 
 def main() -> None:
+    global RUNS
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--results", type=Path, required=True,
+                    help="run root holding the run_validation.py case folders")
+    ap.add_argument("--out", type=Path, default=Path("campaign_summary.png"),
+                    help="output figure path")
+    args = ap.parse_args()
+    RUNS = args.results
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(27, 8))
 
     # ---- (a) domain convergence ------------------------------------------
@@ -131,7 +138,7 @@ def main() -> None:
         ax.minorticks_on()
 
     fig.tight_layout()
-    out = sys.argv[1] if len(sys.argv) > 1 else "campaign_summary.png"
+    out = args.out
     fig.savefig(out, dpi=140, bbox_inches="tight")
     print(f"wrote {out}")
     print(f"  converged u*(t*=30) = {us[-1]:.5f} at L={Ls[-1]}  vs S&B {sb:.4f} "

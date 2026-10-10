@@ -147,7 +147,7 @@ def run_case(oh: float, tstar_end: float, nsteps: int, n_outputs: int,
             # once per run() call. At this driver's step counts that is one
             # sheet_*.txt per step: a measured 2976 files for 110 output rows,
             # extrapolating to ~550 GB per run and 6.6 TB across twelve
-            # concurrent cases, against 382 GB free on reynolds. Suppress it and
+            # concurrent cases, against 382 GB free on the compute host. Suppress it and
             # call output() once per leg instead, giving exactly n_outputs
             # profiles at the times the series records.
             # LATE-TIME NEWTON FAILURE. Runs at Oh = 0.035 and 0.09121 died

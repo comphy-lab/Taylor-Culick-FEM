@@ -18,7 +18,7 @@ ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 
 PREAMBLE = r"""# 1D validation data set: TC1D-FEM vs ABDS-CN vs Ahsan et al. asymptotics
 
-Generated on host `reynolds`. Nothing in this tree was produced on `stokes`.
+Generated on a single compute host; every file in this tree comes from it.
 
 ## The two codes
 
@@ -143,10 +143,10 @@ half-maximum search to the contiguous run through the peak, since their
 
 ## Reproducing
 
-    cd ~/CMP-codes/Taylor-Culick-FEM
-    export ROOT=<this directory> UV=~/.local/bin/uv
+    cd <Taylor-Culick-FEM checkout>
+    export ROOT=<this directory> UV=uv
     python3 validation/ahsan_campaign_jobs.py | envsubst > $ROOT/logs/jobs.txt
-    $ROOT/logs/run.sh                       # 11-way parallel, ~1 h on reynolds
+    $ROOT/logs/run.sh                       # 11-way parallel, ~1 h on one node
     $UV run python validation/ahsan_campaign.py fig5 ...   # see logs/jobs3.txt
     $UV run python validation/ahsan_campaign_report.py $ROOT
 

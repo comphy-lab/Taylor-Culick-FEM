@@ -4,19 +4,11 @@ Sharp-interface finite-element study of Taylor–Culick sheet retraction, solved
 a frame co-moving with the retracting rim.
 
 Built on [pyoomph](https://github.com/comphy-lab/pyoomph) (a Python front-end to
-oomph-lib), tracked against the CoMPhy fork's `develop` branch.
+oomph-lib), pinned to the immutable CoMPhy release `comphy-2026.09.07.1`
+(commit `a186e07e`).
 
-> The documentation index is [`docs/README.md`](docs/README.md).
-> Inertial FEM versus Basilisk (`Oh < 0.1`) is
-> [`docs/validation-inertial/`](docs/validation-inertial/) (planar closed).
-> The viscous Trouton/Ahsan note is
-> [`docs/validation-viscous/`](docs/validation-viscous/).
-> The full planar Newtonian write-up, including the `√2` convention mismatch
-> and the comparison against Savva & Bush (2009), is
-> [`docs/planar-campaign/`](docs/planar-campaign/). That write-up is intended
-> as an extension of Appendix A of
-> [Sanjay *et al.*, JFM 948 (2022) A14](https://arxiv.org/abs/2202.13400) to
-> arbitrary `Oh`, with FEM in place of Basilisk.
+> The science write-ups (validation notes and the planar campaign) are not yet
+> released; they will be linked here when they are.
 
 ## Why FEM here
 
@@ -96,9 +88,7 @@ control is the result rather than a fixed point.
 Note that a radial translation is *not* a Galilean transformation in
 axisymmetry — the `1/r` metric terms do not translate. The co-moving frame is
 therefore implemented as ALE mesh motion with the true physical radius retained
-in the metric, not as a change of variables. Schematics and the constraint
-equations are in
-[`docs/axi-comoving-window.html`](docs/axi-comoving-window.html).
+in the metric, not as a change of variables.
 
 ### 3. Viscoelastic axisymmetric (`simulationCases/axisymmetric_viscoelastic.py`)
 
@@ -125,8 +115,7 @@ are documented in
 simulationCases/        runnable problem definitions (2D co-moving, 1D Trouton)
 validation/             validation drivers, convergence studies, digitised data
 postProcess/            analysis and figure generation
-campaign/               the exact scripts used to run the Oh sweep on Stokes
-docs/                   public write-up tree (index, viscous, inertial, planar campaign, axi solvers)
+campaign/               the exact scripts used to run the Oh sweep
 ```
 
 Simulation output does not live here. Runs write to the project run root on the
@@ -152,11 +141,9 @@ sudo apt-get install -y build-essential cmake python3-dev pkg-config \
     libopenmpi-dev wget bzip2 patch flex bison
 ```
 
-To move to a newer pyoomph `develop` commit:
-
-```bash
-uv sync --upgrade-package pyoomph
-```
+pyoomph is pinned to an immutable CoMPhy release commit in `pyproject.toml`.
+Change the pin only deliberately, to another release tag, and commit the
+updated `uv.lock` with it so every result traces to one solver build.
 
 ### Python version
 

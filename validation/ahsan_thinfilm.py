@@ -112,8 +112,8 @@ is a check both codes can be held to.
 VERIFICATION ACHIEVED (2026-08-11).
 
   1. AGAINST THE ORIGINAL MATLAB. GNU Octave 10.3.0 was installed user-locally
-     on reynolds (micromamba, conda-forge; it is not a system package there and
-     there is no passwordless sudo). All three of their scripts were run
+     on the compute host (micromamba, conda-forge; it is not a system package
+     there). All three of their scripts were run
      unmodified apart from replacing the plotting calls with an ASCII dump, and
      diffed against this port at identical parameters:
 

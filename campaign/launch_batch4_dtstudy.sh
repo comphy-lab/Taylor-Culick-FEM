@@ -35,9 +35,8 @@
 # where a temporal problem shows up first.
 set -euo pipefail
 
-B=/mnt/stokesInt1/running-simulations/elastic-taylor-culick/u995-sweep
-C=/home/vatsal/CMP-codes/Taylor-Culick-FEM
-OUT=/mnt/stokesInt1/running-simulations/elastic-taylor-culick/dt-study-2d
+C=${FEM_CHECKOUT:-$(cd "$(dirname "$0")/.." && pwd)}
+OUT=${DT_STUDY_ROOT:?set DT_STUDY_ROOT to the time-step study run root}
 
 if systemctl --user list-units --all --no-legend 'etc-u995-*' | grep -q ' active '; then
   echo "u995 cases are still running; this study runs after batch 3" >&2
@@ -56,7 +55,7 @@ for nout in 100 200 400 800; do
     --property=MemoryHigh=40G --property=MemoryMax=48G \
     --property=AllowedCPUs=8-31 \
     --setenv=OMP_NUM_THREADS=8 --setenv=HWLOC_COMPONENTS=-gl \
-    /home/vatsal/.local/bin/uv run python validation/run_validation.py \
+    uv run python validation/run_validation.py \
       --oh 1.0 --tag "dt${nout}" --results "$OUT" --n-outputs "${nout}" \
       --tstar-end 30.0 --length 40.0 --resolution 0.06 --temporal-error 0.001
 done

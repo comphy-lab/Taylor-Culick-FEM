@@ -201,9 +201,9 @@ the compute host and the tracker records custody.
 ## Running
 
 ```bash
-uv run python validation/run_validation.py                 # default Oh sweep
-uv run python validation/run_validation.py --oh 0.5 1 5    # subset
-uv run python validation/compare_savva_bush.py             # compare + plot
+uv run python validation/run_validation.py --results RUN_ROOT                 # default Oh sweep
+uv run python validation/run_validation.py --results RUN_ROOT --oh 0.5 1 5    # subset
+uv run python validation/compare_savva_bush.py --results RUN_ROOT             # compare + plot
 ```
 
 ## Status

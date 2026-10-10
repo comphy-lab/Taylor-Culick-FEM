@@ -12,8 +12,8 @@
 # checkpoints_part1/. Concatenate them in post-processing.
 set -euo pipefail
 
-B=/mnt/stokesInt1/running-simulations/elastic-taylor-culick/u995-sweep
-C=/home/vatsal/CMP-codes/Taylor-Culick-FEM
+B=${SWEEP_ROOT:?set SWEEP_ROOT to the u995 sweep run root}
+C=${FEM_CHECKOUT:-$(cd "$(dirname "$0")/.." && pwd)}
 
 for u in 0.0565 0.14724 0.09121; do
   if systemctl --user is-active --quiet "etc-u995-oh${u}.service"; then
@@ -30,7 +30,7 @@ launch() {
     --property=MemoryHigh="$hi" --property=MemoryMax="$mx" \
     --property=AllowedCPUs=8-31 \
     --setenv=OMP_NUM_THREADS=6 --setenv=HWLOC_COMPONENTS=-gl --collect \
-    /home/vatsal/.local/bin/uv run python validation/run_validation.py \
+    uv run python validation/run_validation.py \
       --oh "$oh" --tag u995 --results "$B" \
       --tstar-end "$ts" --length "$L" --resolution 0.06 --temporal-error 0.001 \
       --checkpoint-every 20 \

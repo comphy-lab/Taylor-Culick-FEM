@@ -232,9 +232,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--oh", type=float, nargs="*", default=None,
                     help="Ohnesorge numbers, Oh = mu/sqrt(2 h0 rho sigma). The coded viscosity is mu = sqrt(2) Oh.")
-    ap.add_argument("--results", type=Path,
-                    default=Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
-                                 "newtonian-comoving-pyoomph/validation"))
+    ap.add_argument("--results", type=Path, required=True,
+                    help="output root for the case folders (the project run root)")
     ap.add_argument("--resolution", type=float, default=0.06)
     ap.add_argument("--length", type=float, default=None,
                     help="override the Oh-derived co-moving window length")

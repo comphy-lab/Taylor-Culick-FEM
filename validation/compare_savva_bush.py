@@ -68,9 +68,8 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", type=Path, default=here / "data")
-    ap.add_argument("--results", type=Path,
-                    default=Path("/home/vatsal/running-simulations/elastic-taylor-culick/"
-                                 "newtonian-comoving-pyoomph/validation"))
+    ap.add_argument("--results", type=Path, required=True,
+                    help="run root holding the run_validation.py case folders")
     ap.add_argument("--out", type=Path, default=here / "data" / "validation_savva_bush.png")
     args = ap.parse_args()
 

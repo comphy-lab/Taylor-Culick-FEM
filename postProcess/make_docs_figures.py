@@ -463,13 +463,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=Path("docs/planar-campaign/figures"))
-    ap.add_argument("--sweep", type=Path,
-                    default=Path("/mnt/stokesInt1/running-simulations/"
-                                 "elastic-taylor-culick/u995-sweep"))
-    ap.add_argument("--archive", type=Path,
-                    default=Path("/home/vatsal/running-simulations/"
-                                 "elastic-taylor-culick/"
-                                 "newtonian-comoving-pyoomph/validation"))
+    ap.add_argument("--sweep", type=Path, required=True,
+                    help="run root of the u995 Oh sweep")
+    ap.add_argument("--archive", type=Path, required=True,
+                    help="run root of the archived run_validation.py cases")
     ap.add_argument("--time", type=float, default=25.0,
                     help="inertio-capillary time at which to compare fields")
     ap.add_argument("--only", nargs="*", default=None,

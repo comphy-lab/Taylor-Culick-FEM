@@ -67,11 +67,11 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--oh", type=float, default=1.0)
     ap.add_argument("--tstar-end", type=float, default=30.0)
-    ap.add_argument("--out", type=Path,
-                    default=Path("/home/vatsal/Projects-cowork/elastic-taylor-culick"
-                                 "/scratch/trouton1d_convergence"))
+    ap.add_argument("--out", type=Path, required=True,
+                    help="output folder for the study")
     ap.add_argument("--study", choices=("mesh", "time", "tolerance", "all"), default="all")
     args = ap.parse_args()
+    args.out = args.out.resolve()  # run_case changes directory
     args.out.mkdir(parents=True, exist_ok=True)
 
     print(f"Oh={args.oh}  t*_end={args.tstar_end}  V_TC={V_TC!r}", flush=True)
