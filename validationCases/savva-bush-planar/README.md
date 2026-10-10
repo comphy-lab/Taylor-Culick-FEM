@@ -8,12 +8,13 @@ two-dimensional and the reduced descriptions part.
 
 | File | Role |
 |---|---|
-| `run_validation.py` | Runs the planar co-moving solver over a list of `Oh` into `--results`. |
-| `compare_savva_bush.py` | Compares runs with the digitised curves on the reference's own samples. |
+| `run_validation.py` | Runs one case (`physics.problem` = `planar_comoving`, `physics.Oh`) into a new folder; numerical options are recorded in its run manifest. |
+| `cases/` | One case per `Oh` of the sweep. |
+| `run_planar_sweep.sh` | The sweep: every case at the study's numerics, one new folder each under the given output root. |
+| `compare_savva_bush.py` | Compares runs with the digitised curves on the reference's own samples; reads only runs whose manifest names a clean commit (`--allow-legacy` also reads runs that predate manifests). |
 | `plot_campaign.py` | Summary figure: window convergence, the comparison, and the approach to `V_TC`. |
-| `digitize_savva_bush.py` | Extraction record: regenerates `data/` from the paper's figures. |
+| `digitize_savva_bush.py` | Extraction record: regenerates `data/` from figures 5 and 6 of the paper, given with `--pdf` and checked against the SHA-256 of the extraction copy. |
 | `data/` | Digitised curves (headers carry provenance and uncertainty), extraction overlays, and the independent one-dimensional Trouton curves used in the comparison. |
-| `literature/` | The source papers. |
 | `launch-records/` | The launch scripts of the planar `Oh` sweep toward `V_TC`. |
 
 The conventions matter: `Oh = mu / sqrt(2 h0 rho sigma)` carries a `sqrt(2)` the coded
@@ -23,7 +24,13 @@ length must exceed both the steady influence length and the diffusive spread
 `sqrt(4 nu t)`; `window_length` in `src/taylor_culick_fem/savva_bush.py` sizes it.
 
 ```bash
-uv run python validationCases/savva-bush-planar/run_validation.py --results <run root> --oh 0.5 1 5
-uv run python validationCases/savva-bush-planar/compare_savva_bush.py --results <run root>
-uv run python validationCases/savva-bush-planar/plot_campaign.py --results <run root> --out <figure>
+validationCases/savva-bush-planar/run_planar_sweep.sh <output root>
+uv run python validationCases/savva-bush-planar/run_validation.py \
+    validationCases/savva-bush-planar/cases/planar-oh1.json --out <new folder> [--tstar-end 30 ...]
+uv run python validationCases/savva-bush-planar/run_validation.py <case> --out <new folder> \
+    --restart-from <run>/checkpoints/ckpt_NNNN.dump --tstar-end <later end>
+uv run python validationCases/savva-bush-planar/compare_savva_bush.py --results <output root> --out <figure>
 ```
+
+Each run writes `run-manifest.json` before any other output and refuses an output folder
+that already holds anything; a continuation writes to its own new folder.

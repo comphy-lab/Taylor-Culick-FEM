@@ -19,11 +19,8 @@ replaced. ``--check`` stops after the checks that need neither pyoomph nor the s
 from __future__ import annotations
 
 import argparse
-import datetime as dt
-import hashlib
 import json
 import math
-import os
 import sys
 from pathlib import Path
 
@@ -31,31 +28,22 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from taylor_culick_fem.cases import CASE_FIELDS_USED, validate_case
+from taylor_culick_fem.cases import CASE_FIELDS_USED, VISCOELASTIC, validate_case
 from taylor_culick_fem.lineage import restart_evidence
-from taylor_culick_fem.provenance import (
-    MANIFEST,
-    component_commit,
-    create_run_manifest,
-    pyoomph_revision,
+from taylor_culick_fem.run_contract import (
+    UNITS,
+    append_progress,
+    check_restart,
+    output_problems,
+    read_case,
+    sha256,
+    start_run,
 )
 
-RUNNER_SCHEMA = "pyoomph-runner-manifest-v1"
-PROGRESS = "progress.jsonl"
-UNITS = ("nondimensional: lengths on the full sheet thickness h0, velocities on "
-         "sqrt(sigma/(rho h0)), times on sqrt(rho h0^3/sigma); V_TC = sqrt(2)")
 # "passed": the declared stop (time, arrest or height plateau) was reached and every check
 # held. "horizon_reached": an event stop did not occur by its horizon, which the case
 # declares as the alternative endpoint. "failed" and "error" exit non-zero.
 STOP_STATUSES = ("passed", "horizon_reached")
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def exit_status(summary: dict) -> int:
@@ -89,62 +77,16 @@ def option_problems(args: argparse.Namespace) -> list[str]:
     return problems
 
 
-def output_problems(out: Path) -> list[str]:
-    """A run, fresh or restart, needs a new folder or an empty one."""
-    if out.exists() and (not out.is_dir() or any(out.iterdir())):
-        return [(f"{out} already holds a run or other files; every run, including a restart, "
-                 "needs its own new output folder")]
-    return []
 
 
-def parent_run(state: Path) -> Path | None:
-    """The nearest folder holding a run manifest, from the state's folder up two levels."""
-    folder = state.resolve().parent
-    for candidate in (folder, *list(folder.parents)[:2]):
-        if (candidate / MANIFEST).is_file():
-            return candidate
-    return None
-
-
-def check_restart(state: Path, out: Path, case_sha256: str) -> tuple[Path, dict]:
-    """Refuse a state that is missing, unattributable or of another case; return its record."""
-    if not state.is_file():
-        raise SystemExit(f"refused: restart state {state} does not exist")
-    parent = parent_run(state)
-    if parent is None:
-        raise SystemExit(f"refused: restart state {state} cannot be checked: "
-                         f"no {MANIFEST} in its run folder")
-    record = json.loads((parent / MANIFEST).read_text(encoding="utf-8"))
-    if record.get("case_sha256") != case_sha256:
-        raise SystemExit(f"refused: restart state {state} belongs to another case (case_sha256 differs)")
-    if out.resolve().is_relative_to(parent):
-        raise SystemExit("refused: a restart writes to its own folder, not inside its parent run")
-    parent_manifest = {"path": str(parent / MANIFEST), "sha256": sha256(parent / MANIFEST)}
-    return parent, {"path": str(state.resolve()), "sha256": sha256(state),
-                    "parent_manifest": parent_manifest}
-
-
-def append_progress(out: Path, event: str, **values) -> None:
-    """Append one fsynced progress event to ``out/progress.jsonl``."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(out / PROGRESS, flags, 0o644)
-    payload = {"schema": "pyoomph-runner-progress-v1",
-               "recorded_at": dt.datetime.now(dt.UTC).isoformat(), "event": event, **values}
-    with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
-        stream.write(json.dumps(payload, sort_keys=True, allow_nan=False) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
 
 
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(raw)
     case_path = args.case.resolve()
-    try:
-        case = json.loads(case_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"refused: cannot read case {args.case}: {exc}") from exc
-    validate_case(case)
+    case = read_case(case_path)
+    validate_case(case, problem=VISCOELASTIC)
     problems = option_problems(args) + output_problems(args.out)
     if problems:
         raise SystemExit("refused: " + "; ".join(problems))
@@ -178,29 +120,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"refused: {exc}") from exc
     affinity = _enforce_launcher_affinity()
 
-    args.out.mkdir(parents=True, exist_ok=True)
-    commit = component_commit(ROOT)
-    runner = Path(__file__).resolve()
-    manifest = {
-        "schema": RUNNER_SCHEMA,
-        "created_at": dt.datetime.now(dt.UTC).isoformat(),
-        "case_file": str(case_path),
-        "case_sha256": case_sha256,
-        "case_id": case["case_id"],
-        "case_fields_used": CASE_FIELDS_USED,
-        "units": UNITS,
-        "argv": [str(runner), *raw],
-        "runner": {"path": str(runner), "sha256": sha256(runner)},
-        "component_commit": commit,
-        "pyoomph": pyoomph_revision(),
-        "pyoomph_module": getattr(pyoomph, "__file__", None),
-    }
-    if restart is not None:
-        manifest["restart_from"] = restart
-    try:
-        create_run_manifest(args.out, manifest)
-    except FileExistsError as exc:
-        raise SystemExit(f"refused: {args.out / MANIFEST} exists; a run manifest is never replaced") from exc
+    commit = start_run(args.out, root=ROOT, runner=Path(__file__), argv=raw, case_path=case_path,
+                       case=case, case_sha256=case_sha256, case_fields_used=CASE_FIELDS_USED,
+                       units=UNITS, restart=restart,
+                       pyoomph_module=getattr(pyoomph, "__file__", None))
     append_progress(args.out, "started", case_id=case["case_id"], component_commit=commit,
                     launcher_affinity=affinity)
     try:

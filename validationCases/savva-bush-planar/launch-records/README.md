@@ -3,8 +3,10 @@
 The scripts that launched the planar sweep toward `V_TC`, kept so that a result can be
 traced to the commands that produced it. They are records, not a portable driver:
 the cpusets, memory limits and case parameters are those of the machine the sweep ran
-on. Run roots come from the environment (`SWEEP_ROOT` for the sweep batches,
-`DT_STUDY_ROOT` for the time-step study); the checkout defaults to this repository.
+on, and they call the driver interface of their time (`--oh`, `--results`); the current
+driver takes one case file and `--out` (see the study README). Run roots come from the
+environment (`SWEEP_ROOT` for the sweep batches, `DT_STUDY_ROOT` for the time-step
+study); the checkout defaults to this repository.
 
 | Script | What it does |
 |---|---|

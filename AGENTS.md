@@ -95,7 +95,9 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 - Every run writes `run-manifest.json` before any other output, binding the case hash, the
   component commit and the pyoomph commit, and never replaces it. Every run, fresh or
   restart, uses a new output folder; a continuation uses the same case with
-  `--restart-from` and may change only the stop time and the membrane length.
+  `--restart-from` and may change only the stop time and the membrane length (the
+  elastic runner), or the stop time and the output count (the Newtonian study drivers,
+  whose output count sets the step).
 - Live metadata (`case.json`) is replaced atomically; histories are appended.
 - Study run scripts (`run_*.sh`) carry the exact production options and take the output
   folder as their argument; `testCases/` parses each against its runner's options.

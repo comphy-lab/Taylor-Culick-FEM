@@ -137,9 +137,11 @@ store the MEASURED values, not the inferred exact grid, so that the files
 remain a digitisation and not a reconstruction; the inferred grid is
 recorded in the header for anyone who prefers it.
 
-Run with the project's environment:
-    uv run python validationCases/ahsan-viscous-sheet/digitize_ahsan_fig5.py
+Run with the project's environment. The paper is not distributed with this repository;
+pass the arXiv PDF, which must be the copy the data were extracted from:
+    uv run python validationCases/ahsan-viscous-sheet/digitize_ahsan_fig5.py --pdf <arXiv2507.04603.pdf>
 """
+import argparse
 import subprocess
 import tempfile
 from pathlib import Path
@@ -149,7 +151,9 @@ import imageio.v3 as iio
 from scipy import ndimage
 
 HERE = Path(__file__).resolve().parent
-PDF = HERE / "literature" / "ahsan_brandao_davidovitch_stone_arXiv2507.04603.pdf"
+# Ahsan, Brandao, Davidovitch & Stone, arXiv:2507.04603: SHA-256 of the extraction copy.
+PDF_SHA256 = "76ca9dcd00a3318a03487b7c618e17049129d7f329a5fcf653d9c5a4674fc782"
+PDF: Path | None = None  # set from --pdf
 DATA_DIR = HERE / "data"
 PAGE = 15
 
@@ -791,5 +795,20 @@ def main():
             print(f"  {l:7.4f}  {t:7.4f}  {d:7.4f}")
 
 
+def checked_pdf(path: Path, expected: str) -> Path:
+    """The source PDF, refused unless it is the copy the data were extracted from."""
+    import hashlib
+    path = Path(path)
+    if not path.is_file():
+        raise SystemExit(f"refused: source PDF {path} does not exist")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != expected:
+        raise SystemExit(f"refused: {path} has SHA-256 {digest}, not the extraction copy {expected}")
+    return path
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Digitise Ahsan et al. (2025) figure 5.")
+    parser.add_argument("--pdf", type=Path, required=True, help="the arXiv PDF of Ahsan et al. (2025)")
+    PDF = checked_pdf(parser.parse_args().pdf, PDF_SHA256)
     main()

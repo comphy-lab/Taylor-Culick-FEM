@@ -19,25 +19,34 @@ from __future__ import annotations
 
 import argparse
 import glob
-import math
 import os
+import sys
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
 
 matplotlib.rcParams["font.family"] = "serif"
 matplotlib.rcParams["mathtext.fontset"] = "cm"
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
+sys.path.insert(0, str(HERE.parents[1] / "src"))
+from taylor_culick_fem.run_contract import figure_problem
+
+ALLOW_LEGACY = False  # set from --allow-legacy in main()
 RUNS = Path(".")  # set from --results in main()
 
 
 def load(tag: str):
+    """A run's control history, if it may feed the figure (see ``figure_problem``)."""
+    problem = figure_problem(RUNS / tag)
+    if problem is not None and not (ALLOW_LEGACY and not (RUNS / tag / "run-manifest.json").exists()):
+        print(f"skipping {tag}: {problem}")
+        return None
     for sub in ("run_validation", "planar_comoving"):
         f = RUNS / tag / sub / "control.txt"
         if f.exists():
@@ -48,14 +57,17 @@ def load(tag: str):
 
 
 def main() -> None:
-    global RUNS
+    global RUNS, ALLOW_LEGACY
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--results", type=Path, required=True,
                     help="run root holding the run_validation.py case folders")
     ap.add_argument("--out", type=Path, default=Path("campaign_summary.png"),
                     help="output figure path")
+    ap.add_argument("--allow-legacy", action="store_true",
+                    help="also read runs written before run manifests existed")
     args = ap.parse_args()
     RUNS = args.results
+    ALLOW_LEGACY = args.allow_legacy
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(27, 8))
 
     # ---- (a) domain convergence ------------------------------------------

@@ -22,27 +22,36 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
 
 matplotlib.rcParams["font.family"] = "serif"
 matplotlib.rcParams["mathtext.fontset"] = "cm"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-from taylor_culick_fem.savva_bush import load_reference  # noqa: E402
+from taylor_culick_fem.run_contract import figure_problem
+from taylor_culick_fem.savva_bush import load_reference
 
 COLORS = {0.5: "#0072B2", 1.0: "#D55E00", 5.0: "#009E73", 10.0: "#CC79A7",
           100.0: "#333333"}
 
 
-def load_runs(results: Path) -> dict[float, tuple[np.ndarray, dict]]:
-    """Our control histories, keyed by Savva-Bush Ohnesorge number."""
+def load_runs(results: Path, allow_legacy: bool = False) -> dict[float, tuple[np.ndarray, dict]]:
+    """Our control histories, keyed by Ohnesorge number, from the run folders under ``results``.
+
+    A run feeds the figure only when its run manifest names a clean commit; runs written
+    before the manifest existed are read only with ``allow_legacy``.
+    """
     out = {}
-    for case in sorted(results.glob("Oh_SB_*")):
-        meta_f, ctrl = case / "case.json", case / "planar_comoving" / "control.txt"
-        if not ctrl.exists():
-            ctrl = case / "control.txt"
-        if not (meta_f.exists() and ctrl.exists()):
+    for case in sorted(p for p in results.iterdir() if p.is_dir()):
+        meta_f = case / "case.json"
+        ctrl = next((case / sub / "control.txt" for sub in ("run_validation", "planar_comoving", ".")
+                     if (case / sub / "control.txt").exists()), None)
+        if ctrl is None or not meta_f.exists():
+            continue
+        problem = figure_problem(case)
+        if problem is not None and not (allow_legacy and not (case / "run-manifest.json").exists()):
+            print(f"skipping {case.name}: {problem}")
             continue
         meta = json.loads(meta_f.read_text())
         d = np.loadtxt(ctrl, comments="#")
@@ -70,10 +79,12 @@ def main() -> None:
     ap.add_argument("--data", type=Path, default=here / "data")
     ap.add_argument("--results", type=Path, required=True,
                     help="run root holding the run_validation.py case folders")
-    ap.add_argument("--out", type=Path, default=here / "data" / "validation_savva_bush.png")
+    ap.add_argument("--out", type=Path, required=True, help="figure path, outside this repository")
+    ap.add_argument("--allow-legacy", action="store_true",
+                    help="also read runs written before run manifests existed")
     args = ap.parse_args()
 
-    runs = load_runs(args.results)
+    runs = load_runs(args.results, args.allow_legacy)
     if not runs:
         raise SystemExit(f"no completed runs under {args.results}")
 

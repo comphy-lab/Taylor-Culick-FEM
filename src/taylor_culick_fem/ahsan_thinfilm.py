@@ -7,7 +7,7 @@ with
     T. Ahsan, R. Brandao, B. Davidovitch, H. A. Stone,
     "Retraction of a viscous liquid sheet", arXiv:2507.04603 (2025),
 
-local copy of the PDF in ``the study's literature/ folder``. The MATLAB is written from
+the paper is not distributed with this repository. The MATLAB is written from
 scratch with no toolboxes, so the port needs numpy and nothing else.
 
 WHAT IS PORTED HERE. Three of their scripts, verbatim in scheme and in tip

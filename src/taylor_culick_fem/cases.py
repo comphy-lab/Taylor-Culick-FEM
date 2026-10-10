@@ -1,4 +1,9 @@
-"""Validate ``pyoomph-case-v1`` cases for the axisymmetric viscoelastic runner.
+"""Validate ``pyoomph-case-v1`` cases for this repository's runners.
+
+The axisymmetric viscoelastic runner reads physics and numerics from its case. The
+Newtonian study runners (``physics.problem`` = ``planar_comoving``, ``axisymmetric_lab``
+or ``axisymmetric_comoving``) read only the physics, ``physics.Oh``, and take every
+numerical parameter from their options.
 
 This module imports neither pyoomph nor the solver, so a case can be checked anywhere
 (``run_axisymmetric_viscoelastic.py --check``). ``case_problems`` returns every problem at
@@ -19,6 +24,16 @@ from pathlib import Path
 SCHEMA = "pyoomph-case-v1"
 CASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 GEOMETRY = {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "laboratory"}
+VISCOELASTIC = "axisymmetric_viscoelastic"
+#: Geometry of each Newtonian study problem, keyed by ``physics.problem``.
+NEWTONIAN_GEOMETRY = {
+    "planar_comoving": {"kind": "planar", "coordinates": ["x", "y"], "frame": "co-moving"},
+    "axisymmetric_lab": {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "laboratory"},
+    "axisymmetric_comoving": {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "co-moving"},
+}
+#: Every case field the Newtonian study runners read.
+NEWTONIAN_FIELDS_USED = ["schema", "case_id", "geometry.kind", "geometry.coordinates",
+                         "geometry.frame", "nondimensionalization", "physics.problem", "physics.Oh"]
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
 HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window_fraction",
@@ -165,11 +180,57 @@ def _completion_problems(completion: dict, physics: dict, output: dict, problems
         problems.append(f"unsupported completion kind: {kind!r} (use 'time' or 'event')")
 
 
-def case_problems(case: object) -> list[str]:
-    """Every problem with ``case``; an empty list means the runner accepts it."""
+def problem_of(case: object) -> str:
+    """The problem a case declares: ``physics.problem``, or the viscoelastic case when absent."""
+    physics = case.get("physics") if isinstance(case, dict) else None
+    problem = physics.get("problem") if isinstance(physics, dict) else None
+    return problem if isinstance(problem, str) and problem else VISCOELASTIC
+
+
+def _newtonian_problems(case: dict, problem: str) -> list[str]:
+    problems: list[str] = []
+    if case.get("schema") != SCHEMA:
+        problems.append(f"case.schema must be {SCHEMA!r}")
+    if not isinstance(case.get("case_id"), str) or not CASE_ID.fullmatch(case["case_id"]):
+        problems.append("case.case_id must match " + CASE_ID.pattern)
+    if "restart" in case:
+        problems.append("case.restart is not accepted: a restart uses the same case with "
+                        "--restart-from <state>")
+    expected = NEWTONIAN_GEOMETRY[problem]
+    geometry = case.get("geometry")
+    if not isinstance(geometry, dict):
+        problems.append("case.geometry must be an object")
+    else:
+        for key in ("kind", "coordinates", "frame"):
+            if geometry.get(key) != expected[key]:
+                problems.append(f"case geometry for {problem}: geometry.{key} is "
+                                f"{geometry.get(key)!r}, not {expected[key]!r}")
+    nondim = case.get("nondimensionalization")
+    if not isinstance(nondim, dict) or not nondim:
+        problems.append("case.nondimensionalization must be a non-empty object")
+    physics = _section(case, "physics", problems)
+    if physics.get("problem") != problem:
+        problems.append(f"physics.problem must be {problem!r}")
+    _positive(physics, "Oh", "physics", problems)
+    return problems
+
+
+def case_problems(case: object, problem: str | None = None) -> list[str]:
+    """Every problem with ``case``; an empty list means the runner accepts it.
+
+    ``problem`` names the runner's problem; by default the case's own ``physics.problem``.
+    """
     if not isinstance(case, dict):
         return ["case must be a JSON object"]
+    declared = problem_of(case)
+    wanted = declared if problem is None else problem
+    if wanted in NEWTONIAN_GEOMETRY:
+        return _newtonian_problems(case, wanted)
+    if wanted != VISCOELASTIC:
+        return [f"unknown problem {wanted!r}"]
     problems: list[str] = []
+    if declared != VISCOELASTIC:
+        problems.append(f"physics.problem must be {VISCOELASTIC!r} or absent for this runner")
     if case.get("schema") != SCHEMA:
         problems.append(f"case.schema must be {SCHEMA!r}")
     if not isinstance(case.get("case_id"), str) or not CASE_ID.fullmatch(case["case_id"]):
@@ -226,9 +287,9 @@ def case_problems(case: object) -> list[str]:
     return problems
 
 
-def validate_case(case: object) -> None:
-    """Refuse an invalid case, naming every problem."""
-    problems = case_problems(case)
+def validate_case(case: object, problem: str | None = None) -> None:
+    """Refuse an invalid case for ``problem`` (by default its own), naming every problem."""
+    problems = case_problems(case, problem)
     if problems:
         raise SystemExit("refused: invalid case:\n  - " + "\n  - ".join(problems))
 
@@ -246,7 +307,7 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
     ``t_end`` replaces the declared stop time and ``far_field_extension`` lengthens the
     membrane; both are runner options, so the run manifest records them in argv.
     """
-    problems = case_problems(case)
+    problems = case_problems(case, VISCOELASTIC)
     if problems:
         raise ValueError("invalid case: " + "; ".join(problems))
     physics, mesh, output = case["physics"], case["mesh"], case["output"]

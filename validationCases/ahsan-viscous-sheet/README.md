@@ -19,9 +19,8 @@ arXiv:2507.04603 (2025), and with the asymptotic results of that paper.
 | `ahsan_campaign_figs.py` | Draws the comparison figures from the reductions. |
 | `ahsan_campaign_manifest.py` | Writes the campaign manifest describing a run root. |
 | `um2_window.py` | Fits the late-time deficit coefficient over moving windows of a `u*(T)` record. |
-| `digitize_ahsan_fig5.py` | Extraction record for `data/ahsan_fig5*.csv`. |
+| `digitize_ahsan_fig5.py` | Extraction record for `data/ahsan_fig5*.csv`; takes the paper with `--pdf` and checks it against the SHA-256 of the extraction copy. |
 | `reference/` | Recorded `u*(T)` of the three codes on the semi-infinite problem. |
-| `literature/` | The source paper. |
 
 The paper scales time on the visco-inertial scale and thickness on the half-thickness;
 `ahsan_thinfilm.py` documents the mapping to this repository's units, and

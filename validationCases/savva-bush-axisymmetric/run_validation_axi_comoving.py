@@ -52,7 +52,6 @@ Conventions carried over unchanged from run_validation.py / savva_bush.py:
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
 import sys
@@ -63,7 +62,10 @@ import numpy as np
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "src"))
 
+from pyoomph.output.states import copy_state_file
+
 from taylor_culick_fem.axisymmetric_comoving import AxisymmetricComovingProblem
+from taylor_culick_fem.run_contract import add_contract_options, run_case_runner, write_json_atomic
 from taylor_culick_fem.savva_bush import V_TC, tau_vis, viscosity
 
 #: Same default list, and for the same reason, as run_validation_axi.py.
@@ -106,7 +108,7 @@ def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
         "max_newton_iterations": max_newton,
     }
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / "case.json").write_text(json.dumps(meta, indent=2))
+    write_json_atomic(outdir / "case.json", meta, sort_keys=False, allow_nan=True)
 
     print(
         f"[Oh={oh}] mu={mu:.5f} tau_vis={tau:.5f} t_end={t_end:.3f} "
@@ -116,6 +118,8 @@ def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
 
     os.chdir(outdir)
     with AxisymmetricComovingProblem() as problem:
+        # The runner's options are not pyoomph's: --out would abbreviate its --outdir.
+        problem.ignore_command_line = True
         problem.mu = mu
         problem.X0 = x0
         problem.window_length = window_length
@@ -131,7 +135,11 @@ def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
 
         t_start = 0.0
         if restart_from is not None:
-            problem.load_state(str(restart_from), ignore_outstep=True)
+            # The state stays in its parent run; a copy with its mesh files is loaded here.
+            relocated = outdir / "restart-input" / restart_from.name
+            relocated.parent.mkdir(exist_ok=True)
+            copy_state_file(str(restart_from), str(relocated))
+            problem.load_state(str(relocated), ignore_outstep=True)
             t_start = float(problem.get_current_time(as_float=True))
             print(f"  restarted from {restart_from.name} at t = {t_start:.4f} "
                   f"(t* = {t_start / tau:.2f})", flush=True)
@@ -212,18 +220,16 @@ def run_case(oh: float, outdir: Path, resolution: float, tstar_end: float,
         meta["worst_pin_residual"] = worst_pin
         meta["worst_volume_rel_error"] = worst_vol
 
-    (outdir / "case.json").write_text(json.dumps(meta, indent=2))
+    write_json_atomic(outdir / "case.json", meta, sort_keys=False, allow_nan=True)
     return meta
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--oh", type=float, nargs="*", default=None,
-                    help="Ohnesorge numbers, Oh = mu/sqrt(2 h0 rho sigma). The coded viscosity is mu = sqrt(2) Oh.")
-    # No committed default; see the note in run_validation_axi.py.
-    ap.add_argument("--results", type=Path, required=True,
-                    help="directory to write case output into, on the compute "
-                         "host's run root (not inside this repository)")
+PROBLEM = "axisymmetric_comoving"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The case, the run-contract options and this driver's numerical options."""
+    ap = add_contract_options(argparse.ArgumentParser(description=__doc__.splitlines()[0]))
     ap.add_argument("--resolution", type=float, default=0.06)
     ap.add_argument("--r0", type=float, default=X0_DEFAULT, dest="x0",
                     help="initial hole radius X0, in h0 (spelled --r0 to match "
@@ -233,8 +239,6 @@ def main() -> None:
                          "Unlike the lab driver's --rout this is NOT sized from "
                          "t_end; the window travels instead of growing.")
     ap.add_argument("--temporal-error", type=float, default=1e-3)
-    ap.add_argument("--tag", type=str, default="",
-                    help="suffix for the case directory, for convergence studies")
     ap.add_argument("--tstar-end", type=float, default=TSTAR_END)
     ap.add_argument("--checkpoint-every", type=int, default=0,
                     help="write a restart state every N outputs instead of every "
@@ -244,34 +248,39 @@ def main() -> None:
                          "NOT just an output setting: maxstep is clamped to the "
                          "output interval, so this value sets dt and therefore "
                          "both the cost and the temporal accuracy of the run.")
-    ap.add_argument("--restart-from", type=Path, default=None,
-                    help="pyoomph state dump to continue from")
     ap.add_argument("--max-newton", type=int, default=None,
                     help="Newton iteration cap (pyoomph default is 10). "
                          "40 matches the lab/1D drivers and avoids dt-halving "
                          "when the last residual is just above 1e-8.")
-    args = ap.parse_args()
-    # See run_validation_axi.py: the schedule divides by (n_outputs - 1).
-    if args.n_outputs < 2:
-        raise SystemExit(f"--n-outputs must be at least 2, got {args.n_outputs}")
-    if args.restart_from is not None:
-        # Resolve before run_case chdirs into the case directory; a relative
-        # path would pass this check and then fail inside load_state().
-        args.restart_from = args.restart_from.resolve()
-        if not args.restart_from.exists():
-            raise SystemExit(f"restart state not found: {args.restart_from}")
-        if args.oh and len(args.oh) > 1:
-            raise SystemExit("--restart-from takes a single --oh")
+    return ap
 
-    oh_list = args.oh if args.oh else DEFAULT_OH_SB
-    root = args.results.resolve()
-    for oh in oh_list:
-        name = f"Oh_SB_{oh:g}" + (f"_{args.tag}" if args.tag else "")
-        run_case(oh, root / name, args.resolution, args.tstar_end,
-                 args.x0, args.window_length, args.temporal_error,
-                 args.restart_from, args.checkpoint_every, args.n_outputs,
-                 args.max_newton)
+
+def option_problems(args: argparse.Namespace) -> list[str]:
+    """Every invalid numerical option; empty when all are valid."""
+    checks = [
+        (args.resolution <= 0, "--resolution must be positive"),
+        (args.tstar_end <= 0, "--tstar-end must be positive"),
+        (args.temporal_error <= 0, "--temporal-error must be positive"),
+        (args.checkpoint_every < 0, "--checkpoint-every must be non-negative"),
+        (args.n_outputs < 2, "--n-outputs must be at least 2"),
+        (args.x0 <= 0, "--r0 must be positive"),
+        (args.window_length <= 0, "--window-length must be positive"),
+        (args.max_newton is not None and args.max_newton < 1, "--max-newton must be at least 1"),
+    ]
+    return [message for failed, message in checks if failed]
+
+
+def solve(args: argparse.Namespace, case: dict, state: Path | None) -> dict:
+    """Run the case's ``Oh`` into ``--out``; ``state`` continues an earlier run of the same case."""
+    return run_case(case["physics"]["Oh"], args.out.resolve(), args.resolution, args.tstar_end,
+                    args.x0, args.window_length, args.temporal_error, state,
+                    args.checkpoint_every, args.n_outputs, args.max_newton)
+
+
+def main(argv: list[str] | None = None) -> int:
+    return run_case_runner(argv, runner=Path(__file__), root=_ROOT, parser=build_parser(),
+                           problem=PROBLEM, option_problems=option_problems, solve=solve)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

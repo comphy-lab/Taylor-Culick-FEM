@@ -61,20 +61,36 @@ METHOD
    with a header documenting conventions, method and an honest accuracy
    estimate. Overlay PNGs are produced for visual verification.
 
-Run with the project's venv:
-    uv run python validationCases/savva-bush-planar/digitize_savva_bush.py
+Run with the project's environment. The paper is not distributed with this repository;
+pass the published PDF, which must be the copy the data were extracted from:
+    uv run python validationCases/savva-bush-planar/digitize_savva_bush.py --pdf <savva_bush_JFM2009.pdf>
 """
+import argparse
 import subprocess
 import numpy as np
 import imageio.v3 as iio
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PDF = HERE / "literature" / "savva_bush_JFM2009.pdf"
+# Savva & Bush, J. Fluid Mech. 626, 211 (2009): SHA-256 of the copy the data were extracted from.
+PDF_SHA256 = "480724c666c074bfd9525e13883a78aab20e1e3ef3f9c0c567e0425b433bfe08"
+PDF: Path | None = None  # set from --pdf
 DATA_DIR = HERE / "data"
 WORK_DIR = Path("/tmp/savva_digitize")
 WORK_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def checked_pdf(path: Path, expected: str) -> Path:
+    """The source PDF, refused unless it is the copy the data were extracted from."""
+    import hashlib
+    path = Path(path)
+    if not path.is_file():
+        raise SystemExit(f"refused: source PDF {path} does not exist")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != expected:
+        raise SystemExit(f"refused: {path} has SHA-256 {digest}, not the extraction copy {expected}")
+    return path
 
 DPI = 400
 
@@ -846,6 +862,9 @@ def process_figure6():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Digitise Savva & Bush (2009) figures 5 and 6.")
+    parser.add_argument("--pdf", type=Path, required=True, help="the published PDF of Savva & Bush (2009)")
+    PDF = checked_pdf(parser.parse_args().pdf, PDF_SHA256)
     r5 = process_figure5()
     r6 = process_figure6()
     print("\nDone.")
