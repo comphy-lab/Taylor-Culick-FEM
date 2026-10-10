@@ -2,7 +2,7 @@
 
 Far from the rim the sheet is flat and thin and moves in plane, so the 2D
 Oldroyd-B (``lambda = inf``) solution there is the axisymmetric Trouton
-membrane of ``simulationCases/trouton1d_ale_axi.py`` with a neo-Hookean
+membrane of ``src/taylor_culick_fem/trouton1d_ale_axi.py`` with a neo-Hookean
 stress added (plane stress, ``rho = h0 = 1``, ``mu = sqrt(2) Oh``, ``G = Ec``):
 
     h_t + (1/r)(r h u)_r = 0

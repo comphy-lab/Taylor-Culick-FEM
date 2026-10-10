@@ -1,19 +1,5 @@
-"""Shared equations and utilities for Taylor--Culick FEM simulations."""
+"""Shared equations, problem definitions and utilities for Taylor--Culick FEM simulations.
 
-from .viscoelastic import (
-    GLambdaOldroydBParameters,
-    RelaxationRateOldroydB,
-    g_lambda_log_relaxation,
-    g_lambda_polymer_stress,
-    g_lambda_relaxation,
-    make_g_lambda_oldroyd_b_equations,
-)
-
-__all__ = [
-    "GLambdaOldroydBParameters",
-    "RelaxationRateOldroydB",
-    "g_lambda_log_relaxation",
-    "g_lambda_polymer_stress",
-    "g_lambda_relaxation",
-    "make_g_lambda_oldroyd_b_equations",
-]
+Modules are imported explicitly (``from taylor_culick_fem.viscoelastic import ...``); the
+package itself imports nothing, so ``cases`` and ``provenance`` load without pyoomph.
+"""

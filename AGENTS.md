@@ -1,32 +1,27 @@
 # AGENTS.md
 
-Sharp-interface FEM study of Taylor–Culick sheet retraction in a tip co-moving
-frame, built on pyoomph. Read `README.md` first for the physics and the case
-list.
+Operating notes for this repository. Read `README.md` first for the problem and the
+layout.
 
 ## Environment
 
-`uv` owns the environment. Never `pip install` into `.venv` by hand, never
-create a conda environment for this project, and never edit `.python-version`
-or the `requires-python` bound without checking that the whole dependency set
-still resolves and `python -m pyoomph check all` passes.
-
-```bash
-uv sync                                # build/refresh the environment
-uv run python simulationCases/planar_comoving.py
-```
+`uv` owns the environment. Never `pip install` into an environment by hand, never
+create a conda environment for this project, and never edit `.python-version` or the
+`requires-python` bound without checking that the whole dependency set still resolves
+and `python -m pyoomph check all` passes.
 
 pyoomph is a **source build** of an immutable CoMPhy release commit
-(`comphy-2026.09.07.1`, `a186e07e`), declared through `[tool.uv.sources]`. Do
-not follow `develop`; move the pin only deliberately, to another release tag.
-It compiles vendored oomph-lib plus downloaded CLN/GiNaC, so a cold `uv sync`
-is slow. `uv.lock` pins the exact pyoomph commit; commit the lockfile whenever
-it changes so a result can be traced to a solver build.
+(`comphy-2026.09.07.1`, `a186e07e`), declared through `[tool.uv.sources]`. Do not follow
+`develop`; move the pin only deliberately, to another release tag. It compiles vendored
+oomph-lib plus downloaded CLN/GiNaC, so a cold `uv sync` is slow. `uv.lock` pins the
+exact pyoomph commit; commit the lockfile whenever it changes so a result can be traced
+to a solver build. Set `HWLOC_COMPONENTS=-gl` where hwloc could probe an unresponsive
+graphics display while MPI starts; the probe then blocks indefinitely.
 
 ## Physics invariants
 
 Do not silently change any of these. They are what make the result comparable to
-the Basilisk reference and to theory.
+other solvers and to theory.
 
 - Non-dimensionalisation is on the **full** sheet thickness `h0`, with
   `rho = sigma = h0 = 1`. The half-thickness is `0.5`. Getting this wrong moves
@@ -64,26 +59,59 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
   `BaseMovingMeshEquations` is present on the bulk domain.
 - `partial_t(..., ALE="auto")` is only ALE-corrected once mesh equations exist.
 
-## Validation order
+## Scientific rules
 
-`simulationCases/planar_comoving.py` must pass before any axisymmetric result is
-believed, because it is the only case with published data to check against:
-Savva & Bush, JFM 626 (2009), figure 6. At `Oh = 0.5` this code gives
-`U/V_TC = 0.9297` at `t* = 30` against their ~0.93. Treat that as the
-regression target.
+- The planar sheet is checked first, because it is the configuration with published
+  numerical solutions to compare against (`validationCases/savva-bush-planar/`); no
+  axisymmetric result is believed before it.
+- Neither geometry has a true steady state: the rim collects mass and grows, a stationary
+  solve diverges and the control only *approaches* `V_TC`. Do not read an intermediate
+  plateau as a converged value, and do not compare two runs early in the transient, where
+  every run agrees regardless of mesh or domain.
+- Report verification, convergence and comparison with published data as separate tests.
+  An independent group's published numerical solution of the same equations is validation
+  (`validationCases/`), stated as code-to-code agreement, never as agreement with
+  experiment or physical reality. An independent discretisation of the same problem in
+  this repository is verification (`verificationCases/`). A comparison with a different,
+  reduced model belongs in `modelComparisonCases/`.
 
-Neither geometry has a true steady state -- the rim collects mass and grows
-without bound in both -- so a stationary solve diverges and the control only
-*approaches* `sqrt(2)`. Do not read an intermediate plateau as a converged
-value: the planar case sits near `0.83` from `t ~ 1` to `t ~ 3` and then climbs
-away from it. Comparing two runs early in the transient proves nothing about
-convergence, because every run agrees there regardless of mesh or domain.
+## Repository rules
 
-## Repository conventions
+- Layout: library code in `src/taylor_culick_fem/`; the entry point
+  `simulationCases/run_axisymmetric_viscoelastic.py` and its default case in
+  `simulationCases/`; each evidence folder owns its drivers, cases and reference data;
+  tools acting on run outputs in `postProcess/`; tests in `testCases/`. No `docs/`, no
+  second cases tree and no runner at the repository root. Library code imports no
+  entry-point folder.
+- An entry point is never named after the package: `simulationCases/taylor_culick_fem.py`
+  would shadow `src/taylor_culick_fem/`, because a script's own folder is first on
+  `sys.path`.
+- `[tool.uv] package = false`, so `src/` is not installed. Runners, study scripts and
+  `testCases/__init__.py` put it on `sys.path`; run the tests from the repository root
+  with `python -m pytest testCases`.
+- Every case is validated by `src/taylor_culick_fem/cases.py` before any output, and the
+  validator names every problem. Keep `CASE_FIELDS_USED` and the case-schema table in
+  `simulationCases/README.md` in step with the fields the runner reads.
+- Every run writes `run-manifest.json` before any other output, binding the case hash, the
+  component commit and the pyoomph commit, and never replaces it. Every run, fresh or
+  restart, uses a new output folder; a continuation uses the same case with
+  `--restart-from` and may change only the stop time and the membrane length.
+- Live metadata (`case.json`) is replaced atomically; histories are appended.
+- Study run scripts (`run_*.sh`) carry the exact production options and take the output
+  folder as their argument; `testCases/` parses each against its runner's options.
+- Never commit run output, results, figures, run lists (`runs.toml`), `data-roots.toml`,
+  run identities, archive paths, machine names, internal run numbers in code comments, or
+  AI co-author trailers. Results and their discussion are not documented here; a
+  published figure states only the solver commit and the pinned pyoomph version.
+- Local environment and build directories (`.venv*`, `.pyoomph-*`) are ignored.
+- `CLAUDE.md` is local and ignored; this file is the committed operating manual.
+- pyoomph's coordinate-aware integrals already carry the axisymmetric `2*pi*r` measure;
+  do not apply it twice.
 
-- `simulationCases/` holds runnable problem definitions, one physical configuration each.
-- `src/taylor_culick_fem/` holds shared equations, mesh templates and
-  diagnostics. Anything used by two cases belongs here.
-- `postProcess/` holds analysis and figure generation, never simulation state.
-- Simulation output does not belong in this repository. Runs write to the
-  project run root on the compute host; the tracker records custody.
+## Documentation boundary
+
+<!-- documentation-boundary-v1 -->
+
+All content here, including this file, is public-candidate and uses calibrated research
+prose. Provisional results, run records and debugging narrative do not belong in this
+repository.

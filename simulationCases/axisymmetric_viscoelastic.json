@@ -1,0 +1,66 @@
+{
+  "schema": "pyoomph-case-v1",
+  "case_id": "oh1-ec5e-1-laminf-l250-membrane",
+  "geometry": {
+    "kind": "axisymmetric",
+    "coordinates": [
+      "r",
+      "z"
+    ],
+    "frame": "laboratory"
+  },
+  "nondimensionalization": {
+    "length_scale": "h0",
+    "time_scale": "sqrt(rho*h0^3/sigma)",
+    "velocity_scale": "sqrt(sigma/(rho*h0))"
+  },
+  "physics": {
+    "Oh": 1,
+    "elastic_modulus": 0.5,
+    "relaxation_time": "inf",
+    "constitutive_model": "Oldroyd-B",
+    "stabilization": "supg",
+    "far_field": {
+      "mode": "membrane",
+      "inner_fraction": 0.5,
+      "extension": 600,
+      "node_spacing": 0.5
+    }
+  },
+  "tolerances": {
+    "temporal_error": 0.001,
+    "max_volume_error": 0.005,
+    "max_tip_pin_residual": 1e-06,
+    "min_radius_increase": 0.0001,
+    "min_polymer_stress": 1e-10,
+    "max_positive_sponge_power": 1e-12
+  },
+  "mesh": {
+    "length": 250,
+    "r0": 1,
+    "resolution": 0.06,
+    "far_resolution": 0.25
+  },
+  "output": {
+    "cadence": 0.05,
+    "field_stride": 10,
+    "write_states": false,
+    "checkpoint_every": 20
+  },
+  "solver": {
+    "max_step": 0.01,
+    "max_newton": 20
+  },
+  "arrest": {
+    "opening_ustar": 0.02,
+    "arrest_ustar": 0.001,
+    "consecutive_samples": 11,
+    "trend_tolerance": 0.0001,
+    "radius_span_tolerance": 0.001
+  },
+  "completion": {
+    "kind": "time",
+    "value": 300,
+    "allow_recoil": true
+  }
+}
