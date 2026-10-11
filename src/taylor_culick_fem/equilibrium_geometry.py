@@ -254,10 +254,25 @@ def deformed_surface(fmap: FieldMap, length: float, r0=1.0, n_arc=400, n_line=15
 
 def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
                  max_spacing: float = 300.0, core_fraction: float = 0.5, r0: float = 1.0,
-                 first_aspect: float = 1.0) -> dict[str, np.ndarray]:
+                 first_aspect: float = 1.0, columns: str = "vertical",
+                 shoulder_angle: float = 10.0, blend: float = 4.0) -> dict[str, np.ndarray]:
     """Nine-node reference grids whose deformed images are a well-shaped mesh of the current
     state: every node, mid-side and centre nodes included, is pulled back from its designed
-    deformed position, so the deformed elements are the designed ones."""
+    deformed position, so the deformed elements are the designed ones.
+
+    The edge O-grid fits the image of the reference cap arc. Beyond it the sheet is meshed
+    by columns from the midplane to the free surface. With ``columns="vertical"`` they are
+    vertical. At small ``Ec`` the cap is crushed into a small nose and the rounded front of
+    the rim, which rises steeply just behind it, is sheet material; vertical columns then
+    meet that front obliquely and their top elements become slivers. ``columns="fan"`` puts
+    the top of each column at the surface point whose deformed arclength from the end of
+    the cap equals the column's radial offset, so the columns fan out along the front with
+    surface spacing equal to their midplane spacing. Behind the rim top (the first surface
+    point whose tangent is within ``shoulder_angle`` degrees of horizontal) they relax
+    smoothly to vertical over ``blend`` rim half-heights.
+    """
+    if columns not in ("vertical", "fan"):
+        raise ValueError("columns must be 'vertical' or 'fan'")
     f = core_fraction
     m = 2 * n
     s0, ysurf, ell = deformed_surface(fmap, length, r0)
@@ -311,14 +326,26 @@ def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
     beyond = s0 >= arc_len
     if not np.all(np.diff(ysurf[beyond, 0]) > 0):
         raise RuntimeError("deformed free surface is not a graph of r beyond the shoulder")
+    if columns == "fan":
+        tangent = np.gradient(ysurf, ell, axis=0)
+        angle = np.degrees(np.arctan2(np.abs(tangent[:, 1]), np.abs(tangent[:, 0])))
+        flat = np.where((angle <= shoulder_angle) & beyond)[0]
+        rim_top = ysurf[flat[0]] if len(flat) else shoulder
+        width = blend * max(rim_top[1], shoulder[1])
     for i, r in enumerate(radii):
         if i == 0:
             s_top = arc_len
         else:
             s_top = max(float(np.interp(r, ysurf[beyond, 0], s0[beyond])), arc_len)
+        if columns == "fan" and i > 0:
+            ell_vertical = float(np.interp(s_top, s0, ell))
+            ell_fan = ell_shoulder + (r - radii[0])
+            x = min(max((r - rim_top[0]) / width, 0.0), 1.0)
+            weight = x * x * (3 - 2 * x)
+            s_top = surf_at_ell(min(ell_vertical, ell_fan + weight * (ell_vertical - ell_fan)))
         top = surf_point(s_top)
         col_s[i] = s_top
-        sheet[i, :, 0] = r
+        sheet[i, :, 0] = r if columns == "vertical" else r + fractions * (top[0] - r)
         sheet[i, :, 1] = fractions * top[1]
         sheet[i, -1] = top
     blocks["sheet"] = sheet

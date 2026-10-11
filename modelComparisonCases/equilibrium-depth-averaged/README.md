@@ -20,7 +20,7 @@ resolved rim height.
 
 | File | Role |
 |---|---|
-| `run_equilibrium_branches.sh` | Runs the two branches: the default case to `Ec = 0.41` and `cases/stiffened_cap.json`, whose edge-cap material is slightly stiffened so that the branch continues to `Ec = 0.39`. |
+| `run_equilibrium_branches.sh` | Runs three branches: the default case to `Ec = 0.41`; `cases/stiffened_cap.json`, whose edge-cap material is slightly stiffened so that the branch continues to `Ec = 0.39`; and `cases/fan_columns.json`, the stiffened case with the sheet columns fanned along the rim front, to `Ec = 0.37`. |
 | `compare_equilibria.py` | Reads an equilibrium run's `branch.csv`; writes `comparison.csv` (theory radius, `D = ln(R_axi/R_theory)`, `d*` per point) and `fit.json` (`D(R) = D_inf - c R^-alpha`). |
 
 ```bash
@@ -32,4 +32,11 @@ Below `Ec ~ 0.4` the whole reference edge cap is compressed into a thin nose at 
 the opened hole, and the incompressibility error there grows until Newton fails. The
 stiffened cap (a Mooney--Rivlin term of relative weight `cap_beta = 1e-3` confined to the
 cap material) delays this; where both branches exist, its effect on the hole radius and the
-rim height is checked by comparing them.
+rim height is checked by comparing them. The sheet material just behind the crushed cap forms
+the steep rounded front of the rim; vertical sheet columns meet it obliquely, and the
+incompressibility error of their top elements grows with the hole radius. Fanning the columns
+along the front (`mesh.columns = "fan"`) keeps those elements well shaped and carries the
+branch further. Below about `Ec = 0.36` the branch stops whatever the mesh: the crushed cap and
+its neighbourhood are compressed in the meridional plane by more than an order of magnitude
+while stretched around the hoop by `R/r0`, and the discrete incompressible problem there loses
+accuracy. The depth-averaged theory, corrected for the rounded edge, continues the curve.

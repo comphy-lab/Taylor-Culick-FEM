@@ -101,6 +101,8 @@ when the branch passes `Ec_stop` and 1 when it stalls.
 | `mesh.length` | radial extent of the reference sheet beyond the hole |
 | `mesh.growth`, `mesh.remesh_growth` | radial growth ratio of the first mesh and of the pulled-back meshes |
 | `mesh.max_spacing` | largest radial element size |
+| `mesh.columns` | optional, `"vertical"` (default) or `"fan"`: sheet columns behind the edge cap are vertical, or fan out along the rim front so that their tops are spaced by arclength along it (needed once the cap is crushed into a small nose, below `Ec` about 0.4) |
+| `mesh.shoulder_angle`, `mesh.blend` | optional, `"fan"` only: the rim top is the first surface point whose tangent is within `shoulder_angle` degrees (default 10) of horizontal; behind it the columns return to vertical over `blend` rim half-heights (default 4) |
 | `continuation.Ec_start`, `.Ec_stop` | first `Ec` and the value the branch must pass |
 | `continuation.initial_step`, `.max_step` | first arclength step in `log Ec` (negative: towards small `Ec`) and its bound |
 | `continuation.segment_steps`, `.segment_log_radius_growth` | steps per segment and the growth of `ln R` that ends a segment |

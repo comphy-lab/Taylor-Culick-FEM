@@ -188,9 +188,9 @@ class ReferenceSheetMesh(MeshTemplate):
     ``grids`` holds the ``core``, ``lower``, ``upper`` and ``sheet`` blocks of
     :func:`reference_grids`, or any grids with the same topology (for example pull-backs of
     a mesh designed in the deformed state). Shared block edges must coincide. The free
-    surface is the left column of ``lower``, the top row of ``upper`` (both on the cap arc)
-    and the top row of ``sheet``. Boundaries: ``interface`` (free surface), ``symmetry``
-    (midplane), ``far``.
+    surface is the left column of ``lower``, the top row of ``upper`` and the top row of
+    ``sheet``; its facets that lie on the reference cap arc follow the arc exactly, the rest
+    are straight. Boundaries: ``interface`` (free surface), ``symmetry`` (midplane), ``far``.
     """
 
     def __init__(self, grids: dict[str, np.ndarray], r0: float, triangles: bool = False,
@@ -241,21 +241,27 @@ class ReferenceSheetMesh(MeshTemplate):
         self._cap_arc = cap_arc  # keep the entity alive with the template
         core, lower, upper, sheet = (block(self.grids[k]) for k in ("core", "lower", "upper", "sheet"))
 
-        def edge(name, nodes, curved=None):
+        def on_cap_arc(point) -> bool:
+            return point[0] <= cx + 1e-12 and abs(math.hypot(point[0] - cx, point[1]) - a) < 1e-9
+
+        def edge(name, nodes, points=None):
+            # A free-surface facet whose nodes all lie on the reference cap arc follows the
+            # arc exactly; any other facet is straight in reference coordinates.
             for k in range(0, len(nodes) - 1, step):
                 facet_nodes = nodes[k:k + step + 1]
                 vertices = [facet_nodes[0], facet_nodes[-1]]
-                if curved is None:
-                    self.add_facet_to_boundary(name, facet_nodes, vertices)
+                if points is not None and all(on_cap_arc(p) for p in points[k:k + step + 1]):
+                    self.add_facet_to_boundary(name, facet_nodes, vertices, cap_arc)
                 else:
-                    self.add_facet_to_boundary(name, facet_nodes, vertices, curved)
+                    self.add_facet_to_boundary(name, facet_nodes, vertices)
 
+        g = self.grids
         edge("symmetry", [row[0] for row in lower])
         edge("symmetry", [row[0] for row in core])
-        edge("interface", lower[0], cap_arc)
-        edge("interface", [row[-1] for row in upper], cap_arc)
+        edge("interface", lower[0], g["lower"][0])
+        edge("interface", [row[-1] for row in upper], g["upper"][:, -1])
         edge("symmetry", [row[0] for row in sheet])
-        edge("interface", [row[-1] for row in sheet])
+        edge("interface", [row[-1] for row in sheet], g["sheet"][:, -1])
         edge("far", sheet[-1])
 
 

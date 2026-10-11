@@ -30,6 +30,7 @@ from taylor_culick_fem.equilibrium_branch import SegmentSettings
 from taylor_culick_fem.equilibrium_geometry import (
     HALF_THICKNESS,
     FieldMap,
+    design_grids,
     incompressibility_error,
     radial_nodes,
     reference_grids,
@@ -80,6 +81,9 @@ class EquilibriumCaseTests(unittest.TestCase):
             "continuation.Ec_stop": lambda c: c["continuation"].update(Ec_stop=20.0),
             "continuation.initial_step": lambda c: c["continuation"].update(initial_step=0.05),
             "regularisation.cap_beta": lambda c: c["regularisation"].update(cap_beta=-1),
+            "mesh.columns": lambda c: c["mesh"].update(columns="radial"),
+            "mesh.shoulder_angle": lambda c: c["mesh"].update(shoulder_angle=95),
+            "mesh.blend": lambda c: c["mesh"].update(blend=0),
             "case.restart": lambda c: c.update(restart={}),
         }
         for name, damage in defects.items():
@@ -165,6 +169,17 @@ class FieldMapTests(unittest.TestCase):
         stretch = field_map(self.grids, lambda X: np.array([0.1 * X[0], 0.0]))
         # J including the hoop stretch is 1.1^2 everywhere.
         self.assertAlmostEqual(incompressibility_error(stretch), 0.21, places=10)
+
+    def test_fan_columns_are_vertical_on_a_flat_sheet(self) -> None:
+        # Undeformed, the surface beyond the cap is flat, so arclength along it equals
+        # radial distance and the fan's columns coincide with vertical ones.
+        fmap = field_map(self.grids, lambda X: 0 * X)
+        vertical = design_grids(fmap, 3, 20.0, growth=1.3, max_spacing=5.0)
+        fan = design_grids(fmap, 3, 20.0, growth=1.3, max_spacing=5.0, columns="fan")
+        for name in vertical:
+            np.testing.assert_allclose(fan[name], vertical[name], atol=1e-9)
+        with self.assertRaises(ValueError):
+            design_grids(fmap, 3, 20.0, columns="radial")
 
     def test_save_and_load(self) -> None:
         fmap = field_map(self.grids, lambda X: self.matrix @ X)

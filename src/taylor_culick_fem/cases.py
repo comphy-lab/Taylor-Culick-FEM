@@ -52,7 +52,8 @@ EQUILIBRIUM_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coor
                             "geometry.frame", "nondimensionalization", "physics.problem"]
                            + [f"{section}.{key}" for section, keys in EQUILIBRIUM_SECTIONS.items()
                               for key, _ in keys]
-                           + ["regularisation.cap_beta"])
+                           + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend",
+                              "regularisation.cap_beta"])
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
 HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window_fraction",
@@ -279,6 +280,13 @@ def _equilibrium_problems(case: dict) -> list[str]:
     mesh = case.get("mesh") if isinstance(case.get("mesh"), dict) else {}
     if _number(mesh.get("length")) and _number(physics.get("r0")) and mesh["length"] <= physics["r0"] + 1:
         problems.append("mesh.length must exceed physics.r0 + 1 (the edge cap and a sheet column)")
+    if mesh.get("columns", "vertical") not in ("vertical", "fan"):
+        problems.append("mesh.columns must be 'vertical' or 'fan'")
+    if "shoulder_angle" in mesh and (not _number(mesh["shoulder_angle"])
+                                     or not 0 < mesh["shoulder_angle"] < 90):
+        problems.append("mesh.shoulder_angle must be a number of degrees between 0 and 90")
+    if "blend" in mesh and (not _number(mesh["blend"]) or mesh["blend"] <= 0):
+        problems.append("mesh.blend must be a positive number")
     regularisation = case.get("regularisation", {})
     if not isinstance(regularisation, dict):
         problems.append("case.regularisation must be an object")

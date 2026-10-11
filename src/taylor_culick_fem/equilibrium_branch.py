@@ -48,6 +48,9 @@ class SegmentSettings:
     segment_log_radius_growth: float
     ec_start: float
     cap_beta: float
+    columns: str = "vertical"
+    shoulder_angle: float = 10.0
+    blend: float = 4.0
 
     @classmethod
     def from_case(cls, case: dict) -> SegmentSettings:
@@ -64,6 +67,9 @@ class SegmentSettings:
             segment_log_radius_growth=float(cont["segment_log_radius_growth"]),
             ec_start=float(cont["Ec_start"]),
             cap_beta=float(case.get("regularisation", {}).get("cap_beta", 0.0)),
+            columns=str(mesh.get("columns", "vertical")),
+            shoulder_angle=float(mesh.get("shoulder_angle", 10.0)),
+            blend=float(mesh.get("blend", 4.0)),
         )
 
 
@@ -162,7 +168,8 @@ def run_segment(settings: SegmentSettings, state: Path | None, folder: Path, ec_
         beta_in = float(saved["cap_beta"]) if "cap_beta" in saved.files else 0.0
         grids = design_grids(old, settings.elements_per_quarter, settings.length,
                              growth=settings.remesh_growth, max_spacing=settings.max_spacing,
-                             r0=settings.r0)
+                             r0=settings.r0, columns=settings.columns,
+                             shoulder_angle=settings.shoulder_angle, blend=settings.blend)
     np.savez(folder / "grids.npz", **grids)
     problem, parameter = _start(settings, grids, folder, old, log_ec, beta_in)
 
