@@ -94,9 +94,10 @@ when the branch passes `Ec_stop` and 1 when it stalls.
 | Field | Meaning |
 |---|---|
 | `schema`, `case_id`, `nondimensionalization` | as above; lengths on `h0`, stresses on `sigma/h0` |
-| `geometry` | `{"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "reference"}` |
+| `geometry` | `{"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "lagrangian"}`; the legacy frame spelling `"reference"` remains accepted |
 | `physics.problem` | `"axisymmetric_elastocapillary_equilibrium"` |
 | `physics.r0`, `physics.surface_tension` | reference hole radius and surface tension |
+| `mesh.template` | optional `"rounded-sheet-blocks"`: the rounded-cap and sheet block geometry; the following controls set its resolution |
 | `mesh.elements_per_quarter` | elements around each quarter of the edge cap (nine-node quadrilaterals) |
 | `mesh.length` | radial extent of the reference sheet beyond the hole |
 | `mesh.growth`, `mesh.remesh_growth` | radial growth ratio of the first mesh and of the pulled-back meshes |

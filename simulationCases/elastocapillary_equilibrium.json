@@ -5,7 +5,7 @@
   "geometry": {
     "kind": "axisymmetric",
     "coordinates": ["r", "z"],
-    "frame": "reference"
+    "frame": "lagrangian"
   },
   "nondimensionalization": {
     "length_scale": "h0",
@@ -18,6 +18,7 @@
     "surface_tension": 1.0
   },
   "mesh": {
+    "template": "rounded-sheet-blocks",
     "elements_per_quarter": 12,
     "length": 30000.0,
     "growth": 1.1,

@@ -70,12 +70,20 @@ class EquilibriumCaseTests(unittest.TestCase):
         self.assertEqual(case_problems(self.case), [])
         self.assertEqual(case_problems(self.case, problem=EQUILIBRIUM), [])
 
+    def test_lagrangian_frame_and_reference_alias_are_equivalent(self) -> None:
+        for frame in ("lagrangian", "reference"):
+            case = copy.deepcopy(self.case)
+            case["geometry"]["frame"] = frame
+            self.assertEqual(case_problems(case, problem=EQUILIBRIUM), [])
+            self.assertEqual(SegmentSettings.from_case(case), SegmentSettings.from_case(self.case))
+
     def test_each_defect_is_named(self) -> None:
         defects = {
             "geometry.frame": lambda c: c["geometry"].update(frame="laboratory"),
             "physics.problem": lambda c: c["physics"].update(problem="axisymmetric_viscoelastic"),
             "physics.r0": lambda c: c["physics"].update(r0=0),
             "mesh.elements_per_quarter": lambda c: c["mesh"].update(elements_per_quarter=1.5),
+            "mesh.template": lambda c: c["mesh"].update(template="other-body"),
             "mesh.growth": lambda c: c["mesh"].update(growth=0.9),
             "mesh.length": lambda c: c["mesh"].update(length=1.5),
             "continuation.Ec_stop": lambda c: c["continuation"].update(Ec_stop=20.0),

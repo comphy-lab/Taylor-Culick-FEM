@@ -52,7 +52,7 @@ EQUILIBRIUM_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coor
                             "geometry.frame", "nondimensionalization", "physics.problem"]
                            + [f"{section}.{key}" for section, keys in EQUILIBRIUM_SECTIONS.items()
                               for key, _ in keys]
-                           + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend",
+                           + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend", "mesh.template",
                               "regularisation.cap_beta", "regularisation.volume_penalty"])
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
@@ -248,10 +248,13 @@ def _equilibrium_problems(case: dict) -> list[str]:
     if not isinstance(geometry, dict):
         problems.append("case.geometry must be an object")
     else:
-        for key in ("kind", "coordinates", "frame"):
+        for key in ("kind", "coordinates"):
             if geometry.get(key) != EQUILIBRIUM_GEOMETRY[key]:
                 problems.append(f"case geometry for {EQUILIBRIUM}: geometry.{key} is "
                                 f"{geometry.get(key)!r}, not {EQUILIBRIUM_GEOMETRY[key]!r}")
+        if geometry.get("frame") not in ("reference", "lagrangian"):
+            problems.append("equilibrium geometry.frame must be 'lagrangian' "
+                            "or the legacy spelling 'reference'")
     nondim = case.get("nondimensionalization")
     if not isinstance(nondim, dict) or not nondim:
         problems.append("case.nondimensionalization must be a non-empty object")
@@ -278,6 +281,8 @@ def _equilibrium_problems(case: dict) -> list[str]:
         problems.append("continuation.initial_step must be negative (the branch is followed "
                         "towards smaller Ec)")
     mesh = case.get("mesh") if isinstance(case.get("mesh"), dict) else {}
+    if "template" in mesh and mesh["template"] != "rounded-sheet-blocks":
+        problems.append("equilibrium mesh.template must be 'rounded-sheet-blocks'")
     if _number(mesh.get("length")) and _number(physics.get("r0")) and mesh["length"] <= physics["r0"] + 1:
         problems.append("mesh.length must exceed physics.r0 + 1 (the edge cap and a sheet column)")
     if mesh.get("columns", "vertical") not in ("vertical", "fan"):
