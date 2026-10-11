@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from taylor_culick_fem.run_contract import (
     append_progress,
     check_restart,
     continuation_problems,
+    enforce_launcher_affinity,
     output_problems,
     read_case,
     sha256,
@@ -99,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         print(json.dumps({"check": "passed", "case_id": case["case_id"], "case_sha256": case_sha256}))
         return 0
+    launch_cpus = os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity") else None
     try:
         import pyoomph
         from pyoomph.generic.jit_cache import set_enabled
@@ -106,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("refused: pyoomph is not importable; use the pinned environment "
                          "(pyproject.toml, uv.lock)") from exc
     from taylor_culick_fem.equilibrium_branch import SegmentSettings, run_segment
+    affinity = enforce_launcher_affinity(launch_cpus)
 
     # Each segment compiles its own problem; a shared code cache can be stale across them.
     set_enabled(False)
@@ -115,7 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     commit = start_run(out, root=ROOT, runner=Path(__file__), argv=raw, case_path=case_path,
                        case=case, case_sha256=case_sha256, case_fields_used=CASE_FIELDS_USED,
                        units=UNITS, restart=restart, pyoomph_module=getattr(pyoomph, "__file__", None))
-    append_progress(out, "started", case_id=case["case_id"], component_commit=commit)
+    append_progress(out, "started", case_id=case["case_id"], component_commit=commit,
+                    launcher_affinity=affinity)
     state = args.restart_from.resolve() if args.restart_from is not None else None
     stalled, segment, status = 0, 0, "running"
     last: dict = {}

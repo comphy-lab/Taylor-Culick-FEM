@@ -20,6 +20,8 @@ import os
 import sys
 from pathlib import Path
 
+LAUNCH_CPUS = os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity") else None
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
@@ -28,7 +30,7 @@ os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
 import numpy as np
 
 from taylor_culick_fem.cases import EQUILIBRIUM, validate_case
-from taylor_culick_fem.run_contract import output_problems, read_case, sha256
+from taylor_culick_fem.run_contract import enforce_launcher_affinity, output_problems, read_case, sha256
 
 
 def segment_states(run: Path) -> list[tuple[float, Path]]:
@@ -69,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
 
     set_enabled(False)
     from taylor_culick_fem.equilibrium_branch import SegmentSettings, solve_from_segment
+    enforce_launcher_affinity(LAUNCH_CPUS)
 
     settings = SegmentSettings.from_case(case)
     args.out.mkdir(parents=True, exist_ok=True)
