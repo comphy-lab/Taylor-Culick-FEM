@@ -1,0 +1,44 @@
+{
+  "schema": "pyoomph-case-v1",
+  "case_id": "elastocapillary-equilibrium-branch",
+  "description": "Steady equilibria of the opened hole in an incompressible neo-Hookean sheet with surface tension, followed from large Ec towards small Ec by arclength continuation in log Ec with pull-back remeshing. The reference body is the initial sheet of the elastic runs (hole radius r0 on the midplane, quarter-circle edge cap of radius h0/2).",
+  "geometry": {
+    "kind": "axisymmetric",
+    "coordinates": ["r", "z"],
+    "frame": "reference"
+  },
+  "nondimensionalization": {
+    "length_scale": "h0",
+    "stress_scale": "sigma/h0",
+    "modulus": "Ec = G h0 / sigma"
+  },
+  "physics": {
+    "problem": "axisymmetric_elastocapillary_equilibrium",
+    "r0": 1.0,
+    "surface_tension": 1.0
+  },
+  "mesh": {
+    "elements_per_quarter": 12,
+    "length": 30000.0,
+    "growth": 1.1,
+    "remesh_growth": 1.08,
+    "max_spacing": 300.0
+  },
+  "continuation": {
+    "Ec_start": 10.0,
+    "Ec_stop": 0.41,
+    "initial_step": -0.05,
+    "max_step": 0.1,
+    "segment_steps": 10,
+    "segment_log_radius_growth": 0.25,
+    "max_stalled_segments": 2
+  },
+  "solver": {
+    "newton_tolerance": 1e-6,
+    "max_newton": 20,
+    "eigenvalues": 6
+  },
+  "regularisation": {
+    "cap_beta": 0.0
+  }
+}

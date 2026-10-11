@@ -1,6 +1,8 @@
 """Validate ``pyoomph-case-v1`` cases for this repository's runners.
 
-The axisymmetric viscoelastic runner reads physics and numerics from its case. The
+The axisymmetric viscoelastic runner reads physics and numerics from its case, and so does
+the equilibrium runner (``physics.problem`` = ``axisymmetric_elastocapillary_equilibrium``),
+whose case carries the reference geometry, mesh, continuation and solver settings. The
 Newtonian study runners (``physics.problem`` = ``planar_comoving``, ``axisymmetric_lab``
 or ``axisymmetric_comoving``) read only the physics, ``physics.Oh``, and take every
 numerical parameter from their options.
@@ -12,7 +14,8 @@ case onto the solver driver's command-line options.
 
 A case carries the physics and the numerics of one run. Continuation is not part of the
 case: a restart uses the same case file with ``--restart-from``, and may only extend the
-stop time (``--t-end``) or lengthen the far-field membrane (``--far-field-extension``).
+stop time (``--t-end``) or lengthen the far-field membrane (``--far-field-extension``); an
+equilibrium continuation may only move the stop value of ``Ec`` (``--ec-stop``).
 """
 
 from __future__ import annotations
@@ -34,6 +37,22 @@ NEWTONIAN_GEOMETRY = {
 #: Every case field the Newtonian study runners read.
 NEWTONIAN_FIELDS_USED = ["schema", "case_id", "geometry.kind", "geometry.coordinates",
                          "geometry.frame", "nondimensionalization", "physics.problem", "physics.Oh"]
+EQUILIBRIUM = "axisymmetric_elastocapillary_equilibrium"
+EQUILIBRIUM_GEOMETRY = {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "reference"}
+EQUILIBRIUM_SECTIONS = {
+    "physics": (("r0", "positive"), ("surface_tension", "positive")),
+    "mesh": (("elements_per_quarter", "integer"), ("length", "positive"), ("growth", "growth"),
+             ("remesh_growth", "growth"), ("max_spacing", "positive")),
+    "continuation": (("Ec_start", "positive"), ("Ec_stop", "positive"), ("initial_step", "nonzero"),
+                     ("max_step", "positive"), ("segment_steps", "integer"),
+                     ("segment_log_radius_growth", "positive"), ("max_stalled_segments", "integer")),
+    "solver": (("newton_tolerance", "positive"), ("max_newton", "integer"), ("eigenvalues", "integer")),
+}
+EQUILIBRIUM_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coordinates",
+                            "geometry.frame", "nondimensionalization", "physics.problem"]
+                           + [f"{section}.{key}" for section, keys in EQUILIBRIUM_SECTIONS.items()
+                              for key, _ in keys]
+                           + ["regularisation.cap_beta"])
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
 HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window_fraction",
@@ -215,6 +234,60 @@ def _newtonian_problems(case: dict, problem: str) -> list[str]:
     return problems
 
 
+def _equilibrium_problems(case: dict) -> list[str]:
+    problems: list[str] = []
+    if case.get("schema") != SCHEMA:
+        problems.append(f"case.schema must be {SCHEMA!r}")
+    if not isinstance(case.get("case_id"), str) or not CASE_ID.fullmatch(case["case_id"]):
+        problems.append("case.case_id must match " + CASE_ID.pattern)
+    if "restart" in case:
+        problems.append("case.restart is not accepted: a continuation uses the same case with "
+                        "--restart-from <segment state>")
+    geometry = case.get("geometry")
+    if not isinstance(geometry, dict):
+        problems.append("case.geometry must be an object")
+    else:
+        for key in ("kind", "coordinates", "frame"):
+            if geometry.get(key) != EQUILIBRIUM_GEOMETRY[key]:
+                problems.append(f"case geometry for {EQUILIBRIUM}: geometry.{key} is "
+                                f"{geometry.get(key)!r}, not {EQUILIBRIUM_GEOMETRY[key]!r}")
+    nondim = case.get("nondimensionalization")
+    if not isinstance(nondim, dict) or not nondim:
+        problems.append("case.nondimensionalization must be a non-empty object")
+    for name, keys in EQUILIBRIUM_SECTIONS.items():
+        section = _section(case, name, problems)
+        for key, kind in keys:
+            if kind == "integer":
+                _integer(section, key, name, 1, problems)
+            elif kind == "positive":
+                _positive(section, key, name, problems)
+            elif kind == "growth":
+                if not _number(section.get(key)) or section[key] < 1:
+                    problems.append(f"{name}.{key} must be a number of at least 1")
+            elif not _number(section.get(key)) or section[key] == 0:
+                problems.append(f"{name}.{key} must be a non-zero number")
+    physics = case.get("physics") if isinstance(case.get("physics"), dict) else {}
+    if physics.get("problem") != EQUILIBRIUM:
+        problems.append(f"physics.problem must be {EQUILIBRIUM!r}")
+    cont = case.get("continuation") if isinstance(case.get("continuation"), dict) else {}
+    if _number(cont.get("Ec_start")) and _number(cont.get("Ec_stop")) \
+            and cont["Ec_stop"] >= cont["Ec_start"]:
+        problems.append("continuation.Ec_stop must be below continuation.Ec_start")
+    if _number(cont.get("initial_step")) and cont["initial_step"] > 0:
+        problems.append("continuation.initial_step must be negative (the branch is followed "
+                        "towards smaller Ec)")
+    mesh = case.get("mesh") if isinstance(case.get("mesh"), dict) else {}
+    if _number(mesh.get("length")) and _number(physics.get("r0")) and mesh["length"] <= physics["r0"] + 1:
+        problems.append("mesh.length must exceed physics.r0 + 1 (the edge cap and a sheet column)")
+    regularisation = case.get("regularisation", {})
+    if not isinstance(regularisation, dict):
+        problems.append("case.regularisation must be an object")
+    elif "cap_beta" in regularisation and (not _number(regularisation["cap_beta"])
+                                           or regularisation["cap_beta"] < 0):
+        problems.append("regularisation.cap_beta must be a non-negative number")
+    return problems
+
+
 def case_problems(case: object, problem: str | None = None) -> list[str]:
     """Every problem with ``case``; an empty list means the runner accepts it.
 
@@ -226,6 +299,8 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
     wanted = declared if problem is None else problem
     if wanted in NEWTONIAN_GEOMETRY:
         return _newtonian_problems(case, wanted)
+    if wanted == EQUILIBRIUM:
+        return _equilibrium_problems(case)
     if wanted != VISCOELASTIC:
         return [f"unknown problem {wanted!r}"]
     problems: list[str] = []
