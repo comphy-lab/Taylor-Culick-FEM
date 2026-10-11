@@ -72,10 +72,11 @@ class NeoHookeanDisplacementEquations(Equations):
     """
 
     def __init__(self, shear_modulus, displacement_space="C2", pressure_space="DL", damping=1,
-                 error_estimators=False, stiffening=None):
+                 error_estimators=False, stiffening=None, volume_penalty=0.0):
         super().__init__()
         self.shear_modulus = shear_modulus
         self.stiffening = stiffening
+        self.volume_penalty = volume_penalty
         self.error_estimators = error_estimators
         self.displacement_space = displacement_space
         self.pressure_space = pressure_space
@@ -101,6 +102,10 @@ class NeoHookeanDisplacementEquations(Equations):
                            [0, 0, 1 + g00 + g11 + minor]])
         volume_change = (g00 + g11 + minor) * (1 + eta) + eta
         stress = self.shear_modulus * excess - pressure * cofactor
+        if self.volume_penalty:
+            # Consistent augmented-Lagrangian term: its variation vanishes when J = 1.
+            # It controls volume modes that the discrete pressure space does not resolve.
+            stress = stress + self.shear_modulus * self.volume_penalty * volume_change * cofactor
         if self.stiffening is not None:
             # Optional Mooney-Rivlin term beta mu / 2 (I2 - 3) - 2 beta mu (J - 1), weighted by a
             # field w(X); its stress beta mu w (I1 F - F F^T F - 2 cof F) vanishes at F = I.
@@ -286,6 +291,7 @@ class ElastocapillaryEquilibriumProblem(Problem):
         self.cap_stiffening = 0.0
         self.cap_stiffening_radius = 1.5
         self.cap_stiffening_width = 0.05
+        self.volume_penalty = 0.0
         self.far_edge = "robin"
         self.pressure_space = "DL"
         self.surface_tension = 1.0
@@ -313,7 +319,8 @@ class ElastocapillaryEquilibriumProblem(Problem):
             stiffening = beta / (1 + exp(step))
         eqs = NeoHookeanDisplacementEquations(modulus, displacement_space="C2TB" if self.triangles else "C2",
                                               pressure_space=self.pressure_space, damping=damping,
-                                              error_estimators=self.adaptive, stiffening=stiffening)
+                                              error_estimators=self.adaptive, stiffening=stiffening,
+                                              volume_penalty=self.volume_penalty)
         eqs += DeformedSurfaceEnergy(self.surface_tension) @ "interface"
         eqs += DirichletBC(displacement_y=0) @ "symmetry"
         if self.far_edge == "clamped":

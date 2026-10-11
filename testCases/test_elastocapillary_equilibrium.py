@@ -81,6 +81,7 @@ class EquilibriumCaseTests(unittest.TestCase):
             "continuation.Ec_stop": lambda c: c["continuation"].update(Ec_stop=20.0),
             "continuation.initial_step": lambda c: c["continuation"].update(initial_step=0.05),
             "regularisation.cap_beta": lambda c: c["regularisation"].update(cap_beta=-1),
+            "regularisation.volume_penalty": lambda c: c["regularisation"].update(volume_penalty=-1),
             "mesh.columns": lambda c: c["mesh"].update(columns="radial"),
             "mesh.shoulder_angle": lambda c: c["mesh"].update(shoulder_angle=95),
             "mesh.blend": lambda c: c["mesh"].update(blend=0),
@@ -109,6 +110,8 @@ class EquilibriumCaseTests(unittest.TestCase):
                 with self.subTest(field=f"{section}.{key}"):
                     self.assertIn(f"{section}.{key}", EQUILIBRIUM_FIELDS_USED)
         self.assertIn("regularisation.cap_beta", EQUILIBRIUM_FIELDS_USED)
+        self.assertIn("regularisation.volume_penalty", EQUILIBRIUM_FIELDS_USED)
+        self.assertEqual(settings.volume_penalty, 0.0)
 
 
 class ReferenceGeometryTests(unittest.TestCase):

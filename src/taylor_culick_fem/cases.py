@@ -53,7 +53,7 @@ EQUILIBRIUM_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coor
                            + [f"{section}.{key}" for section, keys in EQUILIBRIUM_SECTIONS.items()
                               for key, _ in keys]
                            + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend",
-                              "regularisation.cap_beta"])
+                              "regularisation.cap_beta", "regularisation.volume_penalty"])
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
 HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window_fraction",
@@ -293,6 +293,10 @@ def _equilibrium_problems(case: dict) -> list[str]:
     elif "cap_beta" in regularisation and (not _number(regularisation["cap_beta"])
                                            or regularisation["cap_beta"] < 0):
         problems.append("regularisation.cap_beta must be a non-negative number")
+    if isinstance(regularisation, dict) and "volume_penalty" in regularisation \
+            and (not _number(regularisation["volume_penalty"])
+                 or regularisation["volume_penalty"] < 0):
+        problems.append("regularisation.volume_penalty must be a non-negative number")
     return problems
 
 

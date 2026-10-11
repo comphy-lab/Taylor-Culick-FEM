@@ -109,3 +109,4 @@ when the branch passes `Ec_stop` and 1 when it stalls.
 | `continuation.max_stalled_segments` | consecutive segments without progress before the run stops |
 | `solver.newton_tolerance`, `.max_newton`, `.eigenvalues` | Newton tolerance, iteration limit and the number of eigenvalues computed per point |
 | `regularisation.cap_beta` | optional Mooney--Rivlin stiffening of the edge-cap material (default 0); a numerical regularisation for the most compressed cap |
+| `regularisation.volume_penalty` | optional non-negative coefficient of the augmented energy `Ec (J-1)^2/2` (default 0); the mixed pressure constraint remains in place and the added stress vanishes at `J=1` |

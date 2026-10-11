@@ -48,6 +48,7 @@ class SegmentSettings:
     segment_log_radius_growth: float
     ec_start: float
     cap_beta: float
+    volume_penalty: float = 0.0
     columns: str = "vertical"
     shoulder_angle: float = 10.0
     blend: float = 4.0
@@ -67,6 +68,7 @@ class SegmentSettings:
             segment_log_radius_growth=float(cont["segment_log_radius_growth"]),
             ec_start=float(cont["Ec_start"]),
             cap_beta=float(case.get("regularisation", {}).get("cap_beta", 0.0)),
+            volume_penalty=float(case.get("regularisation", {}).get("volume_penalty", 0.0)),
             columns=str(mesh.get("columns", "vertical")),
             shoulder_angle=float(mesh.get("shoulder_angle", 10.0)),
             blend=float(mesh.get("blend", 4.0)),
@@ -86,6 +88,7 @@ def build_problem(settings: SegmentSettings, grids: dict, folder: Path):
     problem.quadratic_grids = True
     problem.length = settings.length
     problem.cap_stiffening = settings.cap_beta
+    problem.volume_penalty = settings.volume_penalty
     problem.newton_solver_tolerance = settings.newton_tolerance
     problem.set_linear_solver("superlu")
     problem.set_eigensolver("scipy")
