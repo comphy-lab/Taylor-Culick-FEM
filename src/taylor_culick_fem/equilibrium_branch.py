@@ -6,7 +6,7 @@ see :func:`taylor_culick_fem.equilibrium_geometry.design_grids`), transfers the 
 displacement as the initial guess, solves at the stored ``log Ec`` and then continues by
 arclength in ``log Ec`` until it has taken ``segment_steps`` steps, grown ``ln R`` by
 ``segment_log_radius_growth``, passed the stop value or failed. Each accepted point records
-the hole radius, the full rim height, the far-field amplitude, the leading eigenvalues of
+the hole radius, the full rim height, the far-field amplitude, the returned eigenvalues of
 the energy flow and the incompressibility error near the edge.
 """
 
@@ -122,12 +122,17 @@ def _start(settings: SegmentSettings, grids: dict, folder: Path, old: FieldMap |
 
 
 def _point(problem, settings: SegmentSettings, fmap: FieldMap) -> dict:
+    from taylor_culick_fem.equilibrium_stability import returned_spectrum
+
     eigenvalues, _ = problem.solve_eigenproblem(settings.eigenvalues, shift=0)
+    spectrum = returned_spectrum(eigenvalues, count=settings.eigenvalues, shift=0)
     return {
         "Ec": problem.elastocapillary_number, "log_Ec": problem.get_global_parameter("log_Ec").value,
         "R": problem.hole_radius(), "H": problem.rim_height(),
         "A": problem.far_edge_displacement() * settings.length,
-        "leading_eigenvalue": float(max(e.real for e in eigenvalues)),
+        # Compatibility alias: maximum real part of the returned set only.
+        "leading_eigenvalue": spectrum["leading_returned_eigenvalue"],
+        **spectrum,
         "eigenvalues": sorted(float(e.real) for e in eigenvalues)[-3:],
         "J_err": incompressibility_error(fmap), "ndof": problem.ndof(),
         "cap_beta": settings.cap_beta,
