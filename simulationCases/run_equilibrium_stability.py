@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Screen the restricted equilibrium spectrum on retained grids and total displacement.
 
-    python postProcess/equilibrium_stability.py <case> --grids <grids.npz> \
+    python simulationCases/run_equilibrium_stability.py <case> --grids <grids.npz> \
         --state <state.npz> --out <new folder> --counts 6 12 --shifts 0 0.1
 
 Pressure, absent from the retained state, is reconstructed at fixed displacement.
@@ -34,7 +34,7 @@ from taylor_culick_fem.equilibrium_stability import (
     constrained_curvature_screen,
     eigenpair_residuals, matrix_diagnostics, max_abs, pressure_rows,
     recover_pressure, restore_displacement, retained_nodes, returned_spectrum, spectrum_scope,
-    stationary_correction,
+    retained_eigen_matrices, stationary_correction,
 )
 from taylor_culick_fem.run_contract import (
     append_progress, enforce_launcher_affinity, output_problems, read_case, sha256,
@@ -163,7 +163,6 @@ def main(argv: list[str] | None = None) -> int:
     import pyoomph
     from pyoomph.generic.jit_cache import set_enabled
     from pyoomph.generic.mpi import get_mpi_nproc
-    from scipy.sparse import csr_matrix
     from taylor_culick_fem.equilibrium_branch import SegmentSettings, build_problem
     from taylor_culick_fem.equilibrium_geometry import FieldMap
 
@@ -235,12 +234,10 @@ def main(argv: list[str] | None = None) -> int:
                                          "sha256": sha256(args.out / "corrected-state.npz"),
                                          "contents": "total/background/increment Q2 coefficients and serial global DOFs"}
         residual, tangent = problem.assemble_jacobian(with_residual=True)
-        n, _, nr, mv, mc, mr, _, kr, kv, kc, kp = problem.assemble_eigenproblem_matrices(0)
-        if nr != n or kr != n or n != problem.ndof():
-            raise ValueError("eigenproblem assembly is not the complete serial DOF system")
-        mass = csr_matrix((mv, mc, mr), shape=(n, n))
-        eigen_tangent = csr_matrix((kv, kc, kp), shape=(n, n))
+        residual, tangent = np.array(residual, copy=True), tangent.copy()
+        mass, eigen_tangent = retained_eigen_matrices(problem)
         report["matrices"] = matrix_diagnostics(tangent, mass, residual, pressure)
+        report["matrices"]["storage"] = "independent Python-owned CSR arrays retained across native eigensolver assembly"
         report["matrices"]["eigen_vs_stationary_tangent_max_difference"] = max_abs((eigen_tangent - tangent).data)
         report["geometry"] = {"R": problem.hole_radius(), "H": problem.rim_height(),
                                "Ec": problem.elastocapillary_number,

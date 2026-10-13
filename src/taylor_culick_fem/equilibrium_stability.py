@@ -161,6 +161,25 @@ def max_abs(values) -> float:
     return float(np.max(np.abs(values))) if values.size else 0.0
 
 
+def retained_eigen_matrices(problem):
+    """Detach complete serial CSR matrices before another native assembly.
+
+    The pinned native binding exposes views of cached C++ matrix arrays. Its
+    next eigenproblem assembly deletes those caches. Independent copies of
+    data, column indices and row pointers are therefore required for later
+    residual analysis, even while the Problem object remains alive.
+    """
+    from scipy.sparse import csr_matrix
+
+    n, _, nr, mv, mc, mr, _, kr, kv, kc, kp = problem.assemble_eigenproblem_matrices(0)
+    if nr != n or kr != n or n != problem.ndof():
+        raise ValueError("eigenproblem assembly is not the complete serial DOF system")
+    owned = lambda values, columns, starts: csr_matrix(
+        (np.array(values, copy=True), np.array(columns, copy=True), np.array(starts, copy=True)),
+        shape=(n, n))
+    return owned(mv, mc, mr), owned(kv, kc, kp)
+
+
 def _augmented_pressure_fit(block, rhs, tolerance: float, refinements: int):
     """Unweighted least squares without forming the squared-condition normal matrix."""
     from scipy.sparse import bmat, eye

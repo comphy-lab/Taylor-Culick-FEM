@@ -11,11 +11,44 @@ from taylor_culick_fem.equilibrium_stability import (
     constrained_curvature_screen,
     eigenpair_residuals, matrix_diagnostics, pressure_rows,
     recover_pressure, restore_displacement, retained_nodes, returned_spectrum,
-    stationary_correction,
+    retained_eigen_matrices, stationary_correction,
 )
 
 
 class SpectrumTests(unittest.TestCase):
+    def test_residual_matrices_survive_native_cached_array_invalidation(self):
+        class Problem:
+            def __init__(self):
+                K = csr_matrix([[2., 0., -1.], [0., 3., 0.], [1., 0., 0.]])
+                M = csr_matrix(np.diag([1., 1., 0.]))
+                self.k = [K.data.copy(), K.indices.copy(), K.indptr.copy()]
+                self.m = [M.data.copy(), M.indices.copy(), M.indptr.copy()]
+
+            def ndof(self):
+                return 3
+
+            def assemble_eigenproblem_matrices(self, shift):
+                return (3, len(self.m[0]), 3, *self.m, len(self.k[0]), 3, *self.k)
+
+            def solve_eigenproblem(self):
+                # Native reassembly releases/reuses these borrowed buffers.
+                for values, indices, starts in (self.m, self.k):
+                    values.fill(np.nan)
+                    indices.fill(999)
+                    starts.fill(-1)
+                return [-3.], [[0., 1., 0.]]
+
+        problem = Problem()
+        mass, tangent = retained_eigen_matrices(problem)
+        for borrowed, retained in zip(problem.m + problem.k,
+                                      [mass.data, mass.indices, mass.indptr,
+                                       tangent.data, tangent.indices, tangent.indptr]):
+            self.assertFalse(np.shares_memory(borrowed, retained))
+        values, vectors = problem.solve_eigenproblem()
+        result = eigenpair_residuals(tangent, mass, values, vectors, np.array([False, False, True]))[0]
+        self.assertEqual(result["relative_action_residual"], 0.)
+        self.assertEqual(result["relative_backward_residual"], 0.)
+
     def test_positive_returned_modes_are_explicit(self):
         report = returned_spectrum([-0.1, 0.2], count=2, shift=0)
         self.assertTrue(report["positive_returned_mode_detected"])
