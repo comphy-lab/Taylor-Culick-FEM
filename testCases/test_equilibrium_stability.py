@@ -11,6 +11,7 @@ from taylor_culick_fem.equilibrium_stability import (
     constrained_curvature_screen,
     eigenpair_residuals, matrix_diagnostics, pressure_rows,
     recover_pressure, restore_displacement, retained_nodes, returned_spectrum,
+    stationary_correction,
 )
 
 
@@ -118,8 +119,12 @@ class RetainedStateTests(unittest.TestCase):
                 return (i % 3 - 1, i // 3 - 1)
 
         class Mesh:
-            def __init__(self, X):
+            def __init__(self, X, background=False):
+                self.background = background
                 self._nodes = [Node(x) for x in X]
+                if background:
+                    for node in self._nodes:
+                        node.values += [200., 200.]
 
             def nodes(self):
                 return self._nodes
@@ -128,11 +133,14 @@ class RetainedStateTests(unittest.TestCase):
                 return [Element(self._nodes)]
 
             def get_nodal_field_indices(self):
-                return {"displacement_x": 0, "displacement_y": 1}
+                fields = {"displacement_x": 0, "displacement_y": 1}
+                if self.background:
+                    fields.update(displacement_background_x=2, displacement_background_y=3)
+                return fields
 
         class Problem:
-            def __init__(self, X):
-                self.mesh = Mesh(X)
+            def __init__(self, X, background=False):
+                self.mesh = Mesh(X, background)
 
             def get_mesh(self, name):
                 return self.mesh
@@ -144,6 +152,69 @@ class RetainedStateTests(unittest.TestCase):
         np.testing.assert_array_equal([n.values for n in problem.mesh.nodes()], self.ue[0])
         with self.assertRaisesRegex(ValueError, "connectivity"):
             restore_displacement(Problem(self.Xe[0] + [1e-8, 0]), saved)
+        translated = Problem(self.Xe[0], background=True)
+        receipt = restore_displacement(translated, saved)
+        self.assertIn("zero increment", receipt["representation"])
+        np.testing.assert_array_equal([n.values[:2] for n in translated.mesh.nodes()], np.zeros((9, 2)))
+        np.testing.assert_array_equal([n.values[2:] for n in translated.mesh.nodes()], self.ue[0])
+
+
+class StationaryCorrectionTests(unittest.TestCase):
+    def correction(self, delta):
+        from taylor_culick_fem.equilibrium_geometry import FieldMap
+
+        before = SimpleNamespace(Xe=np.zeros((1, 9, 2)), ij=np.zeros((1, 9, 2)), ue=np.zeros((1, 9, 2)))
+        after = SimpleNamespace(Xe=before.Xe.copy(), ij=before.ij.copy(), ue=before.ue + delta)
+        node = SimpleNamespace(value=lambda index: delta)
+        mesh = SimpleNamespace(nodes=lambda: [node],
+                               get_nodal_field_indices=lambda: {"displacement_x": 0, "displacement_y": 1})
+
+        class Problem:
+            displacement_background = True
+            solved = False
+
+            def solve(self, *, max_newton_iterations):
+                self.solved = True
+                self.max_iterations = max_newton_iterations
+
+            def get_mesh(self, name):
+                return mesh
+
+            def hole_radius(self):
+                return 500. + (delta if self.solved else 0.)
+
+            def rim_height(self):
+                return 1.4 + (delta if self.solved else 0.)
+
+            def get_residuals(self):
+                return [1e-8 if self.solved else 3e-6]
+
+            def get_last_residual_convergence(self):
+                return [3e-6, 1e-8]
+
+        problem = Problem()
+        with patch.object(FieldMap, "from_problem", side_effect=[before, after]), \
+                patch("taylor_culick_fem.equilibrium_geometry.incompressibility_error",
+                      side_effect=[.02, .02 + delta]):
+            receipt = stationary_correction(problem, max_iterations=20)
+        self.assertEqual(problem.max_iterations, 20)
+        return receipt
+
+    def test_tiny_corrected_state_is_distinguished_from_retained_coefficients(self):
+        receipt = self.correction(1e-10)
+        self.assertTrue(receipt["geometry_gate_passed"])
+        self.assertFalse(receipt["retained_input_modified"])
+        self.assertEqual(receipt["max_increment_nodal_displacement"], 1e-10)
+        self.assertIn("corrected discrete equilibrium", receipt["interpretation"])
+
+    def test_correction_cannot_hide_changed_geometry_or_nonfinite_coefficients(self):
+        for delta in (1e-7, np.nan):
+            with self.subTest(delta=delta):
+                self.assertFalse(self.correction(delta)["geometry_gate_passed"])
+
+    def test_correction_requires_translated_trial_space(self):
+        with self.assertRaisesRegex(ValueError, "pinned displacement background"):
+            stationary_correction(SimpleNamespace(), max_iterations=20)
 
 
 class PressureRecoveryTests(unittest.TestCase):
@@ -279,15 +350,17 @@ class ConstrainedCurvatureTests(unittest.TestCase):
 
     def test_penalty_stabilises_only_off_constraint_negative_direction(self):
         result = constrained_curvature_screen(self.tangent(-1., 2.), self.pressure)
-        self.assertTrue(result["sufficiency_established"])
+        self.assertTrue(result["numerical_screen_passed"])
+        self.assertFalse(result["rigorous_certificate"])
+        self.assertIn("no rigorous norm bound", result["factor_error_bound"])
         self.assertTrue(all(a["passed"] for a in result["attempts"]))
         self.assertIn("discrete", result["scope"])
         self.assertIn("generic LU pivots are not inertia", result["limitations"])
 
     def test_true_negative_direction_in_constraint_kernel_is_not_certified(self):
         result = constrained_curvature_screen(self.tangent(2., -1.), self.pressure)
-        self.assertFalse(result["sufficiency_established"])
-        self.assertEqual(result["classification"], "sufficiency unestablished")
+        self.assertFalse(result["numerical_screen_passed"])
+        self.assertEqual(result["classification"], "numerical constrained-curvature screen unestablished")
         self.assertIn("failure does not establish physical instability or constrained negative curvature",
                       result["limitations"])
 
@@ -295,14 +368,30 @@ class ConstrainedCurvatureTests(unittest.TestCase):
         K = self.tangent(2., 2.).tolil()
         K[0, 1] = .1
         result = constrained_curvature_screen(K.tocsr(), self.pressure)
-        self.assertFalse(result["sufficiency_established"])
+        self.assertFalse(result["numerical_screen_passed"])
         self.assertEqual(result["attempts"], [])
+
+    def test_dominant_displacement_scale_cannot_hide_wrong_constraint_sign(self):
+        K = csr_matrix([[1e16, 0., 1.], [0., 2., 0.], [1., 0., 0.]])
+        result = constrained_curvature_screen(K, self.pressure)
+        self.assertFalse(result["numerical_screen_passed"])
+        self.assertEqual(result["attempts"], [])
+        self.assertGreater(result["pressure_coupling_sign_corrected_relative_difference"], .9)
+
+    def test_nontrivial_symmetric_permutation_is_checked_in_factor_actions(self):
+        H = np.array([[3., .3, 0., .4], [.3, 2., .1, 0.],
+                      [0., .1, 4., .2], [.4, 0., .2, 5.]])
+        B = np.array([[1., 0., 0., 0.]])
+        K = csr_matrix(np.block([[H, -B.T], [B, np.zeros((1, 1))]]))
+        result = constrained_curvature_screen(K, np.array([False] * 4 + [True]))
+        self.assertTrue(result["numerical_screen_passed"])
+        self.assertTrue(all(a["passed"] for a in result["attempts"]))
 
     def test_row_pivoting_does_not_become_an_inertia_claim(self):
         fake = SimpleNamespace(perm_r=np.array([1, 0]), perm_c=np.array([0, 1]))
         with patch("scipy.sparse.linalg.splu", return_value=fake):
             result = constrained_curvature_screen(self.tangent(2., 2.), self.pressure)
-        self.assertFalse(result["sufficiency_established"])
+        self.assertFalse(result["numerical_screen_passed"])
         self.assertTrue(all("row pivoting" in a["reason"] for a in result["attempts"]))
 
     def test_generic_lu_with_positive_diagonal_is_not_a_symmetric_factor(self):
@@ -310,13 +399,20 @@ class ConstrainedCurvatureTests(unittest.TestCase):
                                L=csr_matrix(np.eye(2)), U=csr_matrix([[1., .1], [0., 1.]]))
         with patch("scipy.sparse.linalg.splu", return_value=fake):
             result = constrained_curvature_screen(self.tangent(2., 2.), self.pressure)
-        self.assertFalse(result["sufficiency_established"])
+        self.assertFalse(result["numerical_screen_passed"])
         self.assertTrue(all("diag(U)L.T" in a["reason"] for a in result["attempts"]))
 
     def test_invalid_weights_are_not_accepted(self):
         for weights in ([], [0], [-1], [np.nan], [np.inf], [10, 10]):
             with self.assertRaises(ValueError):
                 constrained_curvature_screen(self.tangent(2., 2.), self.pressure, weights=weights)
+
+    def test_zero_constraint_row_is_inconclusive_before_factorisation(self):
+        result = constrained_curvature_screen(csr_matrix(np.diag([2., 2., 0.])), self.pressure)
+        self.assertFalse(result["numerical_screen_passed"])
+        self.assertFalse(result["rigorous_certificate"])
+        self.assertEqual(result["attempts"], [])
+        self.assertIn("zero constraint row", result["reason"])
 
 
 if __name__ == "__main__":

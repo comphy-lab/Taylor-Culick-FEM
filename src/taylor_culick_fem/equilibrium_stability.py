@@ -68,6 +68,9 @@ def restore_displacement(problem, saved) -> dict:
     lookup = retained_nodes(saved["Xe"], saved["ue"], saved["ij"])
     mesh = problem.get_mesh("solid")
     fields = mesh.get_nodal_field_indices()
+    background = "displacement_background_x" in fields
+    if background != ("displacement_background_y" in fields):
+        raise ValueError("incomplete pinned displacement background")
     current = FieldMap.from_problem(problem)
     # Element order can differ, but reference nodes and Q2 connectivity must agree.
     topology = lambda X: {frozenset(map(tuple, element)) for element in X}
@@ -81,8 +84,10 @@ def restore_displacement(problem, saved) -> dict:
         u = lookup[(float(node.x(0)), float(node.x(1)))]
         if node.x(1) == 0 and u[1] != 0:
             raise ValueError("retained displacement violates the midplane symmetry condition")
-        node.set_value(fields["displacement_x"], float(u[0]))
-        node.set_value(fields["displacement_y"], float(u[1]))
+        for axis, value in zip(("x", "y"), u):
+            node.set_value(fields["displacement_" + axis], 0.0 if background else float(value))
+            if background:
+                node.set_value(fields["displacement_background_" + axis], float(value))
     after = FieldMap.from_problem(problem)
     restored = retained_nodes(after.Xe, after.ue, after.ij)
     if any(not np.array_equal(restored[X], u) for X, u in lookup.items()):
@@ -90,7 +95,53 @@ def restore_displacement(problem, saved) -> dict:
     return {"method": "exact reference-node and Q2-connectivity match; total displacement",
             "nodes": len(lookup), "elements": len(saved["Xe"]),
             "max_nodal_displacement_change": 0.0,
+            "representation": "pinned Q2 background plus zero increment" if background else "total Q2 displacement",
             "pressure_retained": False, "stationary_solve_performed": False}
+
+
+def stationary_correction(problem, *, max_iterations: int, geometry_tolerance=1e-8,
+                          nodal_tolerance=1e-8) -> dict:
+    """Bound one same-model/grid solve in a translated displacement trial space.
+
+    This operates only on the rebuilt problem. The retained input is unchanged;
+    the post-correction Hessian belongs to the corrected discrete equilibrium.
+    """
+    from taylor_culick_fem.equilibrium_geometry import FieldMap, incompressibility_error
+
+    if not getattr(problem, "displacement_background", False):
+        raise ValueError("bounded stationary correction requires a pinned displacement background")
+    before = FieldMap.from_problem(problem)
+    radius, height = problem.hole_radius(), problem.rim_height()
+    sampled_j = incompressibility_error(before)
+    residual_before = max_abs(problem.get_residuals())
+    problem.solve(max_newton_iterations=max_iterations)
+    after = FieldMap.from_problem(problem)
+    if not np.array_equal(before.Xe, after.Xe) or not np.array_equal(before.ij, after.ij):
+        raise ValueError("stationary correction changed the retained reference grid")
+    mesh = problem.get_mesh("solid")
+    indices = mesh.get_nodal_field_indices()
+    maximum_increment = max(abs(node.value(indices["displacement_" + axis]))
+                            for node in mesh.nodes() for axis in ("x", "y"))
+    record = {
+        "method": "one stationary solve at unchanged Ec, regularisation, reference grid and constraints",
+        "representation": "saved total Q2 displacement as pinned background plus free Q2 increment",
+        "max_residual_before": residual_before, "max_residual_after": max_abs(problem.get_residuals()),
+        "relative_R_change": problem.hole_radius() / radius - 1,
+        "relative_H_change": problem.rim_height() / height - 1,
+        "sampled_J_error_change": incompressibility_error(after) - sampled_j,
+        "max_total_nodal_displacement_change": max_abs(after.ue - before.ue),
+        "max_increment_nodal_displacement": maximum_increment,
+        "geometry_tolerance": geometry_tolerance, "nodal_tolerance": nodal_tolerance,
+        "residual_history": list(problem.get_last_residual_convergence()),
+        "retained_input_modified": False,
+        "interpretation": "screen belongs to corrected discrete equilibrium, not the untouched retained coefficients",
+    }
+    checks = [record["relative_R_change"], record["relative_H_change"], record["sampled_J_error_change"],
+              record["max_total_nodal_displacement_change"], maximum_increment, record["max_residual_after"]]
+    record["geometry_gate_passed"] = bool(
+        np.isfinite(checks).all() and max(map(abs, checks[:3])) <= geometry_tolerance
+        and max(checks[3:5]) <= nodal_tolerance)
+    return record
 
 
 def pressure_rows(problem) -> np.ndarray:
@@ -229,6 +280,8 @@ def matrix_diagnostics(tangent, mass, residual, pressure) -> dict:
     signs = np.where(pressure, -1.0, 1.0)
     symmetric_tangent = diags(signs) @ tangent
     relative = lambda A: float(norm(A - A.T) / max(float(norm(A)), np.finfo(float).tiny))
+    upper = tangent[~pressure][:, pressure]
+    lower = tangent[pressure][:, ~pressure]
     return {
         "finite_values": True, "ndof": len(residual),
         "pressure_dofs": int(np.count_nonzero(pressure)),
@@ -238,6 +291,9 @@ def matrix_diagnostics(tangent, mass, residual, pressure) -> dict:
         "max_constraint_residual": max_abs(residual[pressure]),
         "raw_tangent_relative_asymmetry": relative(tangent),
         "pressure_sign_corrected_tangent_relative_asymmetry": relative(symmetric_tangent),
+        "displacement_tangent_relative_asymmetry": relative(tangent[~pressure][:, ~pressure]),
+        "pressure_coupling_sign_corrected_relative_difference": float(
+            norm(upper + lower.T) / max(float(norm(upper) + norm(lower)), np.finfo(float).tiny)),
         "pressure_row_sign": -1, "symmetry_norm": "Frobenius",
         "mass_relative_asymmetry": relative(mass),
         "mass_pressure_row_max": max_abs(mass[pressure].data),
@@ -308,13 +364,15 @@ def constrained_curvature_screen(tangent, pressure, *, weights=(10.0, 100.0),
             or not pressure.any() or pressure.all()):
         raise ValueError("curvature screen requires a finite mixed displacement/pressure tangent")
     report = {
-        "sufficiency_established": False, "classification": "sufficiency unestablished",
+        "numerical_screen_passed": False, "rigorous_certificate": False,
+        "classification": "numerical constrained-curvature screen unestablished",
         "scope": "regularised discrete meridional m=0 reflection-even constrained energy",
         "implication": "H+w B.T W B positive definite implies H positive on ker(B)",
         "limitations": ["floating-point sufficient numerical screen, not rigorous operator error bounds",
                         "no continuum, non-axisymmetric or global nonlinear certificate",
                         "failure does not establish physical instability or constrained negative curvature",
                         "generic LU pivots are not inertia"],
+        "factor_error_bound": "no rigorous norm bound established; checked factors may represent a nearby operator",
         "symmetry_tolerance": symmetry_tolerance, "factor_tolerance": factor_tolerance,
         "probe_tolerance": probe_tolerance, "pivot_floor_multiplier": pivot_floor_multiplier,
         "weights": list(weights), "attempts": [],
@@ -328,10 +386,19 @@ def constrained_curvature_screen(tangent, pressure, *, weights=(10.0, 100.0),
         report["reason"] = "variational symmetry or zero pressure-pressure block assumption failed"
         return report
     Hraw = K[~pressure][:, ~pressure]
+    B = K[pressure][:, ~pressure]
+    upper = K[~pressure][:, pressure]
+    report["displacement_tangent_relative_asymmetry"] = float(
+        norm(Hraw - Hraw.T) / max(float(norm(Hraw)), tiny))
+    report["pressure_coupling_sign_corrected_relative_difference"] = float(
+        norm(upper + B.T) / max(float(norm(upper) + norm(B)), tiny))
+    if max(report["displacement_tangent_relative_asymmetry"],
+           report["pressure_coupling_sign_corrected_relative_difference"]) > symmetry_tolerance:
+        report["reason"] = "separate displacement or pressure-coupling variational symmetry failed"
+        return report
     H = (Hraw + Hraw.T) * 0.5
     report["energy_tangent"] = "symmetric part of Kuu; skew part contributes zero to quadratic energy"
     report["discarded_skew_relative_norm"] = float(norm(Hraw - H) / max(float(norm(Hraw)), tiny))
-    B = K[pressure][:, ~pressure]
     row_max = np.asarray(abs(H).max(axis=1).toarray()).ravel()
     scaling = 1 / np.sqrt(np.maximum(row_max, tiny))
     if not np.isfinite(scaling).all() or np.any(scaling <= 0):
@@ -357,6 +424,9 @@ def constrained_curvature_screen(tangent, pressure, *, weights=(10.0, 100.0),
                          "constraint_row_diagonal_max": float(row_scaling.max()),
                          "zero_constraint_rows": int(np.count_nonzero(maxima == 0)),
                          "constraint_weight": "W=diag(constraint_row_diagonal**2)>0"}
+    if report["scaling"]["zero_constraint_rows"]:
+        report["reason"] = "zero constraint row invalidates the mixed-constraint screen"
+        return report
     for weight in weights:
         attempt = {"weight": weight, "passed": False}
         report["attempts"].append(attempt)
@@ -411,7 +481,7 @@ def constrained_curvature_screen(tangent, pressure, *, weights=(10.0, 100.0),
             attempt["passed"] = True
         except (ValueError, RuntimeError) as exc:
             attempt["reason"] = str(exc)
-    report["sufficiency_established"] = any(a["passed"] for a in report["attempts"])
-    if report["sufficiency_established"]:
-        report["classification"] = "sufficient numerical screen passed for restricted discrete constrained energy"
+    report["numerical_screen_passed"] = any(a["passed"] for a in report["attempts"])
+    if report["numerical_screen_passed"]:
+        report["classification"] = "numerical sufficient-curvature screen passed; no rigorous factor-error bound"
     return report

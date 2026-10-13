@@ -132,12 +132,15 @@ class FieldMap:
 
     @classmethod
     def from_problem(cls, problem) -> FieldMap:
-        """Read every Q2 element of the ``solid`` mesh of a solved problem."""
+        """Read total displacement, including an optional pinned Q2 background."""
         mesh = problem.get_mesh("solid")
         if hasattr(mesh, "_interpolate_hanging_values"):
             mesh._interpolate_hanging_values()
         idx = mesh.get_nodal_field_indices()
         ix, iy = idx["displacement_x"], idx["displacement_y"]
+        background = [idx.get("displacement_background_" + axis) for axis in ("x", "y")]
+        if (background[0] is None) != (background[1] is None):
+            raise ValueError("incomplete pinned displacement background")
         Xe, ue, ij = [], [], []
         for element in mesh.elements():
             if element.nnode() != 9:
@@ -147,7 +150,10 @@ class FieldMap:
                 node = element.node_pt(k)
                 loc = element.local_coordinate_of_node(k)
                 xs.append((node.x(0), node.x(1)))
-                us.append((node.value(ix), node.value(iy)))
+                u = [node.value(ix), node.value(iy)]
+                if background[0] is not None:
+                    u = [value + node.value(index) for value, index in zip(u, background)]
+                us.append(u)
                 ks.append((round(loc[0]) + 1, round(loc[1]) + 1))
             Xe.append(xs)
             ue.append(us)

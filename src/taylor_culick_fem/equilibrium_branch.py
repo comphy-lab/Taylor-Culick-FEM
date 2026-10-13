@@ -75,7 +75,7 @@ class SegmentSettings:
         )
 
 
-def build_problem(settings: SegmentSettings, grids: dict, folder: Path):
+def build_problem(settings: SegmentSettings, grids: dict, folder: Path, *, displacement_background=False):
     """An initialised steady problem on ``grids`` with the solver settings of the case."""
     from taylor_culick_fem.elastocapillary_equilibrium import ElastocapillaryEquilibriumProblem
 
@@ -89,6 +89,7 @@ def build_problem(settings: SegmentSettings, grids: dict, folder: Path):
     problem.length = settings.length
     problem.cap_stiffening = settings.cap_beta
     problem.volume_penalty = settings.volume_penalty
+    problem.displacement_background = displacement_background
     problem.newton_solver_tolerance = settings.newton_tolerance
     problem.set_linear_solver("superlu")
     problem.set_eigensolver("scipy")

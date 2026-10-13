@@ -4,10 +4,11 @@
     python postProcess/equilibrium_stability.py <case> --grids <grids.npz> \
         --state <state.npz> --out <new folder> --counts 6 12 --shifts 0 0.1
 
-No physical displacement is solved or interpolated. Pressure, absent from the
-retained state, is reconstructed at fixed displacement; failed stationarity
-stops before eigenvalue screening. Counts and shifts do not establish spectral
-completeness. The half-sheet equations omit azimuthal, swirl and bending modes.
+Pressure, absent from the retained state, is reconstructed at fixed displacement.
+An explicit stationary-correction option solves the same case on the same grid
+in a translated trial space, with strict bounds on geometry and nodal changes.
+Failed stationarity stops before screening. Counts and shifts do not establish
+spectral completeness. The equations omit azimuthal, swirl and bending modes.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from taylor_culick_fem.equilibrium_stability import (
     constrained_curvature_screen,
     eigenpair_residuals, matrix_diagnostics, max_abs, pressure_rows,
     recover_pressure, restore_displacement, retained_nodes, returned_spectrum, spectrum_scope,
+    stationary_correction,
 )
 from taylor_culick_fem.run_contract import (
     append_progress, enforce_launcher_affinity, output_problems, read_case, sha256,
@@ -57,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pressure-iterations", type=int, default=10000)
     parser.add_argument("--pressure-refinements", type=int, default=4,
                         help="bounded augmented-system iterative refinement")
+    parser.add_argument("--stationary-correction", action="store_true",
+                        help="opt in to one same-case/grid solve with fixed R/H/J and nodal gates")
     parser.add_argument("--residual-tolerance", type=float,
                         help="stationarity screen; default case solver.newton_tolerance")
     parser.add_argument("--eigenpair-tolerance", type=float, default=1e-7,
@@ -181,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
               "source_commit": commit}
     try:
         settings = SegmentSettings.from_case(case)
-        problem = build_problem(settings, grids, args.out / "pyoomph")
+        problem = build_problem(settings, grids, args.out / "pyoomph",
+                                displacement_background=args.stationary_correction)
         for i in range(problem.ntime_stepper()):
             problem.time_stepper_pt(i).make_steady()
         problem.get_global_parameter("log_Ec").value = log_ec
@@ -200,6 +205,35 @@ def main(argv: list[str] | None = None) -> int:
         if any(not np.array_equal(current_nodes[X], u) for X, u in original_nodes.items()):
             raise ValueError("pressure reconstruction changed the retained displacement")
         report["pressure_reconstruction"]["total_displacement_unchanged"] = True
+        uncorrected = np.asarray(problem.get_residuals())
+        report["uncorrected_stationarity"] = {
+            "max_equilibrium_residual": max_abs(uncorrected),
+            "stationarity_tolerance": residual_tolerance,
+            "passed": bool(max_abs(uncorrected) <= residual_tolerance
+                           and report["pressure_reconstruction"]["converged"]),
+            "total_displacement_unchanged": True,
+        }
+        if args.stationary_correction:
+            if not report["pressure_reconstruction"]["converged"]:
+                raise ValueError("stationary correction requires converged fixed-displacement pressure recovery")
+            report["stationary_correction"] = stationary_correction(
+                problem, max_iterations=settings.max_newton)
+            report["model_interpretation"] = "same supplied case/grid at the bounded corrected discrete equilibrium"
+            reconstructed_map = FieldMap.from_problem(problem)
+            mesh = problem.get_mesh("solid")
+            fields = mesh.get_nodal_field_indices()
+            element_field = lambda prefix: np.asarray([
+                [[element.node_pt(k).value(fields[prefix + axis]) for axis in ("x", "y")]
+                 for k in range(element.nnode())] for element in mesh.elements()])
+            dofs, _ = problem.get_current_dofs()
+            np.savez(args.out / "corrected-state.npz", Xe=reconstructed_map.Xe,
+                     ue=reconstructed_map.ue, ij=reconstructed_map.ij, log_ec=log_ec, cap_beta=beta,
+                     background_ue=element_field("displacement_background_"),
+                     increment_ue=element_field("displacement_"), global_dofs=np.asarray(dofs),
+                     pressure_mask=pressure)
+            report["corrected_state"] = {"path": str((args.out / "corrected-state.npz").resolve()),
+                                         "sha256": sha256(args.out / "corrected-state.npz"),
+                                         "contents": "total/background/increment Q2 coefficients and serial global DOFs"}
         residual, tangent = problem.assemble_jacobian(with_residual=True)
         n, _, nr, mv, mc, mr, _, kr, kv, kc, kp = problem.assemble_eigenproblem_matrices(0)
         if nr != n or kr != n or n != problem.ndof():
@@ -213,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
                                **determinant_samples(reconstructed_map)}
         report["stationarity_tolerance"] = residual_tolerance
         report["stationarity_screen_passed"] = (report["matrices"]["max_equilibrium_residual"] <= residual_tolerance
-                                               and report["pressure_reconstruction"]["converged"])
+                                               and report["pressure_reconstruction"]["converged"]
+                                               and report.get("stationary_correction", {}).get("geometry_gate_passed", True))
         if report["stationarity_screen_passed"]:
             if curvature_weights is not None:
                 report["constrained_curvature"] = constrained_curvature_screen(
@@ -242,19 +277,33 @@ def main(argv: list[str] | None = None) -> int:
             report["positive_residual_screened_mode_detected"] = any(
                 s["eigenpair_screen_passed"] and s["positive_returned_mode_detected"]
                 for s in report["screens"])
+            energy_passed = report.get("constrained_curvature", {}).get("numerical_screen_passed", False)
+            report["energy_classification"] = (
+                "numerical sufficient-curvature screen passed; no rigorous factor-error bound"
+                if energy_passed else "restricted constrained-energy minimum unestablished")
             report["classification"] = ("restricted returned-mode screen completed; completeness unestablished"
                                         if all(s["eigenpair_screen_passed"] for s in report["screens"])
                                         else "inconclusive: eigenpair residual screen failed")
+            if energy_passed and all(s["eigenpair_screen_passed"] for s in report["screens"]):
+                report["classification"] = (
+                    "restricted numerical sufficient-curvature screen passed; "
+                    "no rigorous factor-error bound; continuum and excluded sectors unestablished")
             if report["positive_residual_screened_mode_detected"]:
                 report["classification"] = "positive residual-screened growth mode detected in the restricted discrete sector"
-                if report.get("constrained_curvature", {}).get("sufficiency_established"):
+                if energy_passed:
                     report["curvature_spectrum_consistency"] = "conflict requires review; no stability conclusion"
+                    report["classification"] = "inconclusive: positive growth mode conflicts with constrained-energy screen"
         else:
-            report["classification"] = "inconclusive: fixed-displacement pressure reconstruction did not establish stationarity"
+            report["classification"] = (
+                "inconclusive: bounded stationary correction did not pass geometry or stationarity gates"
+                if args.stationary_correction else
+                "inconclusive: fixed-displacement pressure reconstruction did not establish stationarity")
         write_json_atomic(args.out / "screen.json", report)
         append_progress(args.out, "completed", classification=report["classification"])
         print(json.dumps({"classification": report["classification"], "output": str(args.out / "screen.json")}))
-        return 0 if report["screens"] and all(s["eigenpair_screen_passed"] for s in report["screens"]) else 2
+        completed = (report["screens"] and all(s["eigenpair_screen_passed"] for s in report["screens"])
+                     and "curvature_spectrum_consistency" not in report)
+        return 0 if completed else 2
     except Exception as exc:
         report["error"] = {"type": type(exc).__name__, "message": str(exc)}
         write_json_atomic(args.out / "screen.json", report)
