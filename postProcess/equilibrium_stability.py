@@ -30,6 +30,7 @@ import numpy as np
 
 from taylor_culick_fem.cases import EQUILIBRIUM, EQUILIBRIUM_FIELDS_USED, validate_case
 from taylor_culick_fem.equilibrium_stability import (
+    constrained_curvature_screen,
     eigenpair_residuals, matrix_diagnostics, max_abs, pressure_rows,
     recover_pressure, restore_displacement, retained_nodes, returned_spectrum, spectrum_scope,
 )
@@ -51,11 +52,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shifts", type=float, nargs="+", default=[0.0])
     parser.add_argument("--ncv", type=int)
     parser.add_argument("--pressure-tolerance", type=float, default=1e-12)
+    parser.add_argument("--pressure-method", choices=("augmented", "lsqr"), default="augmented",
+                        help="fixed-displacement unweighted least-squares driver")
     parser.add_argument("--pressure-iterations", type=int, default=10000)
+    parser.add_argument("--pressure-refinements", type=int, default=4,
+                        help="bounded augmented-system iterative refinement")
     parser.add_argument("--residual-tolerance", type=float,
                         help="stationarity screen; default case solver.newton_tolerance")
     parser.add_argument("--eigenpair-tolerance", type=float, default=1e-7,
                         help="relative backward residual screen, not a mesh-error bound")
+    parser.add_argument("--curvature-weights", type=float, nargs="*", default=None,
+                        help="opt in to a sufficient discrete constrained-energy screen; "
+                             "flag without values uses weights 10 and 100")
     parser.add_argument("--check", action="store_true", help="validate inputs without importing pyoomph")
     return parser
 
@@ -104,6 +112,14 @@ def main(argv: list[str] | None = None) -> int:
             problems.append(f"--{name} must be finite and positive")
     if args.pressure_iterations <= 0:
         problems.append("--pressure-iterations must be positive")
+    if args.pressure_refinements < 0:
+        problems.append("--pressure-refinements must be nonnegative")
+    curvature_weights = ([10.0, 100.0] if args.curvature_weights == []
+                         else args.curvature_weights)
+    if curvature_weights is not None and (
+            not all(math.isfinite(w) and w > 0 for w in curvature_weights)
+            or len(set(curvature_weights)) != len(curvature_weights)):
+        problems.append("--curvature-weights must be distinct finite positive values")
     if problems:
         raise SystemExit("refused: " + "; ".join(problems))
     with np.load(args.grids, allow_pickle=False) as source:
@@ -176,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         if max(args.counts) >= problem.ndof() - 1:
             raise ValueError("counts would select pyoomph's dense whole-pencil fallback; reduce counts")
         report["pressure_reconstruction"] = recover_pressure(
-            problem, pressure, tolerance=args.pressure_tolerance, iterations=args.pressure_iterations)
+            problem, pressure, tolerance=args.pressure_tolerance, iterations=args.pressure_iterations,
+            method=args.pressure_method, refinements=args.pressure_refinements)
         reconstructed_map = FieldMap.from_problem(problem)
         original_nodes = retained_nodes(saved["Xe"], saved["ue"], saved["ij"])
         current_nodes = retained_nodes(reconstructed_map.Xe, reconstructed_map.ue, reconstructed_map.ij)
@@ -198,6 +215,10 @@ def main(argv: list[str] | None = None) -> int:
         report["stationarity_screen_passed"] = (report["matrices"]["max_equilibrium_residual"] <= residual_tolerance
                                                and report["pressure_reconstruction"]["converged"])
         if report["stationarity_screen_passed"]:
+            if curvature_weights is not None:
+                report["constrained_curvature"] = constrained_curvature_screen(
+                    tangent, pressure, weights=curvature_weights)
+                write_json_atomic(args.out / "screen.json", report)
             for count in args.counts:
                 for shift in args.shifts:
                     values, vectors = problem.solve_eigenproblem(count, shift=shift, which="LM", ncv=args.ncv)
@@ -218,9 +239,16 @@ def main(argv: list[str] | None = None) -> int:
                     write_json_atomic(args.out / "screen.json", report)
             report["leading_returned_eigenvalue"] = max(s["leading_returned_eigenvalue"] for s in report["screens"])
             report["positive_returned_mode_detected"] = report["leading_returned_eigenvalue"] > 0
+            report["positive_residual_screened_mode_detected"] = any(
+                s["eigenpair_screen_passed"] and s["positive_returned_mode_detected"]
+                for s in report["screens"])
             report["classification"] = ("restricted returned-mode screen completed; completeness unestablished"
                                         if all(s["eigenpair_screen_passed"] for s in report["screens"])
                                         else "inconclusive: eigenpair residual screen failed")
+            if report["positive_residual_screened_mode_detected"]:
+                report["classification"] = "positive residual-screened growth mode detected in the restricted discrete sector"
+                if report.get("constrained_curvature", {}).get("sufficiency_established"):
+                    report["curvature_spectrum_consistency"] = "conflict requires review; no stability conclusion"
         else:
             report["classification"] = "inconclusive: fixed-displacement pressure reconstruction did not establish stationarity"
         write_json_atomic(args.out / "screen.json", report)

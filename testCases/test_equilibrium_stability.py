@@ -1,17 +1,25 @@
 """Software contracts for retained-state spectrum screening; no pyoomph solve."""
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 from scipy.sparse import csr_matrix
 
 from taylor_culick_fem.equilibrium_stability import (
+    constrained_curvature_screen,
     eigenpair_residuals, matrix_diagnostics, pressure_rows,
     recover_pressure, restore_displacement, retained_nodes, returned_spectrum,
 )
 
 
 class SpectrumTests(unittest.TestCase):
+    def test_positive_returned_modes_are_explicit(self):
+        report = returned_spectrum([-0.1, 0.2], count=2, shift=0)
+        self.assertTrue(report["positive_returned_mode_detected"])
+        self.assertFalse(report["spectrum_scope"]["global_stability_established"])
+
     def test_near_zero_negative_modes_do_not_claim_global_stability(self):
         report = returned_spectrum([-0.1 + 0.03j, -0.2 - 0.03j], count=2, shift=0)
         self.assertEqual(report["leading_returned_eigenvalue"], -0.1)
@@ -139,6 +147,95 @@ class RetainedStateTests(unittest.TestCase):
 
 
 class PressureRecoveryTests(unittest.TestCase):
+    def test_lsqr_column_scaling_recovers_both_pressure_scales_at_same_budget(self):
+        class Problem:
+            def __init__(self):
+                self.dofs = np.array([4., 5., 0., 0.])
+                self.B = np.diag([1e-12, 1e12])
+
+            def assemble_jacobian(self, with_residual=True):
+                residual = np.concatenate(([1., 2.] + self.B @ self.dofs[2:], [0., 0.]))
+                return residual, csr_matrix(np.block([[np.eye(2), self.B], [-self.B.T, np.zeros((2, 2))]]))
+
+            def get_current_dofs(self):
+                return self.dofs, None
+
+            def set_current_dofs(self, dofs):
+                self.dofs = dofs
+
+        problem = Problem()
+        record = recover_pressure(problem, np.array([False, False, True, True]),
+                                  tolerance=1e-12, iterations=2, method="lsqr")
+        np.testing.assert_array_equal(problem.dofs[:2], [4., 5.])
+        np.testing.assert_allclose(problem.dofs[2:], [-1e12, -2e-12], rtol=1e-12, atol=0)
+        self.assertTrue(record["converged"])
+        self.assertLessEqual(record["iterations"], 2)
+        self.assertEqual(record["iteration_limit"], 2)
+        self.assertEqual(record["tolerance"], 1e-12)
+        self.assertLess(record["max_unscaled_force_residual"], 1e-12)
+        self.assertLess(np.max(np.abs(problem.assemble_jacobian()[0])), 1e-12)
+        self.assertEqual(record["column_norm_min"], 1e-12)
+        self.assertEqual(record["column_norm_max"], 1e12)
+
+    def test_augmented_fit_preserves_unweighted_objective_for_inconsistent_forces(self):
+        class Problem:
+            def __init__(self):
+                self.B = np.array([[1e-10, 1e10], [2e-10, -1e10], [0., 1e10]])
+                self.force = np.array([2., -1., 4.])
+                self.dofs = np.zeros(5)
+
+            def assemble_jacobian(self, with_residual=True):
+                residual = np.concatenate((self.force + self.B @ self.dofs[3:], [0., 0.]))
+                tangent = csr_matrix(np.block([[np.eye(3), self.B], [-self.B.T, np.zeros((2, 2))]]))
+                return residual, tangent
+
+            def get_current_dofs(self):
+                return self.dofs, None
+
+            def set_current_dofs(self, dofs):
+                self.dofs = dofs
+
+        problem = Problem()
+        mask = np.array([False, False, False, True, True])
+        record = recover_pressure(problem, mask, tolerance=1e-12, iterations=2)
+        C = problem.B / np.linalg.norm(problem.B, axis=0)
+        expected, *_ = np.linalg.lstsq(C, -problem.force, rcond=None)
+        np.testing.assert_allclose(problem.dofs[3:] * np.linalg.norm(problem.B, axis=0), expected,
+                                   rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(problem.dofs[:3], [0., 0., 0.])
+        self.assertTrue(record["converged"])
+        self.assertGreater(record["max_unscaled_force_residual"], .1)
+        self.assertFalse(record["normal_matrix_formed"])
+        self.assertIn("not physical stationarity", record["convergence_scope"])
+
+    def test_rank_deficient_augmented_fit_does_not_change_state(self):
+        class Problem:
+            def assemble_jacobian(self, with_residual=True):
+                B = np.array([[1., 1.], [1., 1.]])
+                return np.zeros(4), csr_matrix(np.block([[np.eye(2), B], [-B.T, np.zeros((2, 2))]]))
+
+            def get_current_dofs(self):
+                raise AssertionError("a singular direct fit must not access or change the state")
+
+        with self.assertRaises(RuntimeError):
+            recover_pressure(Problem(), np.array([False, False, True, True]),
+                             tolerance=1e-12, iterations=10)
+
+    def test_zero_or_nonfinite_pressure_columns_fail_before_state_change(self):
+        class Problem:
+            def __init__(self, entry):
+                self.entry = entry
+
+            def assemble_jacobian(self, with_residual=True):
+                return np.array([1., 0.]), csr_matrix([[1., self.entry], [-self.entry, 0.]])
+
+            def get_current_dofs(self):
+                raise AssertionError("invalid pressure block must not access or change the state")
+
+        for entry in (0., np.inf, np.nan, 1e308):
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                recover_pressure(Problem(entry), np.array([False, True]), tolerance=1e-12, iterations=10)
+
     def test_missing_pressure_is_recovered_without_moving_displacement(self):
         class Problem:
             def __init__(self):
@@ -169,6 +266,57 @@ class PressureRecoveryTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "incomplete"):
             pressure_rows(Problem())
+
+
+class ConstrainedCurvatureTests(unittest.TestCase):
+    pressure = np.array([False, False, True])
+
+    @staticmethod
+    def tangent(first, second):
+        # B=[1,0]; ker(B) is the second displacement coordinate. Mixed pressure
+        # row has the opposite sign to the displacement/pressure coupling.
+        return csr_matrix([[first, 0., -1.], [0., second, 0.], [1., 0., 0.]])
+
+    def test_penalty_stabilises_only_off_constraint_negative_direction(self):
+        result = constrained_curvature_screen(self.tangent(-1., 2.), self.pressure)
+        self.assertTrue(result["sufficiency_established"])
+        self.assertTrue(all(a["passed"] for a in result["attempts"]))
+        self.assertIn("discrete", result["scope"])
+        self.assertIn("generic LU pivots are not inertia", result["limitations"])
+
+    def test_true_negative_direction_in_constraint_kernel_is_not_certified(self):
+        result = constrained_curvature_screen(self.tangent(2., -1.), self.pressure)
+        self.assertFalse(result["sufficiency_established"])
+        self.assertEqual(result["classification"], "sufficiency unestablished")
+        self.assertIn("failure does not establish physical instability or constrained negative curvature",
+                      result["limitations"])
+
+    def test_asymmetric_operator_is_rejected(self):
+        K = self.tangent(2., 2.).tolil()
+        K[0, 1] = .1
+        result = constrained_curvature_screen(K.tocsr(), self.pressure)
+        self.assertFalse(result["sufficiency_established"])
+        self.assertEqual(result["attempts"], [])
+
+    def test_row_pivoting_does_not_become_an_inertia_claim(self):
+        fake = SimpleNamespace(perm_r=np.array([1, 0]), perm_c=np.array([0, 1]))
+        with patch("scipy.sparse.linalg.splu", return_value=fake):
+            result = constrained_curvature_screen(self.tangent(2., 2.), self.pressure)
+        self.assertFalse(result["sufficiency_established"])
+        self.assertTrue(all("row pivoting" in a["reason"] for a in result["attempts"]))
+
+    def test_generic_lu_with_positive_diagonal_is_not_a_symmetric_factor(self):
+        fake = SimpleNamespace(perm_r=np.array([0, 1]), perm_c=np.array([0, 1]),
+                               L=csr_matrix(np.eye(2)), U=csr_matrix([[1., .1], [0., 1.]]))
+        with patch("scipy.sparse.linalg.splu", return_value=fake):
+            result = constrained_curvature_screen(self.tangent(2., 2.), self.pressure)
+        self.assertFalse(result["sufficiency_established"])
+        self.assertTrue(all("diag(U)L.T" in a["reason"] for a in result["attempts"]))
+
+    def test_invalid_weights_are_not_accepted(self):
+        for weights in ([], [0], [-1], [np.nan], [np.inf], [10, 10]):
+            with self.assertRaises(ValueError):
+                constrained_curvature_screen(self.tangent(2., 2.), self.pressure, weights=weights)
 
 
 if __name__ == "__main__":
