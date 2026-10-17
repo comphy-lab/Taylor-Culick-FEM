@@ -247,6 +247,77 @@ def _checked_reference(reference: dict) -> Path:
     return path.resolve()
 
 
+INTERVAL_STARTS = ("legacy", "max_step")
+STEP_POLICY_KEYS = ("max_step", "interval_start")
+
+
+def _interval_start_step(
+    policy: str, previous_target: float, interval: float, maxstep: float
+) -> float:
+    """First solver step of one output interval.
+
+    ``legacy`` restarts every interval at 1% of its length and lets the step
+    controller ramp up by at most a factor four per step. With no temporal error
+    estimator registered, that ramp is the whole step schedule (5e-4, 2e-3, 8e-3,
+    then the cap at a 0.05 cadence and a 0.01 cap). ``max_step`` starts at the cap
+    once past the cold start, when the BDF history already exists. It depends only
+    on the nominal targets, so a restarted run steps exactly as an uninterrupted
+    one.
+    """
+    if policy == "max_step" and previous_target > 0:
+        return maxstep
+    return min(maxstep, max(interval * 1e-2, 1e-6))
+
+
+def _solver_without_step_policy(solver: dict) -> dict:
+    return {key: value for key, value in solver.items() if key not in STEP_POLICY_KEYS}
+
+
+def _restart_numerics_schedule(
+    args: argparse.Namespace, metadata: dict, time: float, restart: dict
+) -> list[dict]:
+    """Check and extend the record of step-policy changes at restarts.
+
+    Only ``max_step`` and ``interval_start`` may change between a parent and its
+    restart, and only while the cap stays within one output interval, so the output
+    grid, the far-field coupling interval and every history check are unchanged.
+    """
+    parent_max_step = metadata.get("max_step")
+    parent_start = metadata.get("interval_start", "legacy")
+    if args.max_step is None or parent_max_step is None:
+        if args.max_step != parent_max_step:
+            raise ValueError("restart metadata mismatch: max_step")
+    elif args.max_step != parent_max_step and (
+        args.output_step is None or args.max_step > args.output_step * (1 + 1e-12)
+    ):
+        # A changed cap must stay within one output interval. An unchanged one is
+        # what the parent ran with (the loop clamps it to the interval anyway).
+        raise ValueError("restart max_step must not exceed the output cadence")
+    if args.fixed_step is not None and (
+        args.max_step != parent_max_step or args.interval_start != parent_start
+    ):
+        raise ValueError("fixed-step restarts cannot change the step policy")
+    schedule = metadata.get("numerics_schedule")
+    if schedule is None:
+        schedule = [
+            {"time": 0.0, "control_index": 0, "max_step": parent_max_step, "interval_start": parent_start}
+        ]
+    if not isinstance(schedule, list) or not schedule:
+        raise ValueError("restart parent numerics schedule is invalid")
+    schedule = [dict(entry) for entry in schedule]
+    if (args.max_step, args.interval_start) != (parent_max_step, parent_start):
+        index = restart["output_index"] if "output_index" in restart else restart["control_index"]
+        schedule.append(
+            {
+                "time": float(time),
+                "control_index": index,
+                "max_step": args.max_step,
+                "interval_start": args.interval_start,
+            }
+        )
+    return schedule
+
+
 def _read_restart(args: argparse.Namespace) -> dict | None:
     """Validate immutable parent evidence before creating a continuation directory."""
     if args.restart_case is None:
@@ -323,6 +394,10 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             _check_extension_not_shorter(current["far_field"], expected["far_field"])
             current["far_field"] = _without_extension(current["far_field"])
             expected["far_field"] = _without_extension(expected["far_field"])
+        if key == "solver" and isinstance(current, dict) and isinstance(expected, dict):
+            current, expected = _solver_without_step_policy(current), _solver_without_step_policy(
+                expected
+            )
         if key not in case or current != expected:
             raise ValueError(f"restart case mismatch: {key}")
     metadata = json.loads(paths["metadata"].read_text())
@@ -338,7 +413,6 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "far_resolution": args.far_resolution,
         "output_step": args.output_step,
         "field_stride": args.field_stride,
-        "max_step": args.max_step,
         "stabilization_option": args.stabilization,
         "conformation_supg_factor": args.supg_factor,
         "temporal_error": args.temporal_error,
@@ -367,6 +441,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             value, observed = _without_extension(value), _without_extension(observed)
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
+    numerics_schedule = _restart_numerics_schedule(args, metadata, restart["time"], restart)
     control_index = restart["output_index"] if legacy else restart["control_index"]
     field_index = restart["output_index"] if legacy else restart["field_index"]
     time = restart["time"]
@@ -465,6 +540,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "field_index": field_index,
         "output_index": control_index,
         "legacy": legacy,
+        "numerics_schedule": numerics_schedule,
     }
 
 
@@ -817,6 +893,21 @@ def run_case(args: argparse.Namespace) -> dict:
         "fixed_step": args.fixed_step,
         "fixed_step_semantics": "maximum-step cap after smaller BDF startup",
         "max_step": args.max_step,
+        "interval_start": args.interval_start,
+        # Written with the first case.json, so a continuation stopped before it
+        # completes still hands the full step-policy history to its own restart.
+        "numerics_schedule": (
+            restart["numerics_schedule"]
+            if restart is not None
+            else [
+                {
+                    "time": 0.0,
+                    "control_index": 0,
+                    "max_step": args.max_step,
+                    "interval_start": args.interval_start,
+                }
+            ]
+        ),
         "temporal_error": None if args.fixed_step is not None else args.temporal_error,
         "write_states": False,
         "checkpoint_policy": (
@@ -1089,6 +1180,13 @@ def run_case(args: argparse.Namespace) -> dict:
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
                 previous_target = restart["time"]
+                if args.interval_start == "max_step" and args.output_step is not None:
+                    # An uninterrupted run measures each interval from the nominal
+                    # output time, not from where the solver landed (a few 1e-8 past
+                    # it). With one step per interval that origin is the step size, so
+                    # use the same nominal grid value here: then a restart steps
+                    # exactly as an uninterrupted run. Legacy keeps its behaviour.
+                    previous_target = float(out_times[restart["control_index"] - 1])
                 out_times = out_times[out_times > restart["time"] + 1e-6]
                 worst_volume_error = float(np.max(restart["rows"][:, 6]))
                 worst_tip_pin = float(np.max(restart["rows"][:, 7]))
@@ -1108,7 +1206,9 @@ def run_case(args: argparse.Namespace) -> dict:
                     maxstep = (
                         min(args.max_step, interval) if args.max_step is not None else interval
                     )
-                    startstep = min(maxstep, max(interval * 1e-2, 1e-6))
+                    startstep = _interval_start_step(
+                        args.interval_start, previous_target, interval, maxstep
+                    )
                 if coupling is not None:
                     # Integrate over the solver's own clock, not the nominal
                     # targets, so a restart lands on the same outflow history.
@@ -1462,6 +1562,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_float,
         default=None,
         help="maximum adaptive step (default: each output interval)",
+    )
+    parser.add_argument(
+        "--interval-start",
+        choices=INTERVAL_STARTS,
+        default="legacy",
+        help=(
+            "first step of each output interval: 'legacy' re-ramps from 1%% of the "
+            "interval; 'max_step' starts at the step cap once past the cold start"
+        ),
     )
     parser.add_argument("--temporal-error", type=_positive_float, default=1e-3)
     parser.add_argument("--max-newton", type=int, default=20)

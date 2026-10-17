@@ -1006,3 +1006,199 @@ def test_small_fem_membrane_restart_may_lengthen_but_not_shorten_the_extension(t
         / "far-field.txt", ndmin=2)
     assert len(resumed) == 4 and np.all(np.isfinite(resumed))
     assert metadata["status"] == "passed"
+
+
+def test_interval_start_policy_keeps_cold_start_and_jumps_to_the_cap_afterwards():
+    from run_viscoelastic_axi import _interval_start_step
+
+    assert _interval_start_step("legacy", 3000.0, 0.05, 0.01) == pytest.approx(5e-4)
+    assert _interval_start_step("legacy", 0.0, 0.05, 0.01) == pytest.approx(5e-4)
+    assert _interval_start_step("max_step", 0.0, 0.05, 0.05) == pytest.approx(5e-4)
+    assert _interval_start_step("max_step", 0.05, 0.05, 0.05) == 0.05
+    assert _interval_start_step("max_step", 3000.0, 0.05, 0.01) == 0.01
+
+
+def test_case_maps_interval_start_with_a_legacy_default(tmp_path):
+    case = _case({"kind": "time", "value": 0.1, "allow_recoil": True})
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a")
+    assert args.interval_start == "legacy"
+    case["solver"]["interval_start"] = "max_step"
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "b")
+    assert args.interval_start == "max_step"
+    case["solver"]["interval_start"] = "adaptive"
+    with pytest.raises(SystemExit):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "c")
+
+
+def test_restart_may_raise_max_step_to_the_cadence_and_records_the_schedule(
+    tmp_path, restart_case
+):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["solver"].update(max_step=0.05, interval_start="max_step")
+    restart = _read_restart(adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n"))
+    assert restart["numerics_schedule"] == [
+        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
+        {"time": 0.1, "control_index": 2, "max_step": 0.05, "interval_start": "max_step"},
+    ]
+
+
+def test_restart_rejects_a_max_step_beyond_the_cadence(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["solver"]["max_step"] = 0.06
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n")
+    with pytest.raises(ValueError, match="must not exceed the output cadence"):
+        _read_restart(args)
+
+
+@pytest.mark.parametrize(
+    "block,change",
+    [
+        ("solver", {"max_newton": 25}),
+        ("output", {"cadence": 0.1}),
+        ("tolerances", {"temporal_error": 1e-4}),
+    ],
+)
+def test_restart_still_rejects_every_other_numerics_change(tmp_path, restart_case, block, change):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["solver"].update(max_step=0.05, interval_start="max_step")
+    case[block].update(change)
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n")
+    with pytest.raises(ValueError, match=f"restart case mismatch: {block}"):
+        _read_restart(args)
+
+
+def test_restart_with_an_unchanged_step_policy_inherits_the_schedule(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["solver"].update(max_step=0.05, interval_start="max_step")
+    # The parent itself already runs the new policy and carries its schedule.
+    input_path = Path(case["restart"]["metadata"]["path"]).parent / "input-case.json"
+    parent_case = json.loads(input_path.read_text())
+    parent_case["solver"].update(max_step=0.05, interval_start="max_step")
+    input_path.write_text(json.dumps(parent_case))
+    Path(case["restart"]["input_case"]["path"]).write_text(json.dumps(parent_case))
+    case["restart"]["input_case"] = _reference(input_path)
+    metadata_path = Path(case["restart"]["metadata"]["path"])
+    metadata = json.loads(metadata_path.read_text())
+    inherited = [
+        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
+        {"time": 0.05, "control_index": 1, "max_step": 0.05, "interval_start": "max_step"},
+    ]
+    metadata.update(max_step=0.05, interval_start="max_step", numerics_schedule=inherited)
+    metadata_path.write_text(json.dumps(metadata))
+    case["restart"]["metadata"] = _reference(metadata_path)
+    restart = _read_restart(adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n"))
+    assert restart["numerics_schedule"] == inherited
+
+
+def test_restart_keeps_accepting_an_unchanged_cap_above_the_cadence(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    case["solver"]["max_step"] = 0.1
+    input_path = Path(case["restart"]["metadata"]["path"]).parent / "input-case.json"
+    parent_case = json.loads(input_path.read_text())
+    parent_case["solver"]["max_step"] = 0.1
+    input_path.write_text(json.dumps(parent_case))
+    Path(case["restart"]["input_case"]["path"]).write_text(json.dumps(parent_case))
+    case["restart"]["input_case"] = _reference(input_path)
+    metadata_path = Path(case["restart"]["metadata"]["path"])
+    metadata = json.loads(metadata_path.read_text())
+    metadata["max_step"] = 0.1
+    metadata_path.write_text(json.dumps(metadata))
+    case["restart"]["metadata"] = _reference(metadata_path)
+    restart = _read_restart(adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n"))
+    assert restart["numerics_schedule"] == [
+        {"time": 0.0, "control_index": 0, "max_step": 0.1, "interval_start": "legacy"}
+    ]
+
+
+def test_small_fem_max_step_interval_start_restarts_exactly_and_records_a_switch(
+    tmp_path, monkeypatch
+):
+    """The new step policy gives the same history whether or not a run restarts."""
+    import run_viscoelastic_axi as driver
+
+    first_writes: dict[Path, dict] = {}
+    write_json = driver._write_json
+
+    def record_first_write(path, data):
+        first_writes.setdefault(Path(path), copy.deepcopy(data))
+        write_json(path, data)
+
+    monkeypatch.setattr(driver, "_write_json", record_first_write)
+
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["output"].update(cadence=0.02, field_stride=1, checkpoint_every=1)
+    case["solver"].update(max_step=0.02, interval_start="max_step")
+    scratch = tmp_path / "project-scratch"
+    scratch.mkdir()
+    bundle = tmp_path / "attempt-bundle"
+
+    def run(name, payload):
+        path = scratch / f"{name}.json"
+        path.write_text(json.dumps(payload))
+        return driver.run_case(adapter.case_to_driver_args(path, bundle / name))
+
+    def continuation(parent_case, parent_name, value, **solver):
+        root = bundle / parent_name / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+        output = root / "run_viscoelastic_axi"
+        rows = np.loadtxt(output / "control.txt", ndmin=2)
+        payload = copy.deepcopy(parent_case)
+        payload["completion"]["value"] = value
+        payload["solver"].update(solver)
+        payload["restart"] = {
+            **{
+                key: _reference(path)
+                for key, path in {
+                    "checkpoint": root / "checkpoints" / "ckpt_00002.dump",
+                    "input_case": scratch / f"{parent_name}.json",
+                    "metadata": root / "case.json",
+                    "control": output / "control.txt",
+                    "rim_height": output / "rim-height.txt",
+                    "pvd": output / "liquid.pvd",
+                }.items()
+            },
+            "time": float(rows[-1, 0]),
+            "control_index": 2,
+            "field_index": 2,
+        }
+        return payload
+
+    run("parent", case)
+    resumed = run("resumed", continuation(case, "parent", 0.08))
+    reference_case = copy.deepcopy(case)
+    reference_case["completion"]["value"] = 0.08
+    run("reference", reference_case)
+    suffix = Path("axi_viscoelastic_Oh_1_G_1_lambda_inf/run_viscoelastic_axi")
+    for filename in ("control.txt", "rim-height.txt"):
+        np.testing.assert_allclose(
+            np.loadtxt(bundle / "resumed" / suffix / filename),
+            np.loadtxt(bundle / "reference" / suffix / filename),
+            rtol=1e-9,
+            atol=1e-10,
+        )
+    assert resumed["interval_start"] == "max_step"
+    assert len(resumed["numerics_schedule"]) == 1
+
+    legacy = copy.deepcopy(case)
+    legacy["solver"].update(max_step=0.01, interval_start="legacy")
+    run("legacy", legacy)
+    switched = run(
+        "switched", continuation(legacy, "legacy", 0.08, max_step=0.02, interval_start="max_step")
+    )
+    assert switched["status"] == "passed"
+    assert switched["numerics_schedule"][-1]["max_step"] == 0.02
+    assert switched["numerics_schedule"][-1]["interval_start"] == "max_step"
+    # The schedule is on disk from the first write, before any step is taken.
+    early = first_writes[bundle / "switched" / "axi_viscoelastic_Oh_1_G_1_lambda_inf" / "case.json"]
+    assert early["numerics_schedule"] == switched["numerics_schedule"]
+    assert early["numerics_schedule"][0]["interval_start"] == "legacy"

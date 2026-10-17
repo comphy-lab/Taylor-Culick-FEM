@@ -118,6 +118,8 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         str(_value(solver, "max_step", "solver")),
         "--max-newton",
         str(_value(solver, "max_newton", "solver")),
+        "--interval-start",
+        str(solver.get("interval_start", "legacy")),
         "--temporal-error",
         str(_value(tolerances, "temporal_error", "tolerances")),
         "--max-volume-error",
