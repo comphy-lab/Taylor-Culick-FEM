@@ -91,6 +91,8 @@ def build_problem(settings: SegmentSettings, grids: dict, folder: Path, *, displ
     problem.volume_penalty = settings.volume_penalty
     problem.displacement_background = displacement_background
     problem.newton_solver_tolerance = settings.newton_tolerance
+    # The case's Newton limit is the default for every solve, arclength steps included.
+    problem.max_newton_iterations = settings.max_newton
     problem.set_linear_solver("superlu")
     problem.set_eigensolver("scipy")
     problem.initialise()
@@ -192,7 +194,9 @@ def run_segment(settings: SegmentSettings, state: Path | None, folder: Path, ec_
     good = (record("start"), parameter.value, step)
     r_start = rows[-1]["R"]
     status = "segment_steps"
-    for _ in range(settings.segment_steps):
+    if rows[-1]["Ec"] < ec_stop:  # a start already past the stop takes no further step
+        status = "ec_stop"
+    for _ in range(0 if status == "ec_stop" else settings.segment_steps):
         previous = parameter.value
         try:
             step = problem.arclength_continuation("log_Ec", step, max_ds=settings.max_step)

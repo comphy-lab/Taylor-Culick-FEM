@@ -141,6 +141,55 @@ class CapStiffeningTests(unittest.TestCase):
         self.assertEqual(problem.cap_stiffening_boundary(), 1.7)
 
 
+class SegmentTests(unittest.TestCase):
+    """run_segment and build_problem with the pyoomph problem replaced by stand-ins."""
+
+    def setUp(self) -> None:
+        self.case = json.loads(CASE.read_text(encoding="utf-8"))
+        self.settings = SegmentSettings.from_case(self.case)
+
+    def test_a_start_past_the_stop_takes_no_step(self) -> None:
+        from taylor_culick_fem import equilibrium_branch as branch
+
+        class Problem:
+            def arclength_continuation(self, *args, **kwargs):
+                raise AssertionError("a segment already past Ec_stop must not step")
+
+            def deformed_surface(self):
+                return np.zeros((2, 4))
+
+        class Field:
+            def save(self, path, **kwargs):
+                Path(path).write_bytes(b"")
+
+        problem, parameter = Problem(), types.SimpleNamespace(value=math.log(0.5))
+        row = {"Ec": 0.5, "R": 3.0, "H": 1.2}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(branch, "_start", lambda *args: (problem, parameter)), \
+                mock.patch.object(branch, "_point", lambda *args: dict(row)), \
+                mock.patch.object(branch.FieldMap, "from_problem", lambda p: Field()):
+            result = branch.run_segment(self.settings, None, Path(tmp) / "s000", ec_stop=0.6)
+        self.assertEqual(result["status"], "ec_stop")
+        self.assertEqual(len(result["rows"]), 1)
+
+    def test_the_case_newton_limit_is_the_problem_default(self) -> None:
+        from taylor_culick_fem import equilibrium_branch as branch
+
+        class Problem:
+            def set_output_directory(self, folder): pass
+            def get_mesh(self, name): return None
+            def set_linear_solver(self, name): pass
+            def set_eigensolver(self, name): pass
+            def initialise(self): pass
+
+        fake = types.ModuleType("taylor_culick_fem.elastocapillary_equilibrium")
+        fake.ElastocapillaryEquilibriumProblem = Problem
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(sys.modules, {"taylor_culick_fem.elastocapillary_equilibrium": fake}):
+            problem = branch.build_problem(self.settings, {}, Path(tmp))
+        self.assertEqual(problem.max_newton_iterations, self.case["solver"]["max_newton"])
+
+
 class RelaxationContractTests(unittest.TestCase):
     def test_fields_used_cover_the_segment_settings(self) -> None:
         """Every case field SegmentSettings.from_case reads is listed in the relaxation manifest."""
