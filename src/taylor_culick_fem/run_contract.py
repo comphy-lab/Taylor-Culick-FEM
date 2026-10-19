@@ -34,6 +34,36 @@ UNITS = ("nondimensional: lengths on the full sheet thickness h0, velocities on 
          "sqrt(sigma/(rho h0)), times on sqrt(rho h0^3/sigma); V_TC = sqrt(2)")
 
 
+def enforce_launcher_affinity(allowed_cpus: set[int] | None = None) -> dict[str, object]:
+    """Restore native auxiliary threads to the launcher's Linux CPU mask.
+
+    A runner can retain its mask before importing native libraries and supply it here.
+    Other platforms report an unsupported operation and retain their launcher binding.
+    """
+    if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+        return {"supported": False, "repaired_threads": 0}
+    allowed = os.sched_getaffinity(0) if allowed_cpus is None else set(allowed_cpus)
+    if not allowed:
+        raise RuntimeError("the launcher CPU mask must be non-empty")
+    task_root = Path("/proc/self/task")
+    if not task_root.is_dir():
+        return {"supported": False, "repaired_threads": 0}
+    repaired = checked = 0
+    for task in task_root.iterdir():
+        try:
+            tid = int(task.name)
+            checked += 1
+            if os.sched_getaffinity(tid) != allowed:
+                os.sched_setaffinity(tid, allowed)
+                if os.sched_getaffinity(tid) != allowed:
+                    raise RuntimeError(f"thread {tid} rejected the launcher CPU mask")
+                repaired += 1
+        except ProcessLookupError:
+            continue
+    return {"supported": True, "allowed_cpus": sorted(allowed),
+            "checked_threads": checked, "repaired_threads": repaired}
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:

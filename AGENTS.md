@@ -64,10 +64,13 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 - The planar sheet is checked first, because it is the configuration with published
   numerical solutions to compare against (`validationCases/savva-bush-planar/`); no
   axisymmetric result is believed before it.
-- Neither geometry has a true steady state: the rim collects mass and grows, a stationary
-  solve diverges and the control only *approaches* `V_TC`. Do not read an intermediate
-  plateau as a converged value, and do not compare two runs early in the transient, where
-  every run agrees regardless of mesh or domain.
+- A Newtonian sheet has no true steady state in either geometry: the rim collects mass and
+  grows, a stationary solve diverges and the control only *approaches* `V_TC`. Do not read
+  an intermediate plateau as a converged value, and do not compare two runs early in the
+  transient, where every run agrees regardless of mesh or domain. An elastic sheet with an
+  infinite relaxation time does come to rest: its arrested hole is a static equilibrium,
+  computed directly by `simulationCases/run_elastocapillary_equilibrium.py`. The first
+  stop of a dynamic run is an inertial overshoot, not that equilibrium.
 - Report verification, convergence and comparison with published data as separate tests.
   An independent group's published numerical solution of the same equations is validation
   (`validationCases/`), stated as code-to-code agreement, never as agreement with
@@ -77,8 +80,9 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 
 ## Repository rules
 
-- Layout: library code in `src/taylor_culick_fem/`; the entry point
-  `simulationCases/run_axisymmetric_viscoelastic.py` and its default case in
+- Layout: library code in `src/taylor_culick_fem/`; the entry points
+  `simulationCases/run_axisymmetric_viscoelastic.py` and
+  `simulationCases/run_elastocapillary_equilibrium.py` and their default cases in
   `simulationCases/`; each evidence folder owns its drivers, cases and reference data;
   tools acting on run outputs in `postProcess/`; tests in `testCases/`. No `docs/`, no
   second cases tree and no runner at the repository root. Library code imports no
@@ -90,14 +94,15 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
   `testCases/__init__.py` put it on `sys.path`; run the tests from the repository root
   with `python -m pytest testCases`.
 - Every case is validated by `src/taylor_culick_fem/cases.py` before any output, and the
-  validator names every problem. Keep `CASE_FIELDS_USED` and the case-schema table in
-  `simulationCases/README.md` in step with the fields the runner reads.
+  validator names every problem. Keep `CASE_FIELDS_USED`, `EQUILIBRIUM_FIELDS_USED` and the
+  case-schema tables in `simulationCases/README.md` in step with the fields the runners
+  read.
 - Every run writes `run-manifest.json` before any other output, binding the case hash, the
   component commit and the pyoomph commit, and never replaces it. Every run, fresh or
   restart, uses a new output folder; a continuation uses the same case with
   `--restart-from` and may change only the stop time and the membrane length (the
-  elastic runner), or the stop time and the output count (the Newtonian study drivers,
-  whose output count sets the step).
+  elastic runner), the stop value of `Ec` (the equilibrium runner), or the stop time and
+  the output count (the Newtonian study drivers, whose output count sets the step).
 - Live metadata (`case.json`) is replaced atomically; histories are appended.
 - Study run scripts (`run_*.sh`) carry the exact production options and take the output
   folder as their argument; `testCases/` parses each against its runner's options.

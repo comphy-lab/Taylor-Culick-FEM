@@ -6,12 +6,40 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from taylor_culick_fem.cases import case_problems
+from taylor_culick_fem import run_contract
 from taylor_culick_fem.run_contract import figure_problem, output_problems
 
 ROOT = Path(__file__).resolve().parents[1]
 PLANAR = ROOT / "validationCases" / "savva-bush-planar" / "cases" / "planar-oh1.json"
+
+
+class LauncherAffinityTests(unittest.TestCase):
+    def test_native_threads_return_to_the_mask_captured_before_imports(self) -> None:
+        masks = {101: set(range(64)), 102: set(range(64))}
+        tasks = mock.Mock()
+        tasks.is_dir.return_value = True
+        tasks.iterdir.return_value = [SimpleNamespace(name="101"), SimpleNamespace(name="102")]
+        with mock.patch.object(run_contract, "Path", return_value=tasks), \
+                mock.patch.object(run_contract.os, "sched_getaffinity", side_effect=lambda tid: masks[tid]), \
+                mock.patch.object(run_contract.os, "sched_setaffinity",
+                                  side_effect=lambda tid, cpus: masks.update({tid: set(cpus)})):
+            receipt = run_contract.enforce_launcher_affinity({14, 46})
+        self.assertEqual(masks, {101: {14, 46}, 102: {14, 46}})
+        self.assertEqual(receipt["repaired_threads"], 2)
+
+    def test_a_native_thread_that_rejects_binding_is_refused(self) -> None:
+        tasks = mock.Mock()
+        tasks.is_dir.return_value = True
+        tasks.iterdir.return_value = [SimpleNamespace(name="101")]
+        with mock.patch.object(run_contract, "Path", return_value=tasks), \
+                mock.patch.object(run_contract.os, "sched_getaffinity", return_value=set(range(64))), \
+                mock.patch.object(run_contract.os, "sched_setaffinity"):
+            with self.assertRaisesRegex(RuntimeError, "rejected the launcher CPU mask"):
+                run_contract.enforce_launcher_affinity({14, 46})
 
 
 class FigureProblemTests(unittest.TestCase):

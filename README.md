@@ -42,10 +42,10 @@ Three configurations share one formulation:
 | Path | Contents |
 |---|---|
 | `src/taylor_culick_fem/` | Library code: the problem definitions (planar, axisymmetric laboratory and co-moving, elastic axisymmetric, one-dimensional Trouton models), the independent comparison solvers, the elastic driver, the far-field membrane and absorbing layer, the case validator (`cases.py`), restart lineage (`lineage.py`) and the run-provenance helper (`provenance.py`). |
-| `simulationCases/` | The entry point `run_axisymmetric_viscoelastic.py`, its default case `axisymmetric_viscoelastic.json` and the case-schema table. |
+| `simulationCases/` | The entry points `run_axisymmetric_viscoelastic.py` (the opening hole in time) and `run_elastocapillary_equilibrium.py` (the arrested hole of the elastic sheet as a steady equilibrium), their default cases and the case-schema tables. |
 | `validationCases/<study>/` | Comparisons with independent published numerical solutions: their drivers, digitised reference data with its extraction record, and the comparison scripts. |
 | `verificationCases/<study>/` | Comparisons between independent discretisations in this repository, and solver construction checks. |
-| `modelComparisonCases/<study>/` | Comparisons between the two-dimensional solution and the one-dimensional reduced model. |
+| `modelComparisonCases/<study>/` | Comparisons with reduced models: the two-dimensional solution against the one-dimensional long-wave model, and the steady axisymmetric equilibria against the depth-averaged theory. |
 | `postProcess/` | Tools that act on run outputs: histories, analysis and animations. |
 | `testCases/` | Software tests. |
 
@@ -70,6 +70,13 @@ stabilisation. At the window's far edge the film is either held at rest, or
 coupled to a one-dimensional axisymmetric membrane with the same constitutive
 law that carries the sheet beyond the window.
 
+With `lambda = inf` an arrested hole is a static equilibrium of the
+neo-Hookean sheet with surface tension, independent of `Oh` and inertia.
+`run_elastocapillary_equilibrium.py` computes it directly: the same
+axisymmetric body in displacement form on its reference configuration, followed
+in `Ec` by arclength continuation, with the stability of each equilibrium from
+the eigenvalues of an overdamped energy flow.
+
 ## Running
 
 [uv](https://docs.astral.sh/uv/) owns the environment. Python is pinned by
@@ -85,6 +92,8 @@ uv run python simulationCases/run_axisymmetric_viscoelastic.py \
     simulationCases/axisymmetric_viscoelastic.json --out <new folder>
 uv run python simulationCases/run_axisymmetric_viscoelastic.py \
     simulationCases/axisymmetric_viscoelastic.json --out <new folder> --check
+uv run python simulationCases/run_elastocapillary_equilibrium.py \
+    simulationCases/elastocapillary_equilibrium.json --out <new folder>
 uv run python -m pytest testCases
 ```
 

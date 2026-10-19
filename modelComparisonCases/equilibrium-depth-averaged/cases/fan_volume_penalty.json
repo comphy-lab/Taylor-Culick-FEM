@@ -1,0 +1,47 @@
+{
+  "schema": "pyoomph-case-v1",
+  "case_id": "elastocapillary-equilibrium-fan-volume-penalty",
+  "description": "Fanned-column equilibrium with an opt-in consistent volume penalty for unresolved incompressibility modes.",
+  "geometry": {
+    "kind": "axisymmetric",
+    "coordinates": ["r", "z"],
+    "frame": "lagrangian"
+  },
+  "nondimensionalization": {
+    "length_scale": "h0",
+    "stress_scale": "sigma/h0",
+    "modulus": "Ec = G h0 / sigma"
+  },
+  "physics": {
+    "problem": "axisymmetric_elastocapillary_equilibrium",
+    "r0": 1.0,
+    "surface_tension": 1.0
+  },
+  "mesh": {
+    "template": "rounded-sheet-blocks",
+    "elements_per_quarter": 12,
+    "length": 30000.0,
+    "growth": 1.1,
+    "remesh_growth": 1.08,
+    "max_spacing": 300.0,
+    "columns": "fan"
+  },
+  "continuation": {
+    "Ec_start": 10.0,
+    "Ec_stop": 0.35,
+    "initial_step": -0.05,
+    "max_step": 0.1,
+    "segment_steps": 10,
+    "segment_log_radius_growth": 0.25,
+    "max_stalled_segments": 2
+  },
+  "solver": {
+    "newton_tolerance": 1e-06,
+    "max_newton": 20,
+    "eigenvalues": 6
+  },
+  "regularisation": {
+    "cap_beta": 0.001,
+    "volume_penalty": 10.0
+  }
+}
