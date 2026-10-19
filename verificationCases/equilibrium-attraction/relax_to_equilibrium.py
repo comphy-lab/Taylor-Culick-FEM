@@ -5,14 +5,15 @@
         verificationCases/equilibrium-attraction/relaxation.json \
         --ec-start 0.8 --ec-target 0.7 --t-end 60 --out <new folder>
 
-The case supplies the reference geometry, mesh and solver settings (its continuation block
-is unused). The equilibrium at ``--ec-start`` is reached by natural continuation from
+The case supplies the reference geometry, mesh and solver settings; its continuation
+values are read into the segment settings but do not drive the relaxation. The equilibrium at ``--ec-start`` is reached by natural continuation from
 ``Ec = 10`` on the reference mesh. The parameter is then switched to ``--ec-target`` and the overdamped energy
 flow ``M du/dt = -dE/du`` (the stability mass of the steady problem) is integrated with
 adaptive BDF2. The relaxed state is compared with an independent steady solve at the target,
 continued from ``Ec = 10`` on a separate problem with the same mesh.
 Starting once below and once above the target shows the equilibrium attracting from both
-sides; the late decay rate should equal minus the leading eigenvalue at the target.
+sides; the late decay rate should equal minus the leading eigenvalue at the target, which
+``summary.json`` records next to it.
 Output: ``run-manifest.json`` first, then ``relax.csv`` (t, R, H) and ``summary.json`` in
 ``--out``.
 """
@@ -43,11 +44,15 @@ from taylor_culick_fem.run_contract import (
     start_run,
 )
 
-#: The case fields this check reads.
+#: The case fields this check reads, including every field ``SegmentSettings.from_case`` reads.
 CASE_FIELDS_USED = ["schema", "case_id", "geometry.kind", "geometry.coordinates", "geometry.frame",
                     "physics.problem", "physics.r0", "physics.surface_tension",
-                    "mesh.elements_per_quarter", "mesh.length", "mesh.growth", "mesh.max_spacing",
-                    "solver.newton_tolerance", "solver.max_newton", "regularisation.cap_beta"]
+                    "mesh.elements_per_quarter", "mesh.length", "mesh.growth", "mesh.remesh_growth",
+                    "mesh.max_spacing", "mesh.columns", "mesh.shoulder_angle", "mesh.blend",
+                    "solver.newton_tolerance", "solver.max_newton", "solver.eigenvalues",
+                    "continuation.Ec_start", "continuation.initial_step", "continuation.max_step",
+                    "continuation.segment_steps", "continuation.segment_log_radius_growth",
+                    "regularisation.cap_beta", "regularisation.volume_penalty"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     set_enabled(False)
     from taylor_culick_fem.equilibrium_branch import SegmentSettings, build_problem
+    from taylor_culick_fem.equilibrium_stability import returned_spectrum
 
     out = args.out.resolve()
     start_run(out, root=ROOT, runner=Path(__file__), argv=raw, case_path=case_path, case=case,
@@ -95,6 +101,9 @@ def main(argv: list[str] | None = None) -> int:
 
     reference, _ = continued(out / "pyoomph-steady", args.ec_target)
     steady = (reference.hole_radius(), reference.rim_height())
+    eigenvalues, _ = reference.solve_eigenproblem(settings.eigenvalues, shift=0)
+    leading = returned_spectrum(eigenvalues, count=settings.eigenvalues,
+                                shift=0)["leading_returned_eigenvalue"]
     problem, parameter = continued(out / "pyoomph", args.ec_start)
     start = (problem.hole_radius(), problem.rim_height())
     parameter.value = math.log(args.ec_target)
@@ -115,7 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         stream.writelines(",".join(f"{v:.10g}" for v in row) + "\n" for row in rows)
     summary = {"Ec_start": args.ec_start, "Ec_target": args.ec_target, "R_start": start[0],
                "H_start": start[1], "R_relaxed": relaxed[0], "H_relaxed": relaxed[1],
-               "R_steady": steady[0], "H_steady": steady[1], "late_decay_rate": rate}
+               "R_steady": steady[0], "H_steady": steady[1], "late_decay_rate": rate,
+               "leading_returned_eigenvalue_target": leading}
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     append_progress(out, "completed", primary_observable=relaxed[0])
     print(json.dumps(summary, indent=2))

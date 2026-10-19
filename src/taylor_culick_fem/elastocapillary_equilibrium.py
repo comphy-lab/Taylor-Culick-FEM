@@ -308,8 +308,9 @@ class ElastocapillaryEquilibriumProblem(Problem):
         self.quadratic_grids = False
         # Numerical regularisation of the crushed edge cap: Mooney-Rivlin weight beta inside
         # reference radius cap_stiffening_radius (smooth step of width cap_stiffening_width).
+        # None places the step where the rounded cap ends, at r0 + HALF_THICKNESS.
         self.cap_stiffening = 0.0
-        self.cap_stiffening_radius = 1.5
+        self.cap_stiffening_radius: float | None = None
         self.cap_stiffening_width = 0.05
         self.volume_penalty = 0.0
         self.far_edge = "robin"
@@ -317,6 +318,12 @@ class ElastocapillaryEquilibriumProblem(Problem):
         self.surface_tension = 1.0
         self.with_stability_mass = True
         self.displacement_background = False
+
+    def cap_stiffening_boundary(self) -> float:
+        """Reference radius of the cap stiffening step: the configured value, else the cap end."""
+        if self.cap_stiffening_radius is not None:
+            return float(self.cap_stiffening_radius)
+        return self.r0 + HALF_THICKNESS
 
     def define_problem(self):
         if self.far_edge not in ("robin", "clamped"):
@@ -336,7 +343,7 @@ class ElastocapillaryEquilibriumProblem(Problem):
         if self.cap_stiffening > 0:
             # A global parameter, so a run can ramp it; the value set here is the initial one.
             beta = self.define_global_parameter(cap_beta=self.cap_stiffening)
-            step = (var("coordinate_x") - self.cap_stiffening_radius) / self.cap_stiffening_width
+            step = (var("coordinate_x") - self.cap_stiffening_boundary()) / self.cap_stiffening_width
             stiffening = beta / (1 + exp(step))
         eqs = NeoHookeanDisplacementEquations(modulus, displacement_space="C2TB" if self.triangles else "C2",
                                               pressure_space=self.pressure_space, damping=damping,

@@ -13,9 +13,12 @@ import io
 import json
 import math
 import os
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -120,6 +123,53 @@ class EquilibriumCaseTests(unittest.TestCase):
         self.assertIn("regularisation.cap_beta", EQUILIBRIUM_FIELDS_USED)
         self.assertIn("regularisation.volume_penalty", EQUILIBRIUM_FIELDS_USED)
         self.assertEqual(settings.volume_penalty, 0.0)
+
+
+RELAX = ROOT / "verificationCases" / "equilibrium-attraction" / "relax_to_equilibrium.py"
+
+
+@unittest.skipUnless(importlib.util.find_spec("pyoomph") is not None, "needs the pinned pyoomph environment")
+class CapStiffeningTests(unittest.TestCase):
+    def test_boundary_defaults_to_the_cap_end(self) -> None:
+        from taylor_culick_fem.elastocapillary_equilibrium import ElastocapillaryEquilibriumProblem
+
+        problem = ElastocapillaryEquilibriumProblem()
+        self.assertEqual(problem.cap_stiffening_boundary(), problem.r0 + HALF_THICKNESS)
+        problem.r0 = 2.0
+        self.assertEqual(problem.cap_stiffening_boundary(), 2.0 + HALF_THICKNESS)
+        problem.cap_stiffening_radius = 1.7
+        self.assertEqual(problem.cap_stiffening_boundary(), 1.7)
+
+
+class RelaxationContractTests(unittest.TestCase):
+    def test_fields_used_cover_the_segment_settings(self) -> None:
+        """Every case field SegmentSettings.from_case reads is listed in the relaxation manifest."""
+        spec = importlib.util.spec_from_file_location("relax_to_equilibrium", RELAX)
+        relax = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(relax)
+        read: set[str] = set()
+
+        class Recorder(dict):
+            def __init__(self, data: dict, prefix: str) -> None:
+                super().__init__(data)
+                self.prefix = prefix
+
+            def _seen(self, key, value):
+                path = f"{self.prefix}{key}"
+                read.add(path)
+                return Recorder(value, path + ".") if isinstance(value, dict) else value
+
+            def __getitem__(self, key):
+                return self._seen(key, super().__getitem__(key))
+
+            def get(self, key, default=None):
+                return self._seen(key, super().get(key, default))
+
+        case = json.loads((RELAX.parent / "relaxation.json").read_text(encoding="utf-8"))
+        SegmentSettings.from_case(Recorder(case, ""))
+        leaves = {path for path in read if not any(other.startswith(path + ".") for other in read)}
+        self.assertTrue(leaves)
+        self.assertEqual(sorted(leaves - set(relax.CASE_FIELDS_USED)), [])
 
 
 class ReferenceGeometryTests(unittest.TestCase):
@@ -260,6 +310,44 @@ class EquilibriumRunnerTests(unittest.TestCase):
             self.assertIn("segments/sNNN/state.npz",
                           self.refused(str(CASE), "--out", str(out), "--restart-from", str(stray)))
             self.assertFalse(out.exists())
+
+    def test_reversed_segments_stall(self) -> None:
+        """Repeated two-row reversed segments above Ec_stop stop as stalled, not forever."""
+        case = json.loads(CASE.read_text(encoding="utf-8"))
+        limit = int(case["continuation"]["max_stalled_segments"])
+        ec = 2.0 * float(case["continuation"]["Ec_stop"])
+        calls: list[Path] = []
+
+        def row(tag: str) -> dict:
+            return {"Ec": ec, "R": 2.0, "H": 1.2, "A": 0.0, "leading_eigenvalue": -1.0,
+                    "J_err": 0.0, "ndof": 10, "cap_beta": 0.0, "tag": tag}
+
+        def reversed_segment(settings, state, folder, ec_stop):
+            calls.append(folder)
+            if len(calls) > limit + 2:
+                raise AssertionError("the runner kept continuing after reversed segments")
+            return {"rows": [row("start"), row("dlog=+0.01000")], "status": "parameter_reversed",
+                    "state": folder / "state.npz"}
+
+        def fake_start_run(out, **kwargs):
+            out.mkdir(parents=True)
+            return "0" * 40
+
+        jit = types.ModuleType("pyoomph.generic.jit_cache")
+        jit.set_enabled = lambda enabled: None
+        fake = {"pyoomph": types.ModuleType("pyoomph"), "pyoomph.generic": types.ModuleType("pyoomph.generic"),
+                "pyoomph.generic.jit_cache": jit}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(sys.modules, fake), \
+                mock.patch("taylor_culick_fem.equilibrium_branch.run_segment", reversed_segment), \
+                mock.patch.object(self.runner, "start_run", fake_start_run), \
+                mock.patch.object(self.runner, "enforce_launcher_affinity", lambda cpus: None):
+            out = Path(tmp) / "out"
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                self.assertEqual(self.runner.main([str(CASE), "--out", str(out)]), 1)
+            self.assertEqual(len(calls), limit)
+            self.assertEqual(json.loads(printed.getvalue())["status"], "stalled")
+            self.assertEqual(json.loads((out / "case.json").read_text())["status"], "stalled")
 
 
 @unittest.skipUnless(os.environ.get("EQUILIBRIUM_SOLVER_TESTS") == "1"

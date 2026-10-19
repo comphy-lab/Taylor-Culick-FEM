@@ -138,7 +138,10 @@ def main(argv: list[str] | None = None) -> int:
                 last = rows[-1]
                 append_progress(out, "segment", segment=segment, status=result["status"],
                                 Ec=last["Ec"], R=last["R"], H=last["H"])
-                stalled = stalled + 1 if len(rows) <= 1 else 0
+                # A reversed segment saves a direction towards larger Ec, so the next one
+                # reverses again: count it, like a single-row segment, as no progress.
+                no_progress = len(rows) <= 1 or result["status"] == "parameter_reversed"
+                stalled = stalled + 1 if no_progress else 0
                 state = result["state"]
             if last and last["Ec"] < ec_stop:
                 status = "passed"

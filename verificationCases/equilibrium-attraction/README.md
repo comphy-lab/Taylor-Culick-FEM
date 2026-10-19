@@ -15,7 +15,7 @@ perturbations are outside its scope.
 
 | File | Role |
 |---|---|
-| `relax_to_equilibrium.py` | Relaxes the equilibrium at `--ec-start` under the flow at `--ec-target`; writes `run-manifest.json`, `relax.csv` and `summary.json`. |
+| `relax_to_equilibrium.py` | Relaxes the equilibrium at `--ec-start` under the flow at `--ec-target`; writes `run-manifest.json`, `relax.csv` and `summary.json`, which records the late decay rate next to the leading returned eigenvalue of the steady state at the target. |
 | `relaxation.json` | Case supplying the reference geometry, a coarse mesh and the solver settings. |
 
 ```bash
