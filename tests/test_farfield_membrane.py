@@ -105,3 +105,55 @@ def test_extending_needs_a_longer_domain() -> None:
         membrane.extended(outer=membrane.outer, node_spacing=0.5)
     with pytest.raises(ValueError, match="spacing"):
         membrane.extended(outer=membrane.outer + 10, node_spacing=0.0)
+
+
+def _advance_with_solve_ivp(membrane: FarFieldMembrane, t1: float, inner1: float,
+                            drive0: float, drive1: float) -> None:
+    """The advance as it was before it held the BDF solver itself."""
+
+    from scipy.integrate import solve_ivp
+
+    dt = t1 - membrane.time
+    y0 = np.concatenate([membrane.u, membrane.h, membrane.Y])
+    y0[0] = drive0
+    sol = solve_ivp(
+        membrane._rhs, (membrane.time, t1), y0, method="BDF",
+        args=(membrane.time, membrane.inner, inner1, drive0, drive1, dt),
+        jac_sparsity=membrane._sparsity, rtol=membrane.rtol, atol=membrane.atol,
+    )
+    assert sol.success
+    n = len(membrane.xi)
+    yend = sol.y[:, -1]
+    membrane.u, membrane.h, membrane.Y = yend[:n].copy(), yend[n:2 * n].copy(), yend[2 * n:].copy()
+    membrane.u[0], membrane.u[-1] = drive1, 0.0
+    membrane.time, membrane.inner = float(t1), float(inner1)
+
+
+def test_advance_takes_the_same_steps_as_solve_ivp() -> None:
+    held, reference = _membrane(), _membrane()
+    for step in range(5):
+        t1, inner1 = 0.25 * (step + 1), 50.0 - 0.01 * (step + 1)
+        drive0, drive1 = 0.02 * step, 0.02 * (step + 1)
+        held.advance(t1, inner1, drive0, drive1)
+        _advance_with_solve_ivp(reference, t1, inner1, drive0, drive1)
+        for field in ("u", "h", "Y"):
+            assert np.array_equal(getattr(held, field), getattr(reference, field))
+    assert np.max(np.abs(held.u)) > 1e-3  # the comparison saw a driven film
+
+
+def test_advance_leaves_no_garbage_cycle() -> None:
+    # The solver's Jacobian and LU must go when the advance returns, not wait for a
+    # full garbage collection: a long membrane would otherwise pile up memory.
+    import gc
+
+    membrane = _membrane()
+    membrane.advance(0.25, 50.0, 0.0, 0.02)
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        gc.collect()
+        membrane.advance(0.5, 50.0, 0.02, 0.04)
+        assert gc.collect() == 0
+    finally:
+        if enabled:
+            gc.enable()

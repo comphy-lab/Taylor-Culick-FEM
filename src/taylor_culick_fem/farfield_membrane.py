@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import BDF
 from scipy.sparse import bmat, diags
 
 
@@ -207,15 +207,21 @@ class FarFieldMembrane:
             raise ValueError("far-field inner end reached the outer end")
         y0 = np.concatenate([self.u, self.h, self.Y])
         y0[0] = drive0
-        sol = solve_ivp(
-            self._rhs, (self.time, t1), y0, method="BDF",
-            args=(self.time, self.inner, inner1, drive0, drive1, dt),
-            jac_sparsity=self._sparsity, rtol=self.rtol, atol=self.atol,
-        )
-        if not sol.success:
-            raise RuntimeError(f"far-field membrane failed: {sol.message}")
+        args = (self.time, self.inner, inner1, drive0, drive1, dt)
+        # The same steps solve_ivp(method="BDF") takes, with the solver held here: its
+        # closures refer back to it, so once it outlives a few garbage collections its
+        # Jacobian and LU are freed only by a full collection, and on a long membrane
+        # that garbage grows by tens of MB per interval. Clearing it frees them now.
+        solver = BDF(lambda t, y: self._rhs(t, y, *args), self.time, y0, t1,
+                     jac_sparsity=self._sparsity, rtol=self.rtol, atol=self.atol)
+        message = None
+        while solver.status == "running":
+            message = solver.step()
+        if solver.status != "finished":
+            raise RuntimeError(f"far-field membrane failed: {message}")
+        yend = solver.y.copy()
+        solver.__dict__.clear()
         n = len(self.xi)
-        yend = sol.y[:, -1]
         self.u, self.h, self.Y = yend[:n].copy(), yend[n:2 * n].copy(), yend[2 * n:].copy()
         self.u[0], self.u[-1] = drive1, 0.0
         self.time, self.inner = float(t1), float(inner1)
