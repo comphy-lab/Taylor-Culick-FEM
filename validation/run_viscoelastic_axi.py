@@ -48,6 +48,28 @@ def _nonnegative_float(text: str) -> float:
     return value
 
 
+def _error_fields(text: str) -> dict[str, float]:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"temporal error fields must be JSON: {exc}") from exc
+    if not isinstance(value, dict) or not value:
+        raise argparse.ArgumentTypeError("temporal error fields must be a non-empty JSON object")
+    fields = {}
+    for name, weight in value.items():
+        if not isinstance(name, str) or isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            raise argparse.ArgumentTypeError("temporal error fields map names to numbers")
+        if not math.isfinite(weight) or weight <= 0:
+            raise argparse.ArgumentTypeError(f"temporal error weight for {name!r} must be positive")
+        fields[name] = float(weight)
+    global_weights = {name: fields[name] for name in ("X", "U") if name in fields}
+    if global_weights and (len(global_weights) != 2 or global_weights["X"] != global_weights["U"]):
+        # pyoomph builds without upstream 42ca8a90 (comphy-lab/pyoomph#24) weight every global
+        # unknown with the first one's factor, so only equal X and U weights mean what they say.
+        raise argparse.ArgumentTypeError("weight the globals X and U together, with equal weights")
+    return fields
+
+
 def _relaxation_time(text: str) -> float:
     if text.strip().lower() in {"inf", "+inf", "infinity", "+infinity"}:
         return math.inf
@@ -98,6 +120,8 @@ def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | N
 
 # Largest |u| tolerated in the outer tenth of the membrane extension.
 FAR_FIELD_OUTER_TOLERANCE = 1e-6
+# The end-of-run check watches the membrane's outer tenth (plus the node just inside it).
+END_CHECK_FRACTION = 0.1
 FAR_FIELD_HEADER = [
     "t", "drive", "u_edge", "h_edge", "log_c_rr", "log_c_zz", "log_c_th", "outflow",
     "outer_velocity",
@@ -112,6 +136,10 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
         "inner_fraction": getattr(args, "far_field_inner_fraction", None),
         "extension": getattr(args, "far_field_extension", None),
         "node_spacing": getattr(args, "far_field_node_spacing", None),
+        "interpolation": getattr(args, "far_field_interpolation", None),
+        "grading": getattr(args, "far_field_grading", None),
+        "auto_extend": getattr(args, "far_field_auto_extend", None),
+        "history": getattr(args, "far_field_history", None),
     }
     if mode == "rest":
         if any(value is not None for value in tuning.values()):
@@ -131,24 +159,95 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("far-field inner fraction must lie strictly inside the window")
     if not config["extension"] > 0 or not config["node_spacing"] > 0:
         raise ValueError("far-field extension and node spacing must be positive")
+    if tuning["interpolation"] is not None:
+        # Only an explicit choice enters the config, so earlier runs keep their identity.
+        if tuning["interpolation"] not in ("hold", "linear"):
+            raise ValueError("far-field interpolation must be 'hold' or 'linear'")
+        config["interpolation"] = tuning["interpolation"]
+    if tuning["history"] is not None:
+        if tuning["history"] not in ("overwrite", "keep"):
+            raise ValueError("far-field history must be 'overwrite' or 'keep'")
+        config["history"] = tuning["history"]
+    if tuning["grading"] is not None:
+        grading = tuning["grading"]
+        if set(grading) != {"near_length", "growth"}:
+            raise ValueError("far-field grading takes exactly near_length and growth")
+        if not grading["near_length"] >= 0 or not grading["growth"] > 1:
+            raise ValueError("far-field grading needs near_length >= 0 and growth > 1")
+        config["grading"] = {k: float(v) for k, v in sorted(grading.items())}
+    if tuning["auto_extend"] is not None:
+        auto = tuning["auto_extend"]
+        if set(auto) != {"tail_fraction", "factor"}:
+            raise ValueError("far-field auto_extend takes exactly tail_fraction and factor")
+        if not END_CHECK_FRACTION < auto["tail_fraction"] < 1 or not auto["factor"] > 1:
+            # Above the end-of-run check's outer tenth, so the membrane grows first.
+            raise ValueError("far-field auto_extend needs 0.1 < tail_fraction < 1 and factor > 1")
+        config["auto_extend"] = {k: float(v) for k, v in sorted(auto.items())}
     return config
 
 
 def _without_extension(config: object) -> object:
-    """Far-field config minus the membrane length, which a restart may grow."""
+    """Far-field config minus what a restart may change: the membrane length, which it
+    may only grow, and the edge interpolation and history, numerics choices."""
 
     if isinstance(config, dict) and config.get("mode") == "membrane":
-        return {key: value for key, value in config.items() if key != "extension"}
+        return {
+            key: value for key, value in config.items()
+            if key not in ("extension", "interpolation", "history", "grading", "auto_extend")
+        }
     return config
 
 
 def _check_extension_not_shorter(current: object, parent: object) -> None:
-    if (
+    """A restart may lengthen the membrane but never shorten it, and may change its
+    grading only together with a longer extension (the checkpoint keeps its grid; only
+    the added length takes the new layout). Grading is never removed."""
+    if not (
         isinstance(current, dict) and isinstance(parent, dict)
         and current.get("mode") == parent.get("mode") == "membrane"
-        and current["extension"] < parent["extension"]
     ):
+        return
+    if current["extension"] < parent["extension"]:
         raise ValueError("restart may lengthen but never shorten the far-field extension")
+    if current.get("grading") != parent.get("grading"):
+        if current.get("grading") is None:
+            raise ValueError("restart cannot remove the far-field membrane grading")
+        if not current["extension"] > parent["extension"]:
+            raise ValueError(
+                "restart may change the far-field grading only together with a longer extension"
+            )
+
+
+def _check_grading_change_is_applied(args: argparse.Namespace, metadata: dict, far_state: Path) -> None:
+    """A grading change takes effect only on membrane added beyond the checkpoint's end,
+    which automatic extension may already have moved past the configured extension."""
+
+    current, parent = _far_field_config(args), metadata.get("far_field")
+    if not isinstance(parent, dict) or current.get("grading") == parent.get("grading"):
+        return
+    with np.load(far_state) as data:
+        effective_outer = float(data["outer"])
+    requested_outer = args.r0 + args.length + current["extension"]
+    if not requested_outer > effective_outer + 1e-9:
+        raise ValueError(
+            f"restart grading change needs a membrane longer than the checkpoint's, which "
+            f"already reaches r={effective_outer:g} (requested r={requested_outer:g})"
+        )
+
+
+def _monitored_tail(membrane, fraction: float) -> np.ndarray:
+    """Nodes in the membrane's outer ``fraction``, plus the node just inside it.
+
+    The bracketing node keeps the sample meaningful on a coarse graded grid, where the
+    outer fraction can hold only the end node, whose velocity is pinned to zero.
+    """
+
+    radii = membrane.radii()
+    threshold = membrane.outer - fraction * (membrane.outer - membrane.inner)
+    tail = radii >= threshold
+    first = int(np.argmax(tail)) if tail.any() else len(radii) - 1
+    tail[max(first - 1, 0):] = True
+    return tail
 
 
 class MembraneCoupling:
@@ -172,6 +271,15 @@ class MembraneCoupling:
         self.previous: tuple[float, float] | None = None
         self.outflow = 0.0
         self.outer_velocity = 0.0
+        # Edge state applied at the end of the last interval: the start state of the
+        # next one under linear interpolation (saved only then).
+        self.last_edge = None
+        self.interpolation = "hold"
+        # Optional growth of the membrane ahead of the pulse: {"tail_fraction", "factor"}
+        # plus the layout used to rebuild it ({"spacing"} and, if graded, the grading).
+        self.auto_extend: dict | None = None
+        self.layout: dict = {}
+        self.extensions: list[dict] = []
 
     def before_interval(self, time: float, target: float, radius: float, speed: float,
                         drive: float):
@@ -183,31 +291,92 @@ class MembraneCoupling:
             drive_end = drive + slope * interval
         self.previous = (time, drive)
         predicted = radius + speed * interval
+        self._extend_if_reached(time, predicted + self.length)
         self.membrane.advance(
             target, predicted + self.inner_fraction * self.length, drive, drive_end
         )
-        tail = self.membrane.radii() >= self.membrane.outer - 0.1 * (
-            self.membrane.outer - self.membrane.inner
-        )
+        tail = _monitored_tail(self.membrane, END_CHECK_FRACTION)
         self.outer_velocity = max(self.outer_velocity, float(np.max(np.abs(self.membrane.u[tail]))))
         return self.membrane.state_at(predicted + self.length)
 
+    def lengthened(self, outer: float):
+        """The membrane on a longer domain, keeping the run's grid layout."""
+
+        grading = self.layout.get("grading")
+        if grading is not None:
+            return self.membrane.extended_graded(
+                outer, self.layout["spacing"], grading["near_length"], grading["growth"]
+            )
+        return self.membrane.extended(outer, self.layout["spacing"])
+
+    def _extend_if_reached(self, time: float, edge_radius: float) -> None:
+        """Lengthen the membrane before its end matters.
+
+        It grows by ``factor`` when the pulse shows in its outer ``tail_fraction``, and
+        repeatedly while the window edge at the end of the coming interval would lie in
+        that tail. ``tail_fraction`` exceeds the end-of-run check's outer tenth, so this
+        acts before that check can fail; a failure already recorded is kept.
+        """
+
+        if self.auto_extend is None:
+            return
+        membrane = self.membrane
+        fraction, factor = self.auto_extend["tail_fraction"], self.auto_extend["factor"]
+        span = membrane.outer - membrane.inner
+        tail = _monitored_tail(membrane, fraction)
+        end_check = int(_monitored_tail(membrane, END_CHECK_FRACTION).sum())
+        if tail.sum() <= end_check:
+            # On a grid this coarse the two regions hold the same nodes; watch one more, so
+            # the membrane grows before the end-of-run check can see the pulse.
+            tail[-(end_check + 1):] = True
+        reach = float(np.max(np.abs(membrane.u[tail])))
+        crowded = edge_radius >= membrane.outer - fraction * span
+        if reach <= FAR_FIELD_OUTER_TOLERANCE and not crowded:
+            return
+        outer = membrane.inner + factor * span
+        while edge_radius >= outer - fraction * (outer - membrane.inner):
+            outer = membrane.inner + factor * (outer - membrane.inner)
+        self.membrane = self.lengthened(outer)
+        self.extensions.append({
+            "time": float(time), "from_outer": float(membrane.outer), "to_outer": float(outer),
+            "tail_velocity": reach, "window_edge": float(edge_radius),
+            "reason": "pulse" if reach > FAR_FIELD_OUTER_TOLERANCE else "window",
+            "nodes": int(len(self.membrane.xi)),
+        })
+        # outer_velocity is not reset: a failure of the end-of-run check already
+        # recorded stands, and one still below tolerance stays below it.
+
     def after_interval(self, edge, time_end: float, outer_start: float, outer_end: float,
-                       speed_start: float, speed_end: float, interval: float) -> None:
+                       speed_start: float, speed_end: float, interval: float,
+                       edge_start=None) -> None:
+        """Advance the outflow integral by the trapezoid rule over the interval.
+
+        Under hold the edge carries ``edge`` for the whole interval; under linear
+        interpolation it moves from ``edge_start`` to ``edge``, so each end of the
+        trapezoid uses the edge state applied at that end.
+        """
         h, u = edge.thickness, edge.velocity
+        h0, u0 = (h, u) if edge_start is None else (edge_start.thickness, edge_start.velocity)
         # The 2D solver lands a hair past its target; carry the membrane clock
         # with it so the next interval, and any restart, starts from one time.
         self.membrane.time = time_end
         self.outflow += 0.5 * interval * (
-            outer_start * (h * u - (h - 1.0) * speed_start)
+            outer_start * (h0 * u0 - (h0 - 1.0) * speed_start)
             + outer_end * (h * u - (h - 1.0) * speed_end)
         )
 
     def save(self, path: Path) -> None:
         previous = np.array(self.previous if self.previous is not None else (np.nan, np.nan))
         with path.open("xb") as stream:
+            extra = {}
+            if self.interpolation == "linear" and self.last_edge is not None:
+                extra["last_edge"] = np.array(
+                    [self.last_edge.velocity, self.last_edge.thickness,
+                     self.last_edge.stretch_r, self.last_edge.stretch_theta]
+                )
             np.savez(stream, **self.membrane.to_arrays(), previous=previous,
-                     outflow=np.array(self.outflow), outer_velocity=np.array(self.outer_velocity))
+                     outflow=np.array(self.outflow), outer_velocity=np.array(self.outer_velocity),
+                     **extra)
 
     def load(self, path: Path) -> None:
         from taylor_culick_fem.farfield_membrane import FarFieldMembrane
@@ -218,6 +387,10 @@ class MembraneCoupling:
             self.previous = None if np.isnan(previous).any() else (float(previous[0]), float(previous[1]))
             self.outflow = float(data["outflow"])
             self.outer_velocity = float(data["outer_velocity"])
+            if "last_edge" in data.files:
+                from taylor_culick_fem.farfield_membrane import EdgeState
+
+                self.last_edge = EdgeState(*(float(v) for v in data["last_edge"]))
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -247,12 +420,18 @@ def _checked_reference(reference: dict) -> Path:
     return path.resolve()
 
 
-INTERVAL_STARTS = ("legacy", "max_step")
-STEP_POLICY_KEYS = ("max_step", "interval_start")
+INTERVAL_STARTS = ("legacy", "max_step", "carry")
+STEP_POLICY_KEYS = ("max_step", "interval_start", "temporal_error_fields", "newton_floor_max_dt")
+# Numerics a continuation may change, each change recorded in the numerics schedule.
+SCHEDULE_KEYS = (
+    "max_step", "interval_start", "output_step", "temporal_error", "temporal_error_fields",
+    "far_field_interpolation", "far_field_history", "newton_floor_max_dt",
+)
 
 
 def _interval_start_step(
-    policy: str, previous_target: float, interval: float, maxstep: float
+    policy: str, previous_target: float, interval: float, maxstep: float,
+    carried: float | None = None,
 ) -> float:
     """First solver step of one output interval.
 
@@ -262,10 +441,14 @@ def _interval_start_step(
     then the cap at a 0.05 cadence and a 0.01 cap). ``max_step`` starts at the cap
     once past the cold start, when the BDF history already exists. It depends only
     on the nominal targets, so a restarted run steps exactly as an uninterrupted
-    one.
+    one. ``carry`` starts at the step the error controller reached in the previous
+    interval, so an adaptive step is not reset at every output; with no estimator
+    registered it behaves like ``max_step``.
     """
     if policy == "max_step" and previous_target > 0:
         return maxstep
+    if policy == "carry" and carried is not None and carried > 0:
+        return min(maxstep, carried)
     return min(maxstep, max(interval * 1e-2, 1e-6))
 
 
@@ -305,17 +488,176 @@ def _restart_numerics_schedule(
     if not isinstance(schedule, list) or not schedule:
         raise ValueError("restart parent numerics schedule is invalid")
     schedule = [dict(entry) for entry in schedule]
-    if (args.max_step, args.interval_start) != (parent_max_step, parent_start):
+    parent = _schedule_values_from_metadata(metadata)
+    child = _schedule_values_from_args(args)
+    if args.output_step is None or not args.output_step > 0:
+        raise ValueError("restart requires a fixed output cadence")
+    if args.fixed_step is not None and child != parent:
+        raise ValueError("fixed-step restarts cannot change the numerics")
+    if child != parent:
         index = restart["output_index"] if "output_index" in restart else restart["control_index"]
-        schedule.append(
-            {
-                "time": float(time),
-                "control_index": index,
-                "max_step": args.max_step,
-                "interval_start": args.interval_start,
-            }
-        )
+        schedule.append({"time": float(time), "control_index": index, **child})
     return schedule
+
+
+def _schedule_values_from_metadata(metadata: dict) -> dict:
+    """The parent's numerics, with the defaults that predate each schedule key."""
+
+    far_field = metadata.get("far_field") or {}
+    return {
+        "max_step": metadata.get("max_step"),
+        "interval_start": metadata.get("interval_start", "legacy"),
+        "output_step": metadata.get("output_step"),
+        "temporal_error": metadata.get("temporal_error"),
+        "temporal_error_fields": metadata.get("temporal_error_fields"),
+        "far_field_interpolation": (
+            far_field.get("interpolation", "hold") if isinstance(far_field, dict) else "hold"
+        ),
+        "far_field_history": (
+            far_field.get("history", "overwrite") if isinstance(far_field, dict) else "overwrite"
+        ),
+        "newton_floor_max_dt": metadata.get("newton_floor_max_dt"),
+    }
+
+
+def _schedule_values_from_args(args: argparse.Namespace) -> dict:
+    far_field = _far_field_config(args)
+    return {
+        "max_step": args.max_step,
+        "interval_start": args.interval_start,
+        "output_step": args.output_step,
+        "temporal_error": None if args.fixed_step is not None else args.temporal_error,
+        "temporal_error_fields": args.temporal_error_fields,
+        "far_field_interpolation": far_field.get("interpolation", "hold"),
+        "far_field_history": far_field.get("history", "overwrite"),
+        "newton_floor_max_dt": args.newton_floor_max_dt,
+    }
+
+
+def _schedule_row_step(schedule: list[dict], metadata: dict) -> float:
+    """The parent's cadence at its restart row: its own recorded ``output_step``."""
+
+    step = metadata.get("output_step")
+    if step is None:
+        raise ValueError("restart requires a fixed output cadence")
+    return float(step)
+
+
+def _segment_steps(schedule: list[dict], last_step: float | None) -> list[float]:
+    """The output cadence of each recorded schedule segment.
+
+    Entries written before the cadence could change carry no ``output_step``. A segment
+    followed by another takes its cadence from the two boundaries (their time and control
+    index differences), which is exact for the uniform grid it ran on; the last such
+    segment inherits the previous segment's cadence, or the run's recorded
+    ``output_step`` when it is the only one. This keeps a first segment correct after a
+    restart has changed the cadence (the parent's ``output_step`` is then the new one).
+    """
+
+    steps: list[float] = []
+    for k, entry in enumerate(schedule):
+        step = entry.get("output_step")
+        if step is None and k + 1 < len(schedule):
+            following = schedule[k + 1]
+            rows = int(following["control_index"]) - int(entry["control_index"])
+            if rows > 0:
+                step = (float(following["time"]) - float(entry["time"])) / rows
+        if step is None:
+            step = steps[-1] if steps else last_step
+        if step is None:
+            raise ValueError("restart requires a fixed output cadence")
+        steps.append(float(step))
+    return steps
+
+
+def _schedule_row_times(schedule: list[dict], last_step: float | None, count: int) -> np.ndarray:
+    """Nominal control-row times 1..count under the recorded cadence segments."""
+
+    return _schedule_rows(schedule, last_step, count)[0]
+
+
+# pyoomph ends an output interval with a step of 1.00001 times the time remaining, so a
+# row lands up to 1e-5 of its final step (at most the cadence) past its nominal time.
+LANDING_ABS_TOLERANCE = 1e-6
+LANDING_REL_TOLERANCE = 2e-5
+
+
+def _check_rows_on_schedule(
+    times: np.ndarray, schedule: list[dict], last_step: float | None
+) -> np.ndarray:
+    """The nominal grid of recorded control rows, refusing rows off it.
+
+    A row may sit past its nominal time by the solver's landing overshoot, which grows
+    with the cadence; anything further (such as a shortened final interval) is refused.
+    """
+
+    grid, row_steps = _schedule_rows(schedule, last_step, len(times))
+    landing = LANDING_ABS_TOLERANCE + LANDING_REL_TOLERANCE * row_steps
+    if not np.all(np.abs(np.asarray(times) - grid) <= landing):
+        raise ValueError("restart control history does not match the output cadence")
+    return grid
+
+
+def _schedule_rows(
+    schedule: list[dict], last_step: float | None, count: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Nominal times of control rows 1..count and the cadence each row was written at."""
+
+    steps = _segment_steps(schedule, last_step)
+    times = np.empty(count)
+    row_steps = np.empty(count)
+    origin_time, origin_index, step = 0.0, 0, steps[0]
+    # A segment's grid continues from the boundary row's nominal time, as the continuation
+    # that started it built its targets; the entry's own time is where the solver landed.
+    boundaries = [
+        (int(entry["control_index"]), segment_step)
+        for entry, segment_step in zip(schedule[1:], steps[1:])
+    ]
+    for j in range(1, count + 1):
+        while boundaries and j > boundaries[0][0]:
+            origin_index, step = boundaries.pop(0)
+            origin_time = float(times[origin_index - 1]) if origin_index > 0 else 0.0
+        if origin_index == 0:
+            times[j - 1] = step * j
+        else:
+            times[j - 1] = origin_time + step * (j - origin_index)
+        row_steps[j - 1] = step
+    return times, row_steps
+
+
+def _continuation_targets(
+    args: argparse.Namespace, restart: dict, out_times: np.ndarray
+) -> tuple[np.ndarray, float]:
+    """A continuation's output targets after the restart row, and its interval origin.
+
+    The grid continues from the restart row's nominal time. When the parent's grid is
+    the plain zero-based one at an unchanged cadence, the run's own ``out_times`` are
+    kept, so such a restart steps bit-for-bit as an uninterrupted run.
+    """
+
+    nominal = restart["nominal_time"]
+    previous_target = restart["time"]
+    step = args.output_step
+    aligned = (
+        not restart["cadence_changed"] and step is not None
+        and math.isclose(nominal, step * restart["control_index"], rel_tol=0, abs_tol=1e-9)
+    )
+    if aligned:
+        if args.interval_start == "max_step":
+            # An uninterrupted run measures each interval from the nominal output time,
+            # not from where the solver landed (a few 1e-8 past it). With one step per
+            # interval that origin is the step size, so use the same nominal grid value
+            # here: then a restart steps exactly as an uninterrupted run. Legacy keeps
+            # its behaviour.
+            previous_target = float(out_times[restart["control_index"] - 1])
+    else:
+        count = math.floor((args.t_end - nominal) / step + 1e-9)
+        out_times = nominal + step * np.arange(1, count + 1, dtype=float)
+        if not len(out_times) or out_times[-1] < args.t_end * (1 - 1e-14):
+            out_times = np.append(out_times, args.t_end)
+        if args.interval_start == "max_step":
+            previous_target = nominal
+    return out_times[out_times > restart["time"] + 1e-6], previous_target
 
 
 def _read_restart(args: argparse.Namespace) -> dict | None:
@@ -398,6 +740,12 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
             current, expected = _solver_without_step_policy(current), _solver_without_step_policy(
                 expected
             )
+        if key == "tolerances" and isinstance(current, dict) and isinstance(expected, dict):
+            current = {k: v for k, v in current.items() if k != "temporal_error"}
+            expected = {k: v for k, v in expected.items() if k != "temporal_error"}
+        if key == "output" and isinstance(current, dict) and isinstance(expected, dict):
+            current = {k: v for k, v in current.items() if k != "cadence"}
+            expected = {k: v for k, v in expected.items() if k != "cadence"}
         if key not in case or current != expected:
             raise ValueError(f"restart case mismatch: {key}")
     metadata = json.loads(paths["metadata"].read_text())
@@ -439,6 +787,9 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         if key == "far_field":
             _check_extension_not_shorter(value, observed)
             value, observed = _without_extension(value), _without_extension(observed)
+        if key in ("output_step", "temporal_error"):
+            # Numerics a continuation may change; recorded in the numerics schedule.
+            continue
         if observed != value:
             raise ValueError(f"restart metadata mismatch: {key}")
     numerics_schedule = _restart_numerics_schedule(args, metadata, restart["time"], restart)
@@ -464,10 +815,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         raise ValueError("restart time does not match selected control row")
     # Output times have a small solver landing offset; reject off-grid checkpoints
     # rather than silently changing the output interval after a short final step.
-    if not np.allclose(
-        rows[:, 0], args.output_step * np.arange(1, control_index + 1), rtol=0, atol=1e-6
-    ):
-        raise ValueError("restart control history does not match the output cadence")
+    grid = _check_rows_on_schedule(rows[:, 0], numerics_schedule, metadata.get("output_step"))
     datasets = ET.parse(paths["pvd"]).findall("./Collection/DataSet")
     if len(datasets) < field_index:
         raise ValueError("restart PVD history is incomplete")
@@ -518,6 +866,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         far_state = paths["checkpoint"].with_suffix(".farfield.npz")
         if not far_state.is_file():
             raise ValueError("restart checkpoint has no far-field membrane state")
+        _check_grading_change_is_applied(args, metadata, far_state)
     if paths["checkpoint"].parent != root / "checkpoints":
         raise ValueError("restart checkpoint does not belong to the parent case")
     if paths["control"].parent != root / "run_viscoelastic_axi":
@@ -541,6 +890,13 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "output_index": control_index,
         "legacy": legacy,
         "numerics_schedule": numerics_schedule,
+        # The restart row's nominal grid time, and whether the continuation's cadence
+        # differs from the parent's last one (its output grid then starts here).
+        "nominal_time": float(grid[-1]),
+        "cadence_changed": not math.isclose(
+            float(args.output_step), float(_schedule_row_step(numerics_schedule, metadata)),
+            rel_tol=1e-12, abs_tol=0.0,
+        ),
     }
 
 
@@ -894,6 +1250,8 @@ def run_case(args: argparse.Namespace) -> dict:
         "fixed_step_semantics": "maximum-step cap after smaller BDF startup",
         "max_step": args.max_step,
         "interval_start": args.interval_start,
+        "temporal_error_fields": args.temporal_error_fields,
+        "newton_floor_max_dt": args.newton_floor_max_dt,
         # Written with the first case.json, so a continuation stopped before it
         # completes still hands the full step-policy history to its own restart.
         "numerics_schedule": (
@@ -971,6 +1329,8 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.passive_conformation = passive_conformation
             problem.sponge = sponge
             problem.far_field = far_field["mode"]
+            problem.far_field_interpolation = far_field.get("interpolation", "hold")
+            problem.far_field_history = far_field.get("history", "overwrite")
             problem.conformation_stabilization = "SUPG" if args.stabilization == "supg" else None
             problem.conformation_supg_factor = args.supg_factor
             problem.X0 = args.r0
@@ -978,27 +1338,43 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.resolution = args.resolution
             problem.far_resolution = args.far_resolution
             problem.max_newton_iterations = args.max_newton
+            problem.temporal_error_factors = dict(args.temporal_error_fields or {})
+            problem.newton_floor_max_dt = args.newton_floor_max_dt
             problem.initialise()
             # Preserve the original ALE reference before restoring the deformed state.
             volume0 = problem.volume()
             radius0 = problem.window_position()
             coupling = None
             if far_field["mode"] == "membrane":
-                from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+                from taylor_culick_fem.farfield_membrane import FarFieldMembrane, graded_fractions
 
                 inner = radius0 + far_field["inner_fraction"] * args.length
                 outer = radius0 + args.length + far_field["extension"]
+                grading = far_field.get("grading")
+                layout = (
+                    {"node_fractions": graded_fractions(
+                        inner, outer, far_field["node_spacing"], grading["near_length"],
+                        grading["growth"],
+                    )}
+                    if grading is not None
+                    else {"nodes": math.ceil((outer - inner) / far_field["node_spacing"]) + 1}
+                )
                 coupling = MembraneCoupling(
                     FarFieldMembrane(
                         elastic_modulus=args.elastic_modulus,
                         viscosity=math.sqrt(2.0) * args.oh,
                         inner=inner,
                         outer=outer,
-                        nodes=math.ceil((outer - inner) / far_field["node_spacing"]) + 1,
+                        **layout,
                     ),
                     inner_fraction=far_field["inner_fraction"],
                     length=args.length,
                 )
+                coupling.interpolation = far_field.get("interpolation", "hold")
+                coupling.auto_extend = far_field.get("auto_extend")
+                coupling.layout = {"spacing": far_field["node_spacing"]}
+                if far_field.get("grading") is not None:
+                    coupling.layout["grading"] = far_field["grading"]
                 if restart is not None:
                     coupling.load(restart["far_state"])
                     if not math.isclose(
@@ -1010,9 +1386,7 @@ def run_case(args: argparse.Namespace) -> dict:
                         metadata["restart_far_field_extended"] = {
                             "from_outer": coupling.membrane.outer, "to_outer": outer,
                         }
-                        coupling.membrane = coupling.membrane.extended(
-                            outer, far_field["node_spacing"]
-                        )
+                        coupling.membrane = coupling.lengthened(outer)
             if restart is not None:
                 checkpoint = restart["paths"]["checkpoint"]
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
@@ -1179,21 +1553,14 @@ def run_case(args: argparse.Namespace) -> dict:
                         far_history.add_row(*far_row)
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
-                previous_target = restart["time"]
-                if args.interval_start == "max_step" and args.output_step is not None:
-                    # An uninterrupted run measures each interval from the nominal
-                    # output time, not from where the solver landed (a few 1e-8 past
-                    # it). With one step per interval that origin is the step size, so
-                    # use the same nominal grid value here: then a restart steps
-                    # exactly as an uninterrupted run. Legacy keeps its behaviour.
-                    previous_target = float(out_times[restart["control_index"] - 1])
-                out_times = out_times[out_times > restart["time"] + 1e-6]
+                out_times, previous_target = _continuation_targets(args, restart, out_times)
                 worst_volume_error = float(np.max(restart["rows"][:, 6]))
                 worst_tip_pin = float(np.max(restart["rows"][:, 7]))
                 minimum_sampled_speed = float(np.min(restart["rows"][:, 2]))
                 if not len(out_times):
                     raise ValueError("restart has no output targets before the requested endpoint")
 
+            carried_step = None
             for control_index, target in enumerate(out_times, start=control_offset + 1):
                 interval = float(target - previous_target)
                 if args.fixed_step is not None:
@@ -1207,7 +1574,7 @@ def run_case(args: argparse.Namespace) -> dict:
                         min(args.max_step, interval) if args.max_step is not None else interval
                     )
                     startstep = _interval_start_step(
-                        args.interval_start, previous_target, interval, maxstep
+                        args.interval_start, previous_target, interval, maxstep, carried_step
                     )
                 if coupling is not None:
                     # Integrate over the solver's own clock, not the nominal
@@ -1218,17 +1585,35 @@ def run_case(args: argparse.Namespace) -> dict:
                     drive = problem.midplane_radial_velocity(
                         radius_start + far_field["inner_fraction"] * args.length
                     )
+                    if coupling.interpolation == "linear":
+                        # Start from the state applied at the end of the last interval, so the
+                        # edge is continuous; after a hold-mode parent or a cold start, from
+                        # the membrane at the current edge, read before it is advanced.
+                        edge_start = coupling.last_edge or coupling.membrane.state_at(
+                            radius_start + args.length
+                        )
                     edge = coupling.before_interval(
                         start_now, float(target), radius_start, speed_start, drive
                     )
-                    problem.set_far_field(edge.velocity, edge.thickness, edge.log_conformation())
-                problem.run(
+                    if coupling.interpolation == "linear":
+                        problem.set_far_field(
+                            edge.velocity, edge.thickness, edge.log_conformation(),
+                            start=(edge_start.velocity, edge_start.thickness,
+                                   edge_start.log_conformation()),
+                            interval=(start_now, float(target)),
+                        )
+                    else:
+                        problem.set_far_field(edge.velocity, edge.thickness, edge.log_conformation())
+                    coupling.last_edge = edge
+                suggested = problem.run(
                     float(target),
                     startstep=startstep,
                     maxstep=maxstep,
                     temporal_error=None if args.fixed_step is not None else args.temporal_error,
                     outstep=False,
                 )
+                # run() returns the controller's next step, already capped at maxstep.
+                carried_step = float(suggested) if suggested else None
                 now = float(problem.get_current_time(as_float=True))
                 radius = problem.window_position()
                 speed = problem.retraction_speed()
@@ -1242,6 +1627,7 @@ def run_case(args: argparse.Namespace) -> dict:
                         speed_start,
                         speed,
                         now - start_now,
+                        edge_start=edge_start if coupling.interpolation == "linear" else None,
                     )
                     far_row = [
                         now,
@@ -1425,6 +1811,7 @@ def run_case(args: argparse.Namespace) -> dict:
                     "sponge_diagnostics_final": sponge_diagnostics,
                     "largest_positive_sponge_power": largest_positive_sponge_power,
                     "far_field_outflow": coupling.outflow if coupling is not None else None,
+                    "far_field_extensions": coupling.extensions if coupling is not None else None,
                     "far_field_outer_velocity_max": (
                         coupling.outer_velocity if coupling is not None else None
                     ),
@@ -1552,6 +1939,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--far-field-extension", type=_positive_float, default=None)
     parser.add_argument("--far-field-node-spacing", type=_positive_float, default=None)
     parser.add_argument(
+        "--far-field-grading",
+        type=json.loads,
+        default=None,
+        help='graded membrane grid beyond the near region, e.g. \'{"near_length": 2000, "growth": 1.002}\'',
+    )
+    parser.add_argument(
+        "--far-field-auto-extend",
+        type=json.loads,
+        default=None,
+        help='lengthen the membrane by factor when the pulse reaches its tail, e.g. '
+        '\'{"tail_fraction": 0.2, "factor": 2}\'',
+    )
+    parser.add_argument(
+        "--far-field-interpolation",
+        choices=("hold", "linear"),
+        default=None,
+        help="membrane edge data within an interval: hold the end state (default) or "
+        "move linearly from the start state (second order)",
+    )
+    parser.add_argument(
+        "--far-field-history",
+        choices=("overwrite", "keep"),
+        default=None,
+        help="previous-step values of the prescribed far-edge dofs: let pyoomph's Dirichlet "
+        "update overwrite them (default) or keep them, so BDF2 sees the true rate of change",
+    )
+    parser.add_argument(
         "--fixed-step",
         type=_positive_float,
         default=None,
@@ -1573,7 +1987,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--temporal-error", type=_positive_float, default=1e-3)
+    parser.add_argument(
+        "--temporal-error-fields",
+        type=_error_fields,
+        default=None,
+        help=(
+            "JSON object of field weights for the temporal error estimator, e.g. "
+            '\'{"velocity_x": 1, "velocity_y": 1, "X": 1}\'; without it no estimator is '
+            "registered and every step runs at the cap"
+        ),
+    )
     parser.add_argument("--max-newton", type=int, default=20)
+    parser.add_argument(
+        "--newton-floor-max-dt",
+        type=_positive_float,
+        default=None,
+        help="cap the dt in the Newton round-off floor eps*R^2/dt (for large adaptive steps)",
+    )
     parser.add_argument("--max-volume-error", type=_positive_float, default=5e-3)
     parser.add_argument("--max-tip-pin-residual", type=_positive_float, default=1e-6)
     parser.add_argument("--min-radius-increase", type=_nonnegative_float, default=1e-4)

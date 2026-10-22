@@ -1038,10 +1038,15 @@ def test_restart_may_raise_max_step_to_the_cadence_and_records_the_schedule(
     case = copy.deepcopy(restart_case)
     case["solver"].update(max_step=0.05, interval_start="max_step")
     restart = _read_restart(adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n"))
-    assert restart["numerics_schedule"] == [
-        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
-        {"time": 0.1, "control_index": 2, "max_step": 0.05, "interval_start": "max_step"},
-    ]
+    first, switch = restart["numerics_schedule"]
+    assert first == {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"}
+    # The new entry records every numerics value in force from the restart on.
+    assert {k: switch[k] for k in ("time", "control_index", "max_step", "interval_start")} == {
+        "time": 0.1, "control_index": 2, "max_step": 0.05, "interval_start": "max_step",
+    }
+    assert switch["output_step"] == 0.05 and switch["far_field_interpolation"] == "hold"
+    assert switch["temporal_error_fields"] is None
+    assert not restart["cadence_changed"]
 
 
 def test_restart_rejects_a_max_step_beyond_the_cadence(tmp_path, restart_case):
@@ -1058,8 +1063,8 @@ def test_restart_rejects_a_max_step_beyond_the_cadence(tmp_path, restart_case):
     "block,change",
     [
         ("solver", {"max_newton": 25}),
-        ("output", {"cadence": 0.1}),
-        ("tolerances", {"temporal_error": 1e-4}),
+        ("output", {"checkpoint_every": 4}),
+        ("tolerances", {"max_volume_error": 1e-2}),
     ],
 )
 def test_restart_still_rejects_every_other_numerics_change(tmp_path, restart_case, block, change):
@@ -1202,3 +1207,417 @@ def test_small_fem_max_step_interval_start_restarts_exactly_and_records_a_switch
     early = first_writes[bundle / "switched" / "axi_viscoelastic_Oh_1_G_1_lambda_inf" / "case.json"]
     assert early["numerics_schedule"] == switched["numerics_schedule"]
     assert early["numerics_schedule"][0]["interval_start"] == "legacy"
+
+
+def test_carry_interval_start_keeps_the_adaptive_step():
+    from run_viscoelastic_axi import _interval_start_step
+
+    # No step carried yet (cold start or a fresh restart): the legacy start.
+    assert _interval_start_step("carry", 0.0, 1.0, 1.0) == pytest.approx(1e-2)
+    assert _interval_start_step("carry", 5.0, 1.0, 1.0, None) == pytest.approx(1e-2)
+    # Afterwards the step the controller reached, never above the cap.
+    assert _interval_start_step("carry", 5.0, 1.0, 1.0, 0.3) == 0.3
+    assert _interval_start_step("carry", 5.0, 1.0, 0.5, 2.0) == 0.5
+
+
+def test_temporal_error_fields_are_validated_and_mapped(tmp_path):
+    import argparse
+
+    from run_viscoelastic_axi import _error_fields
+
+    assert _error_fields('{"velocity_x": 1, "X": 2, "U": 2}') == {
+        "velocity_x": 1.0, "X": 2.0, "U": 2.0
+    }
+    assert _error_fields('{"velocity_x": 1}') == {"velocity_x": 1.0}
+    unequal_globals = ('{"X": 1}', '{"U": 1}', '{"X": 1, "U": 2}')
+    for bad in ("[]", "{}", '{"X": 0}', '{"X": -1}', '{"X": true}', "not json", *unequal_globals):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _error_fields(bad)
+
+
+def test_restart_may_change_cadence_and_error_control_and_records_them(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart, _schedule_row_times
+
+    case = copy.deepcopy(restart_case)
+    case["output"]["cadence"] = 0.5
+    case["tolerances"]["temporal_error"] = 1e-5
+    case["solver"].update(
+        max_step=0.5, interval_start="carry",
+        temporal_error_fields={"velocity_x": 1, "X": 1, "U": 1},
+    )
+    restart = _read_restart(adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "n"))
+    switch = restart["numerics_schedule"][-1]
+    assert switch["control_index"] == 2 and switch["output_step"] == 0.5
+    assert switch["temporal_error"] == 1e-5 and switch["interval_start"] == "carry"
+    assert switch["temporal_error_fields"] == {"U": 1.0, "X": 1.0, "velocity_x": 1.0}
+    assert restart["cadence_changed"] and restart["nominal_time"] == pytest.approx(0.1)
+    # The parent's rows follow the old cadence; rows after the switch the new one.
+    times = _schedule_row_times(restart["numerics_schedule"], 0.05, 4)
+    assert times == pytest.approx([0.05, 0.1, 0.6, 1.1])
+
+
+def test_schedule_row_times_reads_legacy_entries_without_a_cadence():
+    from run_viscoelastic_axi import _schedule_row_times
+
+    legacy = [
+        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
+        {"time": 0.15, "control_index": 3, "max_step": 0.05, "interval_start": "max_step"},
+    ]
+    assert _schedule_row_times(legacy, 0.05, 5) == pytest.approx([0.05, 0.1, 0.15, 0.2, 0.25])
+
+
+def test_far_field_grading_and_auto_extend_are_validated_and_optional():
+    import argparse
+
+    from run_viscoelastic_axi import _far_field_config, _without_extension
+
+    base = dict(far_field="membrane", far_field_inner_fraction=None, far_field_extension=1000.0,
+                far_field_node_spacing=None, far_field_interpolation=None,
+                far_field_grading=None, far_field_auto_extend=None)
+    plain = _far_field_config(argparse.Namespace(**base))
+    assert "grading" not in plain and "auto_extend" not in plain
+    graded = _far_field_config(argparse.Namespace(**{
+        **base, "far_field_grading": {"near_length": 500, "growth": 1.01},
+        "far_field_auto_extend": {"tail_fraction": 0.2, "factor": 2},
+    }))
+    assert graded["grading"] == {"growth": 1.01, "near_length": 500.0}
+    assert graded["auto_extend"] == {"factor": 2.0, "tail_fraction": 0.2}
+    # A restart may add or change both, like the extension.
+    assert _without_extension(graded) == _without_extension(plain)
+    for bad in ({"near_length": 500}, {"near_length": 500, "growth": 1.0}):
+        with pytest.raises(ValueError):
+            _far_field_config(argparse.Namespace(**{**base, "far_field_grading": bad}))
+    for bad in ({"tail_fraction": 0.2}, {"tail_fraction": 1.2, "factor": 2}):
+        with pytest.raises(ValueError):
+            _far_field_config(argparse.Namespace(**{**base, "far_field_auto_extend": bad}))
+
+
+def test_membrane_coupling_lengthens_itself_when_the_pulse_reaches_the_tail():
+    import math
+
+    from run_viscoelastic_axi import MembraneCoupling
+    from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+
+    membrane = FarFieldMembrane(elastic_modulus=1.0, viscosity=math.sqrt(2.0), inner=50.0,
+                                outer=150.0, nodes=201)
+    coupling = MembraneCoupling(membrane, inner_fraction=0.5, length=20.0)
+    coupling.auto_extend = {"tail_fraction": 0.2, "factor": 2.0}
+    coupling.layout = {"spacing": 0.5, "grading": {"near_length": 50.0, "growth": 1.05}}
+    coupling._extend_if_reached(1.0, 80.0)
+    assert coupling.extensions == [] and coupling.membrane is membrane
+    membrane.u[-10] = 1e-4  # a disturbance inside the outer fifth, and the outer tenth
+    coupling.outer_velocity = 1e-4  # the end-of-run check has already failed
+    coupling._extend_if_reached(2.0, 80.0)
+    assert coupling.membrane.outer == pytest.approx(250.0)
+    assert coupling.membrane.graded
+    assert coupling.outer_velocity == 1e-4  # a recorded failure survives the extension
+    assert coupling.extensions[0]["from_outer"] == 150.0
+    assert coupling.extensions[0]["to_outer"] == pytest.approx(250.0)
+    assert coupling.extensions[0]["reason"] == "pulse"
+
+
+def test_membrane_coupling_lengthens_itself_ahead_of_the_moving_window():
+    """An undisturbed membrane still grows when the window edge would reach its tail."""
+    import math
+
+    from run_viscoelastic_axi import MembraneCoupling
+    from taylor_culick_fem.farfield_membrane import FarFieldMembrane
+
+    membrane = FarFieldMembrane(elastic_modulus=1.0, viscosity=math.sqrt(2.0), inner=134.0,
+                                outer=150.0, nodes=33)
+    coupling = MembraneCoupling(membrane, inner_fraction=0.5, length=20.0)
+    coupling.auto_extend = {"tail_fraction": 0.2, "factor": 2.0}
+    coupling.layout = {"spacing": 0.5}
+    coupling._extend_if_reached(1.0, 151.0)  # radius 124 + speed 7, plus the window length
+    outer = coupling.membrane.outer
+    assert outer > 151.0 and 151.0 < outer - 0.2 * (outer - 134.0)
+    assert coupling.extensions[0]["reason"] == "window"
+    assert coupling.outer_velocity == 0.0
+
+
+def test_auto_extend_tail_must_exceed_the_end_check_region():
+    import argparse
+
+    from run_viscoelastic_axi import _far_field_config
+
+    base = dict(far_field="membrane", far_field_inner_fraction=None, far_field_extension=1000.0,
+                far_field_node_spacing=None, far_field_interpolation=None,
+                far_field_grading=None, far_field_auto_extend=None)
+    for fraction in (0.05, 0.1):
+        with pytest.raises(ValueError):
+            _far_field_config(argparse.Namespace(**{
+                **base, "far_field_auto_extend": {"tail_fraction": fraction, "factor": 2},
+            }))
+
+
+def test_linear_edge_outflow_integrates_the_ramp_exactly():
+    """Under linear interpolation the outflow trapezoid uses the start edge state."""
+    import types
+
+    from run_viscoelastic_axi import MembraneCoupling
+
+    coupling = MembraneCoupling(types.SimpleNamespace(time=0.0), inner_fraction=0.5, length=20.0)
+    start = types.SimpleNamespace(thickness=1.0, velocity=0.0)
+    end = types.SimpleNamespace(thickness=1.0, velocity=0.1)
+    coupling.after_interval(end, 2.0, 10.0, 10.0, 0.0, 0.0, 2.0, edge_start=start)
+    assert coupling.outflow == pytest.approx(1.0)  # integral of 10 * 0.05 t over [0, 2]
+    held = MembraneCoupling(types.SimpleNamespace(time=0.0), inner_fraction=0.5, length=20.0)
+    held.after_interval(end, 2.0, 10.0, 10.0, 0.0, 0.0, 2.0)
+    assert held.outflow == pytest.approx(2.0)  # hold carries the end state throughout
+
+
+def test_restart_grading_changes_need_a_longer_extension():
+    from run_viscoelastic_axi import _check_extension_not_shorter
+
+    grading = {"near_length": 2000.0, "growth": 1.002}
+    uniform = {"mode": "membrane", "extension": 2000.0}
+    _check_extension_not_shorter({**uniform, "extension": 20000.0, "grading": grading}, uniform)
+    with pytest.raises(ValueError, match="longer extension"):
+        _check_extension_not_shorter({**uniform, "grading": grading}, uniform)
+    with pytest.raises(ValueError, match="remove"):
+        _check_extension_not_shorter({**uniform, "extension": 30000.0},
+                                     {**uniform, "grading": grading})
+
+
+def test_second_restart_keeps_the_first_cadence_and_the_shifted_grid():
+    """A parent that changed cadence at a non-aligned time restarts correctly again."""
+    import argparse
+
+    import numpy as np
+
+    from run_viscoelastic_axi import _continuation_targets, _output_times, _schedule_row_times
+
+    # Cadence 0.05 from t = 0, switched to 0.5 at t = 0.1 (row 2): rows 0.05, 0.1, 0.6, 1.1.
+    schedule = [
+        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
+        {"time": 0.1, "control_index": 2, "max_step": 0.5, "interval_start": "carry",
+         "output_step": 0.5},
+    ]
+    # The parent's recorded output_step is the new cadence; the first segment keeps 0.05.
+    assert _schedule_row_times(schedule, 0.5, 4) == pytest.approx([0.05, 0.1, 0.6, 1.1])
+    args = argparse.Namespace(output_step=0.5, t_end=3.0, n_outputs=None, interval_start="max_step")
+    restart = {"nominal_time": 1.1, "time": 1.1 + 3e-8, "control_index": 4, "cadence_changed": False}
+    targets, origin = _continuation_targets(args, restart, _output_times(args))
+    assert targets == pytest.approx([1.6, 2.1, 2.6, 3.0]) and origin == pytest.approx(1.1)
+    # A plain zero-based grid keeps the run's own targets, bit for bit.
+    aligned = {"nominal_time": 1.0, "time": 1.0 + 3e-8, "control_index": 2, "cadence_changed": False}
+    run_grid = _output_times(args)
+    targets, origin = _continuation_targets(args, aligned, run_grid)
+    assert np.array_equal(targets, run_grid[2:]) and origin == run_grid[1]
+
+
+class _FakeEdgeNode:
+    """A far-edge node with three history levels, as BDF2 stores them."""
+
+    def __init__(self, pinned, corner):
+        self.pinned = set(pinned)
+        self.corner = corner
+        self.values = {(t, i): 10.0 * t + i for t in range(3) for i in range(6)}
+        self.y = {t: 0.5 + 0.1 * t for t in range(3)}
+
+    def ntstorage(self):
+        return 3
+
+    def is_pinned(self, index):
+        return index in self.pinned
+
+    def value_at_t(self, t, index):
+        return self.values[(t, index)]
+
+    def set_value_at_t(self, t, index, value):
+        self.values[(t, index)] = value
+
+    def position_is_pinned(self, coordinate):
+        return self.corner and coordinate == 1
+
+    def x_at_t(self, t, coordinate):
+        assert coordinate == 1
+        return self.y[t]
+
+    def set_x_at_t(self, t, coordinate, value):
+        assert coordinate == 1
+        self.y[t] = value
+
+
+def test_far_edge_history_survives_the_dirichlet_update():
+    """Level 1 of the parameter-driven far-edge dofs is put back after pyoomph's
+    Dirichlet update copies the current value over it."""
+    import types
+
+    from axisymmetric_comoving import AxisymmetricComovingProblem as Problem
+
+    fields = {"velocity_x": 0, "velocity_y": 1, "log_conformation_xx": 2}
+    nodes = [_FakeEdgeNode({0, 2}, corner=False), _FakeEdgeNode({0, 2}, corner=True)]
+    mesh = types.SimpleNamespace(
+        boundary_nodes=lambda name: nodes if name == "far" else [],
+        get_nodal_field_indices=lambda: fields,
+    )
+    problem = types.SimpleNamespace(
+        far_field="membrane",
+        far_edge_history_fields=("velocity_x", "log_conformation_xx", "log_conformation_aa"),
+        get_mesh=lambda name: mesh,
+    )
+    before = [dict(n.values) for n in nodes], [dict(n.y) for n in nodes]
+    kept = Problem._far_edge_history(problem)
+    assert len(kept) == 5  # two fields on each node, plus the corner height
+    for node in nodes:  # what Generic_SetDirichletCondition does to a parameter value
+        for index in (0, 2):
+            node.set_value_at_t(1, index, node.value_at_t(0, index))
+        if node.corner:
+            node.set_x_at_t(1, 1, node.x_at_t(0, 1))
+    Problem._restore_far_edge_history(kept)
+    assert [n.values for n in nodes] == before[0]
+    assert [n.y for n in nodes] == before[1]
+    problem.far_field = "rest"
+    assert Problem._far_edge_history(problem) == []
+
+
+def test_far_field_history_is_validated_optional_and_restart_changeable(tmp_path):
+    import argparse
+
+    from run_viscoelastic_axi import _far_field_config, _without_extension
+
+    base = dict(far_field="membrane", far_field_inner_fraction=None, far_field_extension=1000.0,
+                far_field_node_spacing=None, far_field_interpolation=None,
+                far_field_grading=None, far_field_auto_extend=None)
+    plain = _far_field_config(argparse.Namespace(**base))
+    assert "history" not in plain
+    kept = _far_field_config(argparse.Namespace(**{**base, "far_field_history": "keep"}))
+    assert kept["history"] == "keep"
+    assert _without_extension(kept) == _without_extension(plain)
+    with pytest.raises(ValueError):
+        _far_field_config(argparse.Namespace(**{**base, "far_field_history": "drop"}))
+
+    case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+    case["physics"]["far_field"] = {"mode": "membrane", "extension": 800.0, "history": "keep"}
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a")
+    assert args.far_field_history == "keep"
+
+
+def test_small_fem_membrane_far_edge_history_changes_the_solution(tmp_path):
+    """The option reaches the solve: keeping the edge history changes the far-edge
+    film, and the run still conserves volume."""
+    import run_viscoelastic_axi as driver
+
+    results = {}
+    for history in ("overwrite", "keep"):
+        case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+        case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+        case["output"].update(cadence=0.02, checkpoint_every=1)
+        case["physics"]["far_field"] = {
+            "mode": "membrane", "extension": 20.0, "node_spacing": 0.25, "history": history,
+        }
+        path = tmp_path / f"{history}.json"
+        path.write_text(json.dumps(case))
+        metadata = driver.run_case(adapter.case_to_driver_args(path, tmp_path / history))
+        assert metadata["far_field"].get("history") == history
+        assert metadata["worst_volume_rel_error"] < 1e-6
+        out = tmp_path / history / "axi_viscoelastic_Oh_1_G_1_lambda_inf" / "run_viscoelastic_axi"
+        results[history] = np.loadtxt(out / "control.txt", ndmin=2)
+    assert results["keep"].shape == results["overwrite"].shape
+    assert not np.array_equal(results["keep"], results["overwrite"])
+
+
+def test_restart_history_allows_the_solver_landing_overshoot_at_coarse_cadence():
+    """pyoomph lands up to 1e-5 of the final step past each target; a coarse cadence
+    therefore lands further past it than the fixed 1e-6 the check used to allow."""
+    from run_viscoelastic_axi import _check_rows_on_schedule
+
+    schedule = [
+        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
+        {"time": 0.1, "control_index": 2, "max_step": 1.0, "interval_start": "carry",
+         "output_step": 5.0},
+    ]
+    landed = [0.05 + 2e-7, 0.1 + 2e-7, 5.1000075, 10.10001]
+    assert _check_rows_on_schedule(landed, schedule, 5.0) == pytest.approx([0.05, 0.1, 5.1, 10.1])
+    with pytest.raises(ValueError, match="output cadence"):
+        _check_rows_on_schedule([0.05, 0.1, 5.1, 9.6], schedule, 5.0)  # a shortened interval
+    with pytest.raises(ValueError, match="output cadence"):
+        _check_rows_on_schedule([0.05 + 2e-6, 0.1, 5.1, 10.1], schedule, 5.0)  # fine rows stay tight
+
+
+def test_restart_grading_change_checks_the_checkpoint_membrane(tmp_path):
+    """Automatic extension can leave the checkpoint longer than the configured extension;
+    a grading change must still add membrane beyond it."""
+    import argparse
+
+    import numpy as np
+
+    from run_viscoelastic_axi import _check_grading_change_is_applied
+
+    state = tmp_path / "ckpt.farfield.npz"
+    np.savez(state, outer=np.array(231.0))
+    parent = {"far_field": {"mode": "membrane", "extension": 100.0, "inner_fraction": 0.5,
+                            "node_spacing": 0.5}}
+    base = dict(far_field="membrane", far_field_inner_fraction=None, far_field_node_spacing=None,
+                far_field_interpolation=None, far_field_auto_extend=None, r0=1.0, length=20.0,
+                far_field_grading={"near_length": 20.0, "growth": 1.05})
+    with pytest.raises(ValueError, match="already reaches"):
+        _check_grading_change_is_applied(
+            argparse.Namespace(**base, far_field_extension=150.0), parent, state)
+    _check_grading_change_is_applied(argparse.Namespace(**base, far_field_extension=300.0), parent, state)
+    unchanged = {**base, "far_field_grading": None}
+    _check_grading_change_is_applied(
+        argparse.Namespace(**unchanged, far_field_extension=100.0), parent, tmp_path / "absent.npz")
+
+
+def test_coarse_graded_tail_still_sees_the_last_free_node():
+    """On a coarse graded grid the outer fraction can hold only the pinned end node; the
+    monitored tail brackets it, so detection and the end-of-run check still work."""
+    import math
+
+    from run_viscoelastic_axi import MembraneCoupling, _monitored_tail
+    from taylor_culick_fem.farfield_membrane import FarFieldMembrane, graded_fractions
+
+    fractions = graded_fractions(50.0, 400.0, 0.5, 20.0, 1.3)
+    membrane = FarFieldMembrane(elastic_modulus=1.0, viscosity=math.sqrt(2.0), inner=50.0,
+                                outer=400.0, node_fractions=fractions)
+    radii = membrane.radii()
+    assert (radii >= 400.0 - 0.2 * 350.0).sum() == 1  # only the end node in the outer fifth
+    tail = _monitored_tail(membrane, 0.1)
+    assert tail[-2] and tail[-1] and tail.sum() == 2
+    membrane.u[-2] = 1e-3
+    coupling = MembraneCoupling(membrane, inner_fraction=0.5, length=20.0)
+    coupling.auto_extend = {"tail_fraction": 0.2, "factor": 2.0}
+    coupling.layout = {"spacing": 0.5, "grading": {"near_length": 20.0, "growth": 1.3}}
+    coupling._extend_if_reached(1.0, 100.0)
+    assert coupling.extensions and coupling.extensions[0]["reason"] == "pulse"
+
+
+def test_coarse_to_fine_second_restart_uses_nominal_boundaries():
+    """A schedule entry records where the solver landed; the grid after it continues from
+    the boundary row's nominal time, as the continuation built its targets."""
+    from run_viscoelastic_axi import _check_rows_on_schedule
+
+    schedule = [
+        {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy"},
+        {"time": 0.1 + 2e-7, "control_index": 2, "max_step": 1.0, "interval_start": "carry",
+         "output_step": 5.0},
+        {"time": 10.100009499905, "control_index": 4, "max_step": 0.05, "interval_start": "carry",
+         "output_step": 0.05},
+    ]
+    landed = [0.05 + 2e-7, 0.1 + 2e-7, 5.1000075, 10.100009499905, 10.150000074905, 10.2000000749]
+    grid = _check_rows_on_schedule(landed, schedule, 0.05)
+    assert grid[-2:] == pytest.approx([10.15, 10.2], abs=1e-6)
+
+
+def test_coarse_graded_extension_leads_the_end_check_through_a_real_pulse():
+    """Through before_interval, a drive pulse on a coarse graded membrane triggers the
+    extension before the end-of-run check sees it."""
+    import math
+
+    from run_viscoelastic_axi import FAR_FIELD_OUTER_TOLERANCE, MembraneCoupling
+    from taylor_culick_fem.farfield_membrane import FarFieldMembrane, graded_fractions
+
+    membrane = FarFieldMembrane(elastic_modulus=1.0, viscosity=math.sqrt(2.0), inner=50.0,
+                                outer=400.0,
+                                node_fractions=graded_fractions(50.0, 400.0, 0.5, 20.0, 1.3))
+    coupling = MembraneCoupling(membrane, inner_fraction=0.5, length=20.0)
+    coupling.auto_extend = {"tail_fraction": 0.2, "factor": 2.0}
+    coupling.layout = {"spacing": 0.5, "grading": {"near_length": 20.0, "growth": 1.3}}
+    for k in range(120):
+        drive = 0.01 * math.exp(-((k - 10.0) / 3.0) ** 2)
+        edge = coupling.before_interval(float(k), float(k + 1), 40.0, 0.0, drive)
+        coupling.after_interval(edge, float(k + 1), 60.0, 60.0, 0.0, 0.0, 1.0)
+    assert coupling.extensions, "the pulse should have reached the tail"
+    assert coupling.outer_velocity <= FAR_FIELD_OUTER_TOLERANCE

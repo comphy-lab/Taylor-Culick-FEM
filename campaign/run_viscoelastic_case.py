@@ -120,6 +120,16 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         str(_value(solver, "max_newton", "solver")),
         "--interval-start",
         str(solver.get("interval_start", "legacy")),
+        *(
+            ["--temporal-error-fields", json.dumps(solver["temporal_error_fields"], sort_keys=True)]
+            if "temporal_error_fields" in solver
+            else []
+        ),
+        *(
+            ["--newton-floor-max-dt", str(solver["newton_floor_max_dt"])]
+            if "newton_floor_max_dt" in solver
+            else []
+        ),
         "--temporal-error",
         str(_value(tolerances, "temporal_error", "tolerances")),
         "--max-volume-error",
@@ -173,20 +183,32 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
             if set(far_field) != {"mode"}:
                 raise ValueError("physics.far_field mode 'rest' takes no other keys")
         elif mode == "membrane":
-            allowed = {"mode", "inner_fraction", "extension", "node_spacing"}
+            allowed = {
+                "mode", "inner_fraction", "extension", "node_spacing", "interpolation", "history",
+                "grading", "auto_extend",
+            }
             if not set(far_field) <= allowed or "extension" not in far_field:
                 raise ValueError(
                     "physics.far_field membrane requires extension and accepts only "
-                    "inner_fraction, extension and node_spacing"
+                    "inner_fraction, extension, node_spacing, interpolation, history, grading "
+                    "and auto_extend"
                 )
             arguments.extend(["--far-field", "membrane"])
             for key, flag in (
                 ("inner_fraction", "--far-field-inner-fraction"),
                 ("extension", "--far-field-extension"),
+                ("interpolation", "--far-field-interpolation"),
+                ("history", "--far-field-history"),
                 ("node_spacing", "--far-field-node-spacing"),
             ):
                 if key in far_field:
                     arguments.extend([flag, str(far_field[key])])
+            for key, flag in (
+                ("grading", "--far-field-grading"),
+                ("auto_extend", "--far-field-auto-extend"),
+            ):
+                if key in far_field:
+                    arguments.extend([flag, json.dumps(far_field[key], sort_keys=True)])
         else:
             raise ValueError(f"unsupported physics.far_field mode: {mode!r}")
     if "max_positive_sponge_power" in tolerances:

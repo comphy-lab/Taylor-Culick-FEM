@@ -32,7 +32,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 from axisymmetric_comoving import AxisymmetricComovingProblem
-from pyoomph import DirichletBC, IntegralObservables, WeakContribution
+from pyoomph import DirichletBC, IntegralObservables, TemporalErrorEstimator, WeakContribution
 from pyoomph.expressions import dot, piecewise_geq0, var, var_and_test
 
 from taylor_culick_fem.absorbing_layer import (
@@ -55,6 +55,10 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
     conformation transport; active polymer feedback remains the default.
     """
 
+    far_edge_history_fields = (
+        "velocity_x", "log_conformation_xx", "log_conformation_yy", "log_conformation_aa",
+    )
+
     def __init__(self):
         super().__init__()
         self.solvent_oh = 0.0
@@ -66,6 +70,11 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         self.conformation_supg_factor = 1.0
         self.viscoelastic_parameters: GLambdaOldroydBParameters | None = None
         self.sponge: RayleighSpongeParameters | None = None
+        # Fields whose step-to-step change drives the adaptive time step, with weights.
+        # Empty keeps the old behaviour: no estimator, so every step runs at the cap.
+        # ``X`` and ``U`` are the global rim position and speed; the rest live on the
+        # liquid.
+        self.temporal_error_factors: dict[str, float] = {}
 
     def define_problem(self):
         if not math.isfinite(self.solvent_oh) or self.solvent_oh < 0:
@@ -149,22 +158,58 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
         self += eqs @ "liquid"
 
+        factors = dict(self.temporal_error_factors)
+        if not all(math.isfinite(v) and v > 0 for v in factors.values()):
+            raise ValueError("temporal error factors must be finite and positive")
+        global_factors = {k: factors.pop(k) for k in ("X", "U") if k in factors}
+        if global_factors and (len(global_factors) != 2 or global_factors["X"] != global_factors["U"]):
+            # See comphy-lab/pyoomph#24: unequal global weights are silently misapplied.
+            raise ValueError("temporal error factors must weight X and U together, equally")
+        if factors:
+            self += TemporalErrorEstimator(**factors) @ "liquid"
+        if global_factors:
+            self += TemporalErrorEstimator(**global_factors) @ "globals"
+
     def set_far_field(
-        self, velocity: float, thickness: float, log_conformation: tuple[float, float, float]
+        self, velocity: float, thickness: float, log_conformation: tuple[float, float, float],
+        *, start=None, interval: tuple[float, float] | None = None,
     ) -> None:
-        """Set the edge film velocity, full thickness and (r, z, theta) log C."""
+        """Set the edge film velocity, full thickness and (r, z, theta) log C.
+
+        With ``far_field_interpolation == "linear"`` these are the interval-end values,
+        ``start`` is the (velocity, thickness, log C) at the interval start and
+        ``interval`` its (start, end) times; the edge then moves linearly between them,
+        evaluated at each step's new time level.
+        """
 
         if self.far_field != "membrane":
             raise RuntimeError("set_far_field requires far_field='membrane'")
-        values = (velocity, thickness, *log_conformation)
-        if len(log_conformation) != 3 or not all(math.isfinite(v) for v in values):
-            raise ValueError("far-field state must be finite with three log C components")
-        if not thickness > 0:
-            raise ValueError("far-field thickness must be positive")
-        self.get_global_parameter("far_field_velocity").value = velocity
-        self.get_global_parameter("far_field_half_thickness").value = 0.5 * thickness
-        for name, value in zip(("xx", "yy", "aa"), log_conformation, strict=True):
-            self.get_global_parameter(f"far_field_log_c_{name}").value = value
+        linear = self.far_field_interpolation == "linear"
+        if linear != (start is not None and interval is not None):
+            raise ValueError("start state and interval are given exactly with linear interpolation")
+        states = [(velocity, thickness, log_conformation)]
+        if linear:
+            states.append((start[0], start[1], start[2]))
+        for u, h, logc in states:
+            values = (u, h, *logc)
+            if len(logc) != 3 or not all(math.isfinite(v) for v in values):
+                raise ValueError("far-field state must be finite with three log C components")
+            if not h > 0:
+                raise ValueError("far-field thickness must be positive")
+        names = ("far_field_velocity", "far_field_half_thickness",
+                 "far_field_log_c_xx", "far_field_log_c_yy", "far_field_log_c_aa")
+        end_values = (velocity, 0.5 * thickness, *log_conformation)
+        if not linear:
+            for name, value in zip(names, end_values, strict=True):
+                self.get_global_parameter(name).value = value
+            return
+        if not (math.isfinite(interval[0]) and interval[1] > interval[0]):
+            raise ValueError("far-field interval must be finite with end after start")
+        start_values = (start[0], 0.5 * start[1], *start[2])
+        self.set_far_field_ramp(
+            interval[0], interval[1],
+            {name: (a, b) for name, a, b in zip(names, start_values, end_values, strict=True)},
+        )
 
     def sponge_diagnostics(self) -> dict[str, float]:
         """Return instantaneous damping power and undamped-core velocity RMS."""
