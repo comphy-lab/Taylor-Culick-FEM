@@ -421,11 +421,14 @@ def _checked_reference(reference: dict) -> Path:
 
 
 INTERVAL_STARTS = ("legacy", "max_step", "carry")
-STEP_POLICY_KEYS = ("max_step", "interval_start", "temporal_error_fields", "newton_floor_max_dt")
+INITIAL_GUESSES = ("previous", "extrapolate")
+STEP_POLICY_KEYS = (
+    "max_step", "interval_start", "temporal_error_fields", "newton_floor_max_dt", "initial_guess",
+)
 # Numerics a continuation may change, each change recorded in the numerics schedule.
 SCHEDULE_KEYS = (
     "max_step", "interval_start", "output_step", "temporal_error", "temporal_error_fields",
-    "far_field_interpolation", "far_field_history", "newton_floor_max_dt",
+    "far_field_interpolation", "far_field_history", "newton_floor_max_dt", "initial_guess",
 )
 
 
@@ -517,6 +520,7 @@ def _schedule_values_from_metadata(metadata: dict) -> dict:
             far_field.get("history", "overwrite") if isinstance(far_field, dict) else "overwrite"
         ),
         "newton_floor_max_dt": metadata.get("newton_floor_max_dt"),
+        "initial_guess": metadata.get("initial_guess", "previous"),
     }
 
 
@@ -531,6 +535,7 @@ def _schedule_values_from_args(args: argparse.Namespace) -> dict:
         "far_field_interpolation": far_field.get("interpolation", "hold"),
         "far_field_history": far_field.get("history", "overwrite"),
         "newton_floor_max_dt": args.newton_floor_max_dt,
+        "initial_guess": args.initial_guess,
     }
 
 
@@ -1252,6 +1257,7 @@ def run_case(args: argparse.Namespace) -> dict:
         "interval_start": args.interval_start,
         "temporal_error_fields": args.temporal_error_fields,
         "newton_floor_max_dt": args.newton_floor_max_dt,
+        "initial_guess": args.initial_guess,
         # Written with the first case.json, so a continuation stopped before it
         # completes still hands the full step-policy history to its own restart.
         "numerics_schedule": (
@@ -1340,6 +1346,7 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.max_newton_iterations = args.max_newton
             problem.temporal_error_factors = dict(args.temporal_error_fields or {})
             problem.newton_floor_max_dt = args.newton_floor_max_dt
+            problem.initial_guess = args.initial_guess
             problem.initialise()
             # Preserve the original ALE reference before restoring the deformed state.
             volume0 = problem.volume()
@@ -2003,6 +2010,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_float,
         default=None,
         help="cap the dt in the Newton round-off floor eps*R^2/dt (for large adaptive steps)",
+    )
+    parser.add_argument(
+        "--initial-guess",
+        choices=INITIAL_GUESSES,
+        default="previous",
+        help=(
+            "Newton's starting point at each step: the previous solution (default) or the "
+            "linear extrapolation of the last two"
+        ),
     )
     parser.add_argument("--max-volume-error", type=_positive_float, default=5e-3)
     parser.add_argument("--max-tip-pin-residual", type=_positive_float, default=1e-6)

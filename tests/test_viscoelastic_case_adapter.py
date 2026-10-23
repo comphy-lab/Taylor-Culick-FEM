@@ -1621,3 +1621,103 @@ def test_coarse_graded_extension_leads_the_end_check_through_a_real_pulse():
         coupling.after_interval(edge, float(k + 1), 60.0, 60.0, 0.0, 0.0, 1.0)
     assert coupling.extensions, "the pulse should have reached the tail"
     assert coupling.outer_velocity <= FAR_FIELD_OUTER_TOLERANCE
+
+
+def test_extrapolated_guess_is_linear_in_the_step_ratio_and_refuses_bad_levels():
+    from axisymmetric_comoving import extrapolated_guess
+
+    level1, level2 = np.array([1.0, 2.0, -3.0]), np.array([0.5, 2.0, -1.0])
+    assert extrapolated_guess(level1, level2, 1.0, 1.0) == pytest.approx([1.5, 2.0, -5.0])
+    assert extrapolated_guess(level1, level2, 0.5, 2.0) == pytest.approx([1.125, 2.0, -3.5])
+    assert extrapolated_guess(level1, level1, 3.0, 1.0) == pytest.approx(level1)
+    assert extrapolated_guess(level1, level2[:2], 1.0, 1.0) is None
+    assert extrapolated_guess(level1, np.array([0.5, np.nan, -1.0]), 1.0, 1.0) is None
+
+
+def test_extrapolated_initial_guess_sets_only_from_two_history_levels():
+    import types
+
+    from axisymmetric_comoving import AxisymmetricComovingProblem as Problem
+
+    def stub(dts, raises=False):
+        written = []
+
+        def time_pt():
+            if raises:
+                raise RuntimeError("no timestepper")
+            return types.SimpleNamespace(dt=lambda i: dts[i])
+
+        levels = {1: [2.0, 4.0], 2: [1.0, 5.0]}
+        problem = types.SimpleNamespace(
+            time_pt=time_pt, get_history_dofs=lambda level: levels[level],
+            set_current_dofs=written.append,
+        )
+        return problem, written
+
+    problem, written = stub([0.5, 1.0])
+    Problem._extrapolate_initial_guess(problem)
+    assert len(written) == 1 and written[0] == pytest.approx([2.5, 3.5])
+    for dts, raises in (([0.5, 0.0], False), ([0.0, 1.0], False), ([0.5, 1.0], True)):
+        problem, written = stub(dts, raises)
+        Problem._extrapolate_initial_guess(problem)
+        assert written == []
+
+
+def test_initial_guess_is_mapped_validated_and_restart_changeable(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = _case({"kind": "time", "value": 0.1, "allow_recoil": True})
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a")
+    assert args.initial_guess == "previous"
+    case["solver"]["initial_guess"] = "extrapolate"
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "b")
+    assert args.initial_guess == "extrapolate"
+    case["solver"]["initial_guess"] = "predictor"
+    with pytest.raises(SystemExit):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "c")
+
+    child = copy.deepcopy(restart_case)
+    child["solver"]["initial_guess"] = "extrapolate"
+    restart = _read_restart(adapter.case_to_driver_args(_write_case(tmp_path, child), tmp_path / "n"))
+    switch = restart["numerics_schedule"][-1]
+    assert switch["control_index"] == 2 and switch["initial_guess"] == "extrapolate"
+    unchanged = _read_restart(
+        adapter.case_to_driver_args(_write_case(tmp_path, copy.deepcopy(restart_case)), tmp_path / "u")
+    )
+    assert len(unchanged["numerics_schedule"]) == 1  # a parent without the key ran "previous"
+
+
+def test_small_fem_extrapolated_guess_reaches_the_same_solution(tmp_path, monkeypatch):
+    """The option reaches the solve and changes only Newton's starting point: both guesses
+    converge to the same history, and the metadata records the choice."""
+    import axisymmetric_comoving
+    import run_viscoelastic_axi as driver
+
+    calls = []
+    original = axisymmetric_comoving.extrapolated_guess
+
+    def counted(*args):
+        calls.append(args[2:])
+        return original(*args)
+
+    monkeypatch.setattr(axisymmetric_comoving, "extrapolated_guess", counted)
+    results, used = {}, {}
+    for guess in ("previous", "extrapolate"):
+        calls.clear()
+        case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+        case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+        case["output"].update(cadence=0.02, checkpoint_every=1)
+        case["solver"]["initial_guess"] = guess
+        path = tmp_path / f"{guess}.json"
+        path.write_text(json.dumps(case))
+        metadata = driver.run_case(adapter.case_to_driver_args(path, tmp_path / guess))
+        assert metadata["initial_guess"] == guess
+        out = tmp_path / guess / "axi_viscoelastic_Oh_1_G_1_lambda_inf" / "run_viscoelastic_axi"
+        results[guess] = np.loadtxt(out / "control.txt", ndmin=2)
+        used[guess] = list(calls)
+    assert used["previous"] == []
+    assert used["extrapolate"] and all(dt > 0 and dt_prev > 0 for dt, dt_prev in used["extrapolate"])
+    assert results["extrapolate"].shape == results["previous"].shape
+    # Same converged steps, different Newton paths: agreement to the Newton tolerance.
+    np.testing.assert_allclose(results["extrapolate"][:, :3], results["previous"][:, :3],
+                               rtol=1e-7, atol=1e-9)

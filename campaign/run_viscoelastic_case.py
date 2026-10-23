@@ -120,6 +120,8 @@ def case_to_driver_args(case_path: Path, results: Path) -> argparse.Namespace:
         str(_value(solver, "max_newton", "solver")),
         "--interval-start",
         str(solver.get("interval_start", "legacy")),
+        "--initial-guess",
+        str(solver.get("initial_guess", "previous")),
         *(
             ["--temporal-error-fields", json.dumps(solver["temporal_error_fields"], sort_keys=True)]
             if "temporal_error_fields" in solver

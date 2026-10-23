@@ -201,6 +201,21 @@ from pyoomph.meshes.zeta import (
     AssignZetaCoordinatesByEulerianCoordinate,
 )
 
+INITIAL_GUESSES = ("previous", "extrapolate")
+
+
+def extrapolated_guess(level1, level2, dt: float, dt_previous: float):
+    """Linear extrapolation ``level1 + (dt/dt_previous) (level1 - level2)`` of two dof vectors.
+
+    Returns None when the levels differ in length or are not finite, so the caller keeps
+    the default guess.
+    """
+    level1 = np.asarray(level1, dtype=float)
+    level2 = np.asarray(level2, dtype=float)
+    if level1.shape != level2.shape or not (np.all(np.isfinite(level1)) and np.all(np.isfinite(level2))):
+        return None
+    return level1 + (dt / dt_previous) * (level1 - level2)
+
 
 class ComovingAnnularSheetMesh(AnnularSheetMesh):
     """``AnnularSheetMesh`` whose outer edge follows the window, not the lab.
@@ -287,6 +302,10 @@ class AxisymmetricComovingProblem(Problem):
         # dt <= 0.025; at the much larger adaptive steps the true residual floor stops
         # shrinking with dt, so a cap keeps the tolerance reachable. None: no cap.
         self.newton_floor_max_dt: float | None = None
+        # Newton's starting point at each time step. "previous" (oomph-lib's default) starts
+        # from the last solution; "extrapolate" starts from the linear extrapolation of the
+        # last two, which keeps Newton convergent at much larger adaptive steps.
+        self.initial_guess = "previous"
         # Which radius enters the eps*R^2/dt floor: the window's outer edge
         # (X + L, the largest radius in the mesh) or the tip alone (X). See the
         # module docstring's Newton-floor section.
@@ -439,6 +458,8 @@ class AxisymmetricComovingProblem(Problem):
         kept = self._far_edge_history() if self.far_field_history == "keep" else []
         super().actions_before_newton_solve()
         self._restore_far_edge_history(kept)
+        if self.initial_guess == "extrapolate":
+            self._extrapolate_initial_guess()
         base = self.newton_tolerance_at_unit_radius
         try:
             dt = float(self.time_pt().dt(0))
@@ -453,6 +474,28 @@ class AxisymmetricComovingProblem(Problem):
         floor_dt = dt if self.newton_floor_max_dt is None else min(dt, self.newton_floor_max_dt)
         floor = _MACHINE_EPSILON * scale * scale / floor_dt
         self.newton_solver_tolerance = max(base, self.newton_tolerance_safety * floor)
+
+    def _extrapolate_initial_guess(self) -> None:
+        """Start Newton from ``u_n + (dt/dt_prev) (u_n - u_n-1)`` instead of ``u_n``.
+
+        After the solve's shift, history level 1 holds ``u_n`` and level 2 ``u_n-1``, and the
+        current values are still ``u_n``. Only the unknowns change: Dirichlet data, including the
+        far edge set just above, are not in the dof vector. The converged solution is unchanged;
+        what changes is whether Newton reaches it. From ``u_n`` the first residual is dominated by
+        the volume constraint, about the window inflow times dt, and above dt ~ 0.3 the first
+        updates diverge; from the extrapolation it is O(dt^2). A step without two history levels
+        (no timestepper yet, a stationary solve) keeps the default guess.
+        """
+        try:
+            dt = float(self.time_pt().dt(0))
+            dt_previous = float(self.time_pt().dt(1))
+        except Exception:  # noqa: BLE001 -- no timestepper yet
+            return
+        if not (dt > 0.0 and dt_previous > 0.0):
+            return
+        guess = extrapolated_guess(self.get_history_dofs(1), self.get_history_dofs(2), dt, dt_previous)
+        if guess is not None:
+            self.set_current_dofs(guess)
 
     #: Nodal fields that the membrane edge prescribes through global parameters.
     far_edge_history_fields: tuple[str, ...] = ("velocity_x",)
