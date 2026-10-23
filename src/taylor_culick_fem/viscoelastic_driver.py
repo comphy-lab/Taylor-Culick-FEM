@@ -481,7 +481,7 @@ STEP_POLICY_KEYS = (
 SCHEDULE_KEYS = (
     "max_step", "interval_start", "output_step", "temporal_error", "temporal_error_fields",
     "far_field_interpolation", "far_field_history", "newton_floor_max_dt", "initial_guess",
-    "far_field_grading", "far_field_auto_extend",
+    "far_field_grading", "far_field_auto_extend", "far_field_extension",
 )
 
 
@@ -596,6 +596,7 @@ def _schedule_values_from_metadata(metadata: dict) -> dict:
         "initial_guess": metadata.get("initial_guess", "previous"),
         "far_field_grading": far_field.get("grading") if isinstance(far_field, dict) else None,
         "far_field_auto_extend": far_field.get("auto_extend") if isinstance(far_field, dict) else None,
+        "far_field_extension": far_field.get("extension") if isinstance(far_field, dict) else None,
     }
 
 
@@ -613,6 +614,7 @@ def _schedule_values_from_args(args: argparse.Namespace) -> dict:
         "initial_guess": args.initial_guess,
         "far_field_grading": far_field.get("grading"),
         "far_field_auto_extend": far_field.get("auto_extend"),
+        "far_field_extension": far_field.get("extension"),
     }
 
 

@@ -1915,10 +1915,27 @@ def test_grading_and_auto_extend_changes_enter_the_numerics_schedule(tmp_path):
     assert len(schedule) == 2
     assert schedule[-1]["far_field_grading"] == {"growth": 1.01, "near_length": 200.0}
     assert schedule[-1]["far_field_auto_extend"] == {"factor": 2.0, "tail_fraction": 0.2}
-    unchanged = {**metadata, "far_field": {**metadata["far_field"],
+    assert schedule[-1]["far_field_extension"] == 1600.0
+    unchanged = {**metadata, "far_field": {**metadata["far_field"], "extension": 1600.0,
                                            "grading": {"growth": 1.01, "near_length": 200.0},
                                            "auto_extend": {"factor": 2.0, "tail_fraction": 0.2}}}
     assert len(_restart_numerics_schedule(args, unchanged, 0.1, {"control_index": 2})) == 1
+
+
+def test_a_longer_membrane_alone_enters_the_numerics_schedule(tmp_path):
+    from taylor_culick_fem.viscoelastic_driver import _restart_numerics_schedule
+
+    case = _case({"kind": "time", "value": 0.2, "allow_recoil": True})
+    case["physics"]["far_field"] = {"mode": "membrane", "extension": 1600.0}
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a")
+    metadata = {"far_field": {"mode": "membrane", "extension": 800.0, "inner_fraction": 0.5,
+                              "node_spacing": 0.5},
+                "max_step": 0.01, "output_step": 0.05, "temporal_error": 0.001}
+    schedule = _restart_numerics_schedule(args, metadata, 0.1, {"control_index": 2})
+    assert len(schedule) == 2
+    assert schedule[-1]["far_field_extension"] == 1600.0
+    same = {**metadata, "far_field": {**metadata["far_field"], "extension": 1600.0}}
+    assert len(_restart_numerics_schedule(args, same, 0.1, {"control_index": 2})) == 1
 
 
 def test_auto_extension_sees_a_pulse_that_crosses_the_end_region_within_one_interval():
