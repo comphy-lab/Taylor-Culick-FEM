@@ -170,20 +170,33 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
         config["history"] = tuning["history"]
     if tuning["grading"] is not None:
         grading = tuning["grading"]
-        if set(grading) != {"near_length", "growth"}:
+        if not isinstance(grading, dict) or set(grading) != {"near_length", "growth"}:
             raise ValueError("far-field grading takes exactly near_length and growth")
+        _require_finite_numbers(grading, "far-field grading")
         if not grading["near_length"] >= 0 or not grading["growth"] > 1:
             raise ValueError("far-field grading needs near_length >= 0 and growth > 1")
         config["grading"] = {k: float(v) for k, v in sorted(grading.items())}
     if tuning["auto_extend"] is not None:
         auto = tuning["auto_extend"]
-        if set(auto) != {"tail_fraction", "factor"}:
+        if not isinstance(auto, dict) or set(auto) != {"tail_fraction", "factor"}:
             raise ValueError("far-field auto_extend takes exactly tail_fraction and factor")
+        _require_finite_numbers(auto, "far-field auto_extend")
         if not END_CHECK_FRACTION < auto["tail_fraction"] < 1 or not auto["factor"] > 1:
             # Above the end-of-run check's outer tenth, so the membrane grows first.
             raise ValueError("far-field auto_extend needs 0.1 < tail_fraction < 1 and factor > 1")
         config["auto_extend"] = {k: float(v) for k, v in sorted(auto.items())}
     return config
+
+
+def _require_finite_numbers(values: dict, context: str) -> None:
+    """Reject non-numeric, boolean and non-finite settings up front.
+
+    JSON accepts ``Infinity`` and an overflowing literal such as ``1e309`` becomes infinite;
+    a range check alone would admit it, and the run would only fail at its first extension.
+    """
+    for key, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{context} {key} must be a finite number")
 
 
 def _without_extension(config: object) -> object:

@@ -1721,3 +1721,58 @@ def test_small_fem_extrapolated_guess_reaches_the_same_solution(tmp_path, monkey
     # Same converged steps, different Newton paths: agreement to the Newton tolerance.
     np.testing.assert_allclose(results["extrapolate"][:, :3], results["previous"][:, :3],
                                rtol=1e-7, atol=1e-9)
+
+
+def test_far_field_grading_and_auto_extend_reject_non_finite_and_non_numeric_values(tmp_path, capsys):
+    """An infinite factor used to pass the range checks and fail only at the first extension."""
+    import argparse
+
+    from run_viscoelastic_axi import _far_field_config
+
+    base = {"far_field": "membrane", "far_field_inner_fraction": None,
+            "far_field_extension": 1000.0, "far_field_node_spacing": None,
+            "far_field_interpolation": None, "far_field_grading": None,
+            "far_field_auto_extend": None}
+    for value in (float("inf"), float("nan"), True, "2"):
+        with pytest.raises(ValueError, match="finite number"):
+            _far_field_config(argparse.Namespace(**{
+                **base, "far_field_auto_extend": {"tail_fraction": 0.2, "factor": value}}))
+        with pytest.raises(ValueError, match="finite number"):
+            _far_field_config(argparse.Namespace(**{
+                **base, "far_field_grading": {"near_length": 500, "growth": value}}))
+
+    # Through a case file: JSON's Infinity and an overflowing literal both decode to inf.
+    for literal in ("Infinity", "1e309"):
+        case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
+        case["physics"]["far_field"] = {"mode": "membrane", "extension": 800.0,
+                                        "auto_extend": {"tail_fraction": 0.2, "factor": "@F@"}}
+        path = tmp_path / f"case-{literal}.json"
+        path.write_text(json.dumps(case).replace('"@F@"', literal))
+        with pytest.raises(SystemExit):  # the driver's argument validation, as for other bad values
+            adapter.case_to_driver_args(path, tmp_path / f"out-{literal}")
+        assert "auto_extend factor must be a finite number" in capsys.readouterr().err
+
+
+def test_far_field_grading_and_auto_extend_must_be_objects(tmp_path, capsys):
+    """A JSON array with the right names is not a setting: refuse it as a usage error."""
+    import argparse
+
+    from run_viscoelastic_axi import _far_field_config, build_parser, validate_args
+
+    base = {"far_field": "membrane", "far_field_inner_fraction": None,
+            "far_field_extension": 1000.0, "far_field_node_spacing": None,
+            "far_field_interpolation": None, "far_field_grading": None,
+            "far_field_auto_extend": None}
+    with pytest.raises(ValueError, match="exactly near_length and growth"):
+        _far_field_config(argparse.Namespace(**{**base, "far_field_grading": ["near_length", "growth"]}))
+    with pytest.raises(ValueError, match="exactly tail_fraction and factor"):
+        _far_field_config(argparse.Namespace(**{**base, "far_field_auto_extend": ["tail_fraction", "factor"]}))
+
+    for flag, value in (("--far-field-grading", '["near_length", "growth"]'),
+                        ("--far-field-auto-extend", '["tail_fraction", "factor"]')):
+        parser = build_parser()
+        args = parser.parse_args(["--results", str(tmp_path / "results"), "--far-field", "membrane",
+                                  "--far-field-extension", "800", flag, value])
+        with pytest.raises(SystemExit):
+            validate_args(parser, args)
+        assert "exactly" in capsys.readouterr().err
