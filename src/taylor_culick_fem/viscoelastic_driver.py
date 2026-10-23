@@ -515,11 +515,16 @@ def _solver_without_step_policy(solver: dict) -> dict:
 def _restart_numerics_schedule(
     args: argparse.Namespace, metadata: dict, time: float, restart: dict
 ) -> list[dict]:
-    """Check and extend the record of step-policy changes at restarts.
+    """Check a restart's numerics against its parent and extend the numerics schedule.
 
-    Only ``max_step`` and ``interval_start`` may change between a parent and its
-    restart, and only while the cap stays within one output interval, so the output
-    grid, the far-field coupling interval and every history check are unchanged.
+    A restart may change the numerics in ``_schedule_values_from_args``: the step cap and
+    interval start, the output cadence (which is also the far-field coupling interval), the
+    temporal-error tolerance and fields, the Newton floor cap, the initial guess and the
+    far-edge interpolation, history, grading and auto-extension. A changed cap must stay
+    within one output interval, and a fixed-step restart may change nothing. Each change
+    appends an entry at the restart time, so later restarts and history checks can follow
+    the parent's grid segment by segment. Which case fields a continuation may change is
+    decided earlier, by ``cases.continuation_case_problems``.
     """
     parent_max_step = metadata.get("max_step")
     parent_start = metadata.get("interval_start", "legacy")
