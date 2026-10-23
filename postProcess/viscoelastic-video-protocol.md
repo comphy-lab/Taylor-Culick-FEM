@@ -2,7 +2,7 @@
 
 `animate_viscoelastic_comoving.py` renders one axisymmetric Oldroyd-B run as a
 four-panel video. It is intended for the $G$–$\lambda$ formulation produced by
-`validation/run_viscoelastic_axi.py` and reads the physical parameters from
+`src/taylor_culick_fem/viscoelastic_driver.py` and reads the physical parameters from
 the run's `case.json`.
 
 ## Panel contract

@@ -2,7 +2,7 @@
 
 Far from the rim the sheet is flat and thin and moves in plane, so the 2D
 Oldroyd-B (``lambda = inf``) solution there is the axisymmetric Trouton
-membrane of ``simulationCases/trouton1d_ale_axi.py`` with a neo-Hookean
+membrane of ``src/taylor_culick_fem/trouton1d_ale_axi.py`` with a neo-Hookean
 stress added (plane stress, ``rho = h0 = 1``, ``mu = sqrt(2) Oh``, ``G = Ec``):
 
     h_t + (1/r)(r h u)_r = 0
@@ -433,9 +433,15 @@ class FarFieldMembrane:
         dYdt[:-1] = (rel * self._upwind_graded(Y, rel, d))[:-1]
         return np.concatenate([dudt, dhdt, dYdt])
 
-    def advance(self, t1: float, inner1: float, drive0: float, drive1: float) -> None:
+    def advance(self, t1: float, inner1: float, drive0: float, drive1: float,
+                watch: np.ndarray | None = None) -> None:
         """Advance to ``t1``: inner end moves linearly to ``inner1`` while its
-        velocity moves linearly from ``drive0`` to ``drive1``."""
+        velocity moves linearly from ``drive0`` to ``drive1``.
+
+        ``watch`` selects nodes whose largest speed over every accepted step, the final
+        state included, is kept in ``watched_peak``: a pulse can reach them and recede
+        within one advance, which the final state alone would not show.
+        """
 
         dt = t1 - self.time
         if not dt > 0:
@@ -452,15 +458,20 @@ class FarFieldMembrane:
         solver = BDF(lambda t, y: self._rhs(t, y, *args), self.time, y0, t1,
                      jac_sparsity=self._sparsity, rtol=self.rtol, atol=self.atol)
         message = None
+        n = len(self.xi)
+        peak = 0.0
         while solver.status == "running":
             message = solver.step()
+            if watch is not None:
+                peak = max(peak, float(np.max(np.abs(solver.y[:n][watch]))))
         if solver.status != "finished":
             raise RuntimeError(f"far-field membrane failed: {message}")
         yend = solver.y.copy()
         solver.__dict__.clear()
-        n = len(self.xi)
         self.u, self.h, self.Y = yend[:n].copy(), yend[n:2 * n].copy(), yend[2 * n:].copy()
         self.u[0], self.u[-1] = drive1, 0.0
+        if watch is not None:
+            self.watched_peak = max(peak, float(np.max(np.abs(self.u[watch]))))
         self.time, self.inner = float(t1), float(inner1)
         if not (np.all(np.isfinite(self.u)) and np.all(self.h > 0) and np.all(self.Y > 0)):
             raise RuntimeError("far-field membrane state became unphysical")

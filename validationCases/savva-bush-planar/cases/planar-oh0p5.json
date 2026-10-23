@@ -1,0 +1,22 @@
+{
+  "schema": "pyoomph-case-v1",
+  "case_id": "planar-oh0p5",
+  "geometry": {
+    "kind": "planar",
+    "coordinates": [
+      "x",
+      "y"
+    ],
+    "frame": "co-moving"
+  },
+  "nondimensionalization": {
+    "length_scale": "h0",
+    "time_scale": "sqrt(rho*h0^3/sigma)",
+    "velocity_scale": "sqrt(sigma/(rho*h0))"
+  },
+  "physics": {
+    "problem": "planar_comoving",
+    "Oh": 0.5,
+    "description": "Newtonian sheet; Oh = mu / sqrt(2 h0 rho sigma)"
+  }
+}

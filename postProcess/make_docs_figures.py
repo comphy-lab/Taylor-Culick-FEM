@@ -1,4 +1,4 @@
-"""Generate the figures for ``docs/`` from campaign output.
+"""Generate the planar-campaign write-up figures from campaign output.
 
 Four figures:
 
@@ -37,7 +37,8 @@ look like the papers they support.
 
 Run from the repository root with the campaign volumes mounted::
 
-    uv run python postProcess/make_docs_figures.py --out docs/planar-campaign/figures
+    uv run python postProcess/make_docs_figures.py --out <figures folder> \
+        --sweep <u995 sweep run root> --archive <validation run root>
 
 Simulation output is NOT in this repository. ``--sweep`` and ``--archive``
 point at the run roots; any case whose data is missing is skipped with a
@@ -69,7 +70,7 @@ V_TC = np.sqrt(2.0)
 INTERFACE_COLOR = "#FF00C8"
 
 # Ohnesorge numbers are quoted in the Savva & Bush / JFM convention throughout
-# the docs. See docs/planar-campaign/planar-campaign.tex sec:units; the coded
+# the docs. See the planar-campaign write-up (planar-campaign.tex) sec:units; the coded
 # value is a factor sqrt(2) larger.
 PANELS = [
     ("0.035", "Oh_SB_0.035_inertial_log", "archive"),
@@ -462,14 +463,11 @@ def fig4_approach(out: Path, sweep: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", type=Path, default=Path("docs/planar-campaign/figures"))
-    ap.add_argument("--sweep", type=Path,
-                    default=Path("/mnt/stokesInt1/running-simulations/"
-                                 "elastic-taylor-culick/u995-sweep"))
-    ap.add_argument("--archive", type=Path,
-                    default=Path("/home/vatsal/running-simulations/"
-                                 "elastic-taylor-culick/"
-                                 "newtonian-comoving-pyoomph/validation"))
+    ap.add_argument("--out", type=Path, required=True, help="folder for the figures")
+    ap.add_argument("--sweep", type=Path, required=True,
+                    help="run root of the u995 Oh sweep")
+    ap.add_argument("--archive", type=Path, required=True,
+                    help="run root of the archived run_validation.py cases")
     ap.add_argument("--time", type=float, default=25.0,
                     help="inertio-capillary time at which to compare fields")
     ap.add_argument("--only", nargs="*", default=None,

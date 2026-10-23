@@ -23,3 +23,11 @@ docs/**/*.fls
 docs/**/*.fdb_latexmk
 docs/**/*.synctex.gz
 docs/**/*.toc
+
+# Local environments, private run records and the local agent include
+.venv*/
+/runs/
+/receipts/
+runs.toml
+/data-roots.toml
+CLAUDE.md
