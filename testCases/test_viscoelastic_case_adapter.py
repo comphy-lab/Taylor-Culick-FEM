@@ -1042,6 +1042,42 @@ def test_interval_start_policy_keeps_cold_start_and_jumps_to_the_cap_afterwards(
     assert _interval_start_step("max_step", 3000.0, 0.05, 0.01) == 0.01
 
 
+def test_interval_step_bounds_honour_the_interval_start_in_fixed_step_mode():
+    from argparse import Namespace
+
+    from taylor_culick_fem.viscoelastic_driver import _interval_step_bounds
+
+    def bounds(policy, previous, **kw):
+        args = Namespace(fixed_step=kw.get("fixed"), max_step=kw.get("cap"), interval_start=policy)
+        return _interval_step_bounds(args, previous, 1.0, kw.get("carried"))
+
+    # Legacy keeps the old fixed-step behaviour: every interval restarts at 1% of its length.
+    assert bounds("legacy", 5.0, fixed=0.5) == (0.5, pytest.approx(0.01))
+    assert bounds("max_step", 5.0, fixed=0.5) == (0.5, 0.5)
+    assert bounds("max_step", 0.0, fixed=0.5) == (0.5, pytest.approx(0.01))
+    assert bounds("carry", 5.0, fixed=0.5, carried=0.2) == (0.5, 0.2)
+    assert bounds("max_step", 5.0, cap=0.25) == (0.25, 0.25)
+    assert bounds("legacy", 5.0) == (1.0, pytest.approx(0.01))
+
+
+def test_a_restart_row_before_a_recorded_numerics_boundary_is_refused(tmp_path):
+    from taylor_culick_fem.viscoelastic_driver import _restart_numerics_schedule
+
+    case = _case({"kind": "time", "value": 0.2, "allow_recoil": True})
+    case["solver"].update(max_step=0.05, interval_start="max_step")
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a")
+    metadata = {"far_field": {"mode": "rest"}, "max_step": 0.01, "output_step": 0.05,
+                "temporal_error": 0.001,
+                "numerics_schedule": [
+                    {"time": 0.0, "control_index": 0, "max_step": 0.01, "interval_start": "legacy",
+                     "output_step": 0.05},
+                    {"time": 0.2, "control_index": 4, "max_step": 0.02, "interval_start": "legacy",
+                     "output_step": 0.05}]}
+    with pytest.raises(ValueError, match="precedes a recorded numerics boundary"):
+        _restart_numerics_schedule(args, metadata, 0.1, {"control_index": 2})
+    assert len(_restart_numerics_schedule(args, metadata, 0.3, {"control_index": 6})) == 3
+
+
 def test_case_maps_interval_start_with_a_legacy_default(tmp_path):
     case = _case({"kind": "time", "value": 0.1, "allow_recoil": True})
     args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a")

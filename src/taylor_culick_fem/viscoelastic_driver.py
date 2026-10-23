@@ -508,6 +508,21 @@ def _interval_start_step(
     return min(maxstep, max(interval * 1e-2, 1e-6))
 
 
+def _interval_step_bounds(
+    args: argparse.Namespace, previous_target: float, interval: float, carried: float | None
+) -> tuple[float, float]:
+    """Step cap and first step of one output interval, under the run's interval-start policy.
+
+    A fixed step is a maximum-step cap, not a promise that every internal step is identical:
+    BDF starts smaller to build its history, and output landing can add a short sliver.
+    """
+    if args.fixed_step is not None:
+        maxstep = min(args.fixed_step, interval)
+    else:
+        maxstep = min(args.max_step, interval) if args.max_step is not None else interval
+    return maxstep, _interval_start_step(args.interval_start, previous_target, interval, maxstep, carried)
+
+
 def _solver_without_step_policy(solver: dict) -> dict:
     return {key: value for key, value in solver.items() if key not in STEP_POLICY_KEYS}
 
@@ -572,6 +587,10 @@ def _restart_numerics_schedule(
             for entry in schedule:
                 entry["output_step"] = float(metadata["output_step"])
         index = restart["output_index"] if "output_index" in restart else restart["control_index"]
+        if any(int(entry["control_index"]) >= index for entry in schedule):
+            # A run's checkpoints all follow its own schedule boundary, so a restart row at
+            # or before a recorded boundary means the schedule and the checkpoint disagree.
+            raise ValueError("restart row precedes a recorded numerics boundary of its parent")
         schedule.append({"time": float(time), "control_index": index, **child})
     return schedule
 
@@ -1564,19 +1583,9 @@ def run_case(args: argparse.Namespace) -> dict:
             carried_step = None
             for control_index, target in enumerate(out_times, start=control_offset + 1):
                 interval = float(target - previous_target)
-                if args.fixed_step is not None:
-                    # This is a maximum-step cap, not a promise that every
-                    # internal step is identical: BDF starts smaller to build
-                    # its history, and output landing can add a short sliver.
-                    maxstep = min(args.fixed_step, interval)
-                    startstep = min(maxstep, max(interval * 1e-2, 1e-6))
-                else:
-                    maxstep = (
-                        min(args.max_step, interval) if args.max_step is not None else interval
-                    )
-                    startstep = _interval_start_step(
-                        args.interval_start, previous_target, interval, maxstep, carried_step
-                    )
+                maxstep, startstep = _interval_step_bounds(
+                    args, previous_target, interval, carried_step
+                )
                 if coupling is not None:
                     # Integrate over the solver's own clock, not the nominal
                     # targets, so a restart lands on the same outflow history.
