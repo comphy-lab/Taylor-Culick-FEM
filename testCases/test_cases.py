@@ -187,5 +187,33 @@ class ContinuationNumericsTests(unittest.TestCase):
             {**copy.deepcopy(parent), "completion": {**parent["completion"], "value": 1.0}}, parent)
         self.assertTrue(any("--t-end" in problem for problem in problems), problems)
 
+    def test_a_grading_change_follows_the_driver_rule(self) -> None:
+        parent = self.case
+        far = parent["physics"]["far_field"]
+
+        def child(extension: float, **settings: object) -> dict:
+            case = copy.deepcopy(parent)
+            case["physics"]["far_field"].update(extension=extension, **settings)
+            return case
+
+        regraded = {"near_length": 200.0, "growth": 1.004}
+        removed = child(2 * far["extension"])
+        removed["physics"]["far_field"].pop("grading")
+        ungraded = copy.deepcopy(parent)
+        ungraded["physics"]["far_field"].pop("grading")
+        refusals = {
+            "remove": (removed, parent),
+            "only together": (child(far["extension"], grading=regraded), parent),
+            "only together (added)": (child(far["extension"]), ungraded),
+        }
+        for name, (case, base) in refusals.items():
+            with self.subTest(refusal=name):
+                problems, _ = continuation_case_problems(case, base)
+                self.assertTrue(any(name.split(" (")[0] in problem for problem in problems), problems)
+        problems, changed = continuation_case_problems(child(2 * far["extension"], grading=regraded), parent)
+        self.assertEqual(problems, [])
+        self.assertIn("physics.far_field.grading", changed)
+
+
 if __name__ == "__main__":
     unittest.main()

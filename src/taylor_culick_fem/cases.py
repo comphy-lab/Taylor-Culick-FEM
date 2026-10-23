@@ -464,7 +464,10 @@ def continuation_case_problems(case: dict, parent: dict) -> tuple[list[str], lis
     """Problems with continuing ``parent`` (its input case) under ``case``, and the fields changed.
 
     Only ``CONTINUATION_NUMERICS`` may differ, and the membrane extension may only grow; the
-    stop time changes through ``--t-end``. Both lists are empty for an unchanged case.
+    stop time changes through ``--t-end``. As in the driver, membrane grading is never removed
+    and changes only together with a longer extension. Whether that extension also passes a
+    membrane that automatic extension has already lengthened needs the checkpoint, so the driver
+    checks it when it reads the restart. Both lists are empty for an unchanged case.
     """
     problems: list[str] = []
     changed: set[str] = set()
@@ -482,7 +485,21 @@ def continuation_case_problems(case: dict, parent: dict) -> tuple[list[str], lis
     old_ext = previous.get("physics.far_field.extension")
     if _number(new_ext) and _number(old_ext) and new_ext < old_ext:
         problems.append("a continuation may lengthen but never shorten physics.far_field.extension")
+    new_far, old_far = _membrane(case), _membrane(parent)
+    if new_far is not None and old_far is not None and new_far.get("grading") != old_far.get("grading"):
+        if new_far.get("grading") is None:
+            problems.append("a continuation may not remove physics.far_field.grading")
+        elif not (_number(new_ext) and _number(old_ext) and new_ext > old_ext):
+            problems.append("a continuation may change physics.far_field.grading only together "
+                            "with a longer physics.far_field.extension")
     return problems, sorted(changed)
+
+
+def _membrane(case: dict) -> dict | None:
+    """The case's membrane far-field settings, or None for another far field."""
+    physics = case.get("physics")
+    far = physics.get("far_field") if isinstance(physics, dict) else None
+    return far if isinstance(far, dict) and far.get("mode") == "membrane" else None
 
 
 _MISSING = object()
