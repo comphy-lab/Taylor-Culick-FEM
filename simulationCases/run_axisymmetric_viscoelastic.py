@@ -9,10 +9,12 @@ lists its fields); the run manifest records the case and the options. The defaul
 
 Before it creates anything, the runner refuses an invalid case or option and an output
 folder that already holds anything, for a fresh run and a restart alike. A restart
-(``--restart-from <parent>/checkpoints/ckpt_NNNNN.dump``) continues a run of the same case
-into its own new folder, and may only extend the stop time (``--t-end``) or lengthen the
-far-field membrane (``--far-field-extension``); the run list joins it to its parent with
-``continues``. ``run-manifest.json`` is written before any other output and is never
+(``--restart-from <parent>/checkpoints/ckpt_NNNNN.dump``) continues a run into its own new
+folder. It may extend the stop time (``--t-end``) or lengthen the far-field membrane
+(``--far-field-extension``). Its case may also differ from the parent's in numerics only
+(``cases.CONTINUATION_NUMERICS``: output cadence, step policy, error control, initial guess
+and far-edge treatment); the manifest lists the changed fields and the driver records them
+in the numerics schedule. The run list joins it to its parent with ``continues``. ``run-manifest.json`` is written before any other output and is never
 replaced. ``--check`` stops after the checks that need neither pyoomph nor the solver.
 """
 
@@ -28,7 +30,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from taylor_culick_fem.cases import CASE_FIELDS_USED, VISCOELASTIC, validate_case
+from taylor_culick_fem.cases import (
+    CASE_FIELDS_USED,
+    VISCOELASTIC,
+    continuation_case_problems,
+    validate_case,
+)
 from taylor_culick_fem.lineage import restart_evidence
 from taylor_culick_fem.run_contract import (
     UNITS,
@@ -58,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="new or empty output folder; never one that already holds a run")
     parser.add_argument("--restart-from", type=Path, default=None,
                         help="checkpoint <parent>/checkpoints/ckpt_NNNNN.dump of an earlier run of "
-                             "the same case; continues into --out")
+                             "this case (or of one that differs only in numerics); continues into --out")
     parser.add_argument("--t-end", type=float, default=None,
                         help="replace the case's stop time (time value or event horizon)")
     parser.add_argument("--far-field-extension", type=float, default=None,
@@ -93,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     case_sha256 = sha256(case_path)
     restart, parent = None, None
     if args.restart_from is not None:
-        parent, restart = check_restart(args.restart_from, args.out, case_sha256)
+        parent, restart = check_restart(args.restart_from, args.out, case_sha256, case=case,
+                                        continuation_check=continuation_case_problems)
     if args.check:
         print(json.dumps({"check": "passed", "case_id": case["case_id"], "case_sha256": case_sha256}))
         return 0

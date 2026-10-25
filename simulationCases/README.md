@@ -17,12 +17,22 @@ python simulationCases/run_axisymmetric_viscoelastic.py <case> --out <new folder
 ```
 
 The runner refuses an invalid case or option, and an output folder that already holds
-anything, before it writes; `--check` stops there. A continuation uses the **same case
-file**: `--restart-from` names a checkpoint of an earlier run of that case, whose
-`run-manifest.json` must carry the same case hash, and the runner pins the parent's
-checkpoint, input case, metadata and histories by SHA-256 before continuing. The only
-changes a continuation may make are a later stop time (`--t-end`) and a longer far-field
-membrane (`--far-field-extension`), and the manifest records both in its command line.
+anything, before it writes; `--check` stops there. `--restart-from` names a checkpoint
+of an earlier run, and the runner pins the parent's checkpoint, input case, metadata and
+histories by SHA-256 before continuing. A continuation may make a later stop time
+(`--t-end`) and a longer far-field membrane (`--far-field-extension`), recorded in the
+manifest's command line. Its case file is either the parent's (same case hash) or one that
+differs from the parent's `input-case.json` only in the numerics below
+(`cases.CONTINUATION_NUMERICS`). The manifest's `restart.case_change` then lists the
+changed fields, and the driver records the new values from the restart row on in the
+numerics schedule of `case.json`.
+
+| Numerics a continuation may change | |
+|---|---|
+| `output.cadence`, `solver.max_step` | output and far-field coupling interval, and the step cap (at most the cadence) |
+| `solver.interval_start`, `solver.initial_guess`, `solver.temporal_error_fields`, `solver.newton_floor_max_dt`, `tolerances.temporal_error` | step policy, Newton start and error control |
+| `physics.far_field.extension` (longer only), `.interpolation`, `.history`, `.grading`, `.auto_extend` | far-edge treatment of a membrane far field |
+
 The exit status is 0 when the run ends at its declared stop with every check passing.
 
 **Case file** (`pyoomph-case-v1`). Every field below is read by the runner and listed in
@@ -41,7 +51,7 @@ the manifest's `case_fields_used`; other fields are descriptive.
 | `physics.supg_factor` | optional SUPG factor (default 1) |
 | `physics.passive_conformation` | optional; `true` transports the conformation without its stress |
 | `physics.sponge` | optional absorbing layer: `start`, `width`, `gamma_max`, `profile` (`"quintic"`) |
-| `physics.far_field` | optional far edge: `{"mode": "rest"}` (default) or `{"mode": "membrane", "extension": E}` with optional `inner_fraction`, `node_spacing` |
+| `physics.far_field` | optional far edge: `{"mode": "rest"}` (default) or `{"mode": "membrane", "extension": E}` with optional `inner_fraction`, `node_spacing`, `interpolation` (`"hold"`, default, or `"linear"`: the edge data vary linearly over each coupling interval), `history` (`"overwrite"`, default, or `"keep"`: the far edge keeps its previous time level), `grading` (`{"near_length", "growth"}`: membrane nodes grow geometrically beyond `near_length`) and `auto_extend` (`{"tail_fraction", "factor"}`: the membrane lengthens itself before the pulse or the window reaches its outer `tail_fraction`) |
 | `mesh.length`, `mesh.r0` | window length `L` and initial hole radius |
 | `mesh.resolution`, `mesh.far_resolution` | target element sizes near the rim and in the far field |
 | `output.cadence` | time between control samples |
@@ -49,7 +59,11 @@ the manifest's `case_fields_used`; other fields are descriptive.
 | `output.checkpoint_every` | write a restart state every N samples (a multiple of the stride; 0 disables) |
 | `output.write_states` | must be `false`; the driver writes its own checkpoints |
 | `solver.max_step`, `solver.max_newton` | largest time step and Newton iterations |
-| `tolerances.temporal_error` | adaptive time-step error tolerance |
+| `solver.interval_start` | optional first step of each output interval: `"legacy"` (default, 1% of the interval), `"max_step"` or `"carry"` (the step the error controller reached) |
+| `solver.initial_guess` | optional Newton start of each step: `"previous"` (default) or `"extrapolate"` (linear extrapolation of the last two steps) |
+| `solver.temporal_error_fields` | optional field weights that register the temporal error estimator, e.g. `{"X": 1, "U": 1}`; `X` and `U` need equal weights; without it every step runs at the cap |
+| `solver.newton_floor_max_dt` | optional cap on the step used in the Newton round-off floor |
+| `tolerances.temporal_error` | adaptive time-step error tolerance (used only with `solver.temporal_error_fields`) |
 | `tolerances.max_volume_error`, `.max_tip_pin_residual`, `.min_radius_increase`, `.min_polymer_stress` | checks that fail a run |
 | `tolerances.max_positive_sponge_power` | optional check on the absorbing layer |
 | `arrest.*` | `opening_ustar`, `arrest_ustar`, `consecutive_samples`, `trend_tolerance`, `radius_span_tolerance`: the tip-arrest detector |

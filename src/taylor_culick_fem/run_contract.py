@@ -97,8 +97,15 @@ def parent_run(state: Path) -> Path | None:
     return None
 
 
-def check_restart(state: Path, out: Path, case_sha256: str) -> tuple[Path, dict]:
-    """Refuse a state that is missing, unattributable or of another case; return its record."""
+def check_restart(state: Path, out: Path, case_sha256: str, *, case: dict | None = None,
+                  continuation_check=None) -> tuple[Path, dict]:
+    """Refuse a state that is missing, unattributable or of another case; return its record.
+
+    By default a restart must use its parent's case file byte for byte. A runner that
+    allows a continuation to change some fields passes ``case`` and ``continuation_check``,
+    which maps ``(case, parent input case)`` to ``(problems, changed fields)``; a changed case
+    is then accepted when it has no problems, and the record lists the changed fields.
+    """
     if not state.is_file():
         raise SystemExit(f"refused: restart state {state} does not exist")
     parent = parent_run(state)
@@ -106,13 +113,28 @@ def check_restart(state: Path, out: Path, case_sha256: str) -> tuple[Path, dict]
         raise SystemExit(f"refused: restart state {state} cannot be checked: "
                          f"no {MANIFEST} in its run folder")
     record = json.loads((parent / MANIFEST).read_text(encoding="utf-8"))
+    change = None
     if record.get("case_sha256") != case_sha256:
-        raise SystemExit(f"refused: restart state {state} belongs to another case (case_sha256 differs)")
+        if continuation_check is None or case is None:
+            raise SystemExit(f"refused: restart state {state} belongs to another case "
+                             "(case_sha256 differs)")
+        snapshot = parent / "input-case.json"
+        if not snapshot.is_file():
+            raise SystemExit(f"refused: restart state {state} belongs to another case "
+                             "(case_sha256 differs and its run has no input-case.json to compare)")
+        problems, changed = continuation_check(case, json.loads(snapshot.read_text(encoding="utf-8")))
+        if problems:
+            raise SystemExit(f"refused: restart state {state} belongs to another case: it differs "
+                             "beyond the numerics a continuation may change: " + "; ".join(problems))
+        change = {"parent_case_sha256": record.get("case_sha256"), "changed": changed}
     if out.resolve().is_relative_to(parent):
         raise SystemExit("refused: a restart writes to its own folder, not inside its parent run")
     parent_manifest = {"path": str(parent / MANIFEST), "sha256": sha256(parent / MANIFEST)}
-    return parent, {"path": str(state.resolve()), "sha256": sha256(state),
-                    "parent_manifest": parent_manifest}
+    restart = {"path": str(state.resolve()), "sha256": sha256(state),
+               "parent_manifest": parent_manifest}
+    if change is not None:
+        restart["case_change"] = change
+    return parent, restart
 
 
 def append_progress(out: Path, event: str, **values) -> None:

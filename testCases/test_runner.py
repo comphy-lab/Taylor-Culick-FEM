@@ -9,6 +9,7 @@ options of the runner it calls.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import importlib.util
 import io
@@ -136,6 +137,44 @@ class RefusalTests(unittest.TestCase):
             nested = state.parent / "continuation"
             self.assertIn("not inside its parent", self.refused(str(CASE), "--out", str(nested), "--restart-from", str(state)))
             self.assertFalse(out.exists() or nested.exists())
+
+    def test_a_continuation_may_change_only_its_numerics(self) -> None:
+        base = json.loads(CASE.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self.parent_run(Path(tmp) / "parent")
+            (state.parent / "input-case.json").write_text(CASE.read_text(encoding="utf-8"), encoding="utf-8")
+            out = Path(tmp) / "continuation"
+            faster = copy.deepcopy(base)
+            faster["output"]["cadence"] = 2 * base["output"]["cadence"]
+            faster["solver"].update(max_step=2 * base["output"]["cadence"], initial_guess="extrapolate")
+            path = Path(tmp) / "faster.json"
+            path.write_text(json.dumps(faster), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                self.assertEqual(self.runner.main([str(path), "--out", str(out), "--restart-from",
+                                                   str(state), "--check"]), 0)
+            self.assertEqual(json.loads(printed.getvalue())["check"], "passed")
+            from taylor_culick_fem.cases import continuation_case_problems
+            from taylor_culick_fem.run_contract import check_restart
+            _, record = check_restart(state, out, sha256(path), case=faster,
+                                      continuation_check=continuation_case_problems)
+            self.assertEqual(record["case_change"], {
+                "parent_case_sha256": sha256(CASE),
+                "changed": ["output.cadence", "solver.initial_guess", "solver.max_step"]})
+            # Without the check, as for the other runners, a changed case is another case.
+            with self.assertRaises(SystemExit) as stop:
+                check_restart(state, out, sha256(path))
+            self.assertIn("another case", str(stop.exception))
+            heavier = copy.deepcopy(faster)
+            heavier["physics"]["Oh"] = 2 * base["physics"]["Oh"]
+            path.write_text(json.dumps(heavier), encoding="utf-8")
+            message = self.refused(str(path), "--out", str(out), "--restart-from", str(state), "--check")
+            self.assertIn("another case", message)
+            self.assertIn("physics.Oh", message)
+            (state.parent / "input-case.json").unlink()
+            path.write_text(json.dumps(faster), encoding="utf-8")
+            message = self.refused(str(path), "--out", str(out), "--restart-from", str(state), "--check")
+            self.assertIn("no input-case.json", message)
+            self.assertFalse(out.exists())
 
     def test_check_creates_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

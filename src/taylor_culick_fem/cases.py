@@ -13,13 +13,17 @@ once; ``validate_case`` refuses a case naming all of them. ``driver_arguments`` 
 case onto the solver driver's command-line options.
 
 A case carries the physics and the numerics of one run. Continuation is not part of the
-case: a restart uses the same case file with ``--restart-from``, and may only extend the
-stop time (``--t-end``) or lengthen the far-field membrane (``--far-field-extension``); an
-equilibrium continuation may only move the stop value of ``Ec`` (``--ec-stop``).
+case: a restart names its parent checkpoint with ``--restart-from``, and may extend the stop
+time (``--t-end``) or lengthen the far-field membrane (``--far-field-extension``). A
+viscoelastic continuation may also use a case that differs from its parent's only in the
+numerics listed in ``CONTINUATION_NUMERICS`` (``continuation_case_problems``); the driver
+records each change in the run's numerics schedule. An equilibrium continuation may only
+move the stop value of ``Ec`` (``--ec-stop``).
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from pathlib import Path
@@ -62,6 +66,17 @@ HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window
 TOLERANCES = ("temporal_error", "max_volume_error", "max_tip_pin_residual",
               "min_radius_increase", "min_polymer_stress")
 ARREST = ("opening_ustar", "arrest_ustar", "trend_tolerance", "radius_span_tolerance")
+INTERVAL_STARTS = ("legacy", "max_step", "carry")
+INITIAL_GUESSES = ("previous", "extrapolate")
+#: Dotted case fields a viscoelastic continuation may change from its parent's case. They are
+#: numerics: the output cadence (which is also the far-field coupling interval), the step
+#: policy and error control, and the far-edge treatment. The membrane extension may only grow.
+CONTINUATION_NUMERICS = (
+    "output.cadence", "solver.max_step", "solver.interval_start", "solver.initial_guess",
+    "solver.temporal_error_fields", "solver.newton_floor_max_dt", "tolerances.temporal_error",
+    "physics.far_field.extension", "physics.far_field.interpolation",
+    "physics.far_field.history", "physics.far_field.grading", "physics.far_field.auto_extend",
+)
 
 #: Every case field the runner reads; the run manifest records this list.
 CASE_FIELDS_USED = [
@@ -72,7 +87,8 @@ CASE_FIELDS_USED = [
     "physics.sponge", "physics.far_field",
     "mesh.length", "mesh.r0", "mesh.resolution", "mesh.far_resolution",
     "output.cadence", "output.write_states", "output.field_stride", "output.checkpoint_every",
-    "solver.max_step", "solver.max_newton",
+    "solver.max_step", "solver.max_newton", "solver.interval_start", "solver.initial_guess",
+    "solver.temporal_error_fields", "solver.newton_floor_max_dt",
     *(f"tolerances.{name}" for name in TOLERANCES), "tolerances.max_positive_sponge_power",
     *(f"arrest.{name}" for name in ARREST), "arrest.consecutive_samples",
     "completion.kind", "completion.value", "completion.horizon", "completion.allow_recoil",
@@ -159,10 +175,12 @@ def _physics_problems(physics: dict, mesh: dict, problems: list[str]) -> None:
             if passive is True or relaxation != "inf":
                 problems.append("physics.far_field membrane requires active elasticity with "
                                 'physics.relaxation_time = "inf" and no passive_conformation')
-            allowed = {"mode", "inner_fraction", "extension", "node_spacing"}
+            allowed = {"mode", "inner_fraction", "extension", "node_spacing", "interpolation",
+                       "history", "grading", "auto_extend"}
             if not set(far_field) <= allowed or "extension" not in far_field:
                 problems.append("physics.far_field membrane requires extension and accepts only "
-                                "inner_fraction, extension and node_spacing")
+                                "inner_fraction, extension, node_spacing, interpolation, history, "
+                                "grading and auto_extend")
             else:
                 _positive(far_field, "extension", "physics.far_field", problems)
                 if "node_spacing" in far_field:
@@ -170,8 +188,54 @@ def _physics_problems(physics: dict, mesh: dict, problems: list[str]) -> None:
                 fraction = far_field.get("inner_fraction", 0.5)
                 if not _number(fraction) or not 0 < fraction < 1:
                     problems.append("physics.far_field.inner_fraction must lie strictly between 0 and 1")
+                _far_edge_problems(far_field, problems)
         else:
             problems.append(f"unsupported physics.far_field mode: {far_field.get('mode')!r}")
+
+
+def _far_edge_problems(far_field: dict, problems: list[str]) -> None:
+    """The optional far-edge numerics of a membrane far field."""
+    if far_field.get("interpolation", "hold") not in ("hold", "linear"):
+        problems.append('physics.far_field.interpolation must be "hold" or "linear"')
+    if far_field.get("history", "overwrite") not in ("overwrite", "keep"):
+        problems.append('physics.far_field.history must be "overwrite" or "keep"')
+    grading = far_field.get("grading")
+    if grading is not None:
+        if not isinstance(grading, dict) or set(grading) != {"near_length", "growth"}:
+            problems.append("physics.far_field.grading must be an object with exactly near_length "
+                            "and growth")
+        elif not (_number(grading["near_length"]) and grading["near_length"] >= 0
+                  and _number(grading["growth"]) and grading["growth"] > 1):
+            problems.append("physics.far_field.grading needs a finite near_length >= 0 and a "
+                            "finite growth > 1")
+    auto = far_field.get("auto_extend")
+    if auto is not None:
+        if not isinstance(auto, dict) or set(auto) != {"tail_fraction", "factor"}:
+            problems.append("physics.far_field.auto_extend must be an object with exactly "
+                            "tail_fraction and factor")
+        elif not (_number(auto["tail_fraction"]) and 0.1 < auto["tail_fraction"] < 1
+                  and _number(auto["factor"]) and auto["factor"] > 1):
+            problems.append("physics.far_field.auto_extend needs a finite tail_fraction between "
+                            "0.1 and 1 and a finite factor > 1")
+
+
+def _solver_policy_problems(solver: dict, problems: list[str]) -> None:
+    """The optional step policy, error control and Newton settings of the solver."""
+    if solver.get("interval_start", "legacy") not in INTERVAL_STARTS:
+        problems.append("solver.interval_start must be one of " + ", ".join(INTERVAL_STARTS))
+    if solver.get("initial_guess", "previous") not in INITIAL_GUESSES:
+        problems.append("solver.initial_guess must be one of " + ", ".join(INITIAL_GUESSES))
+    fields = solver.get("temporal_error_fields")
+    if fields is not None:
+        if not isinstance(fields, dict) or not fields or not all(
+                isinstance(k, str) and _number(v) and v > 0 for k, v in fields.items()):
+            problems.append("solver.temporal_error_fields must be a non-empty object of finite "
+                            "positive weights")
+        elif ("X" in fields or "U" in fields) and fields.get("X") != fields.get("U"):
+            # The pinned pyoomph applies the first ODE field's scale to every global unknown.
+            problems.append("solver.temporal_error_fields must weight X and U equally")
+    if "newton_floor_max_dt" in solver:
+        _positive(solver, "newton_floor_max_dt", "solver", problems)
 
 
 def _completion_problems(completion: dict, physics: dict, output: dict, problems: list[str]) -> None:
@@ -368,6 +432,7 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
         problems.append("output.checkpoint_every must be a multiple of output.field_stride")
     _positive(solver, "max_step", "solver", problems)
     _integer(solver, "max_newton", "solver", 1, problems)
+    _solver_policy_problems(solver, problems)
     for key in TOLERANCES:
         _positive(tolerances, key, "tolerances", problems)
     if "max_positive_sponge_power" in tolerances:
@@ -377,6 +442,67 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
     _integer(arrest, "consecutive_samples", "arrest", 2, problems)
     _completion_problems(completion, physics, output, problems)
     return problems
+
+
+def _flatten(value: object, prefix: str = "") -> dict[str, object]:
+    """Dotted leaf paths of a case; an empty object is a leaf."""
+    if isinstance(value, dict) and value:
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            out.update(_flatten(item, f"{prefix}.{key}" if prefix else str(key)))
+        return out
+    return {prefix: value}
+
+
+def _numerics_field(path: str) -> str | None:
+    """The ``CONTINUATION_NUMERICS`` field that ``path`` belongs to, if any."""
+    return next((field for field in CONTINUATION_NUMERICS
+                 if path == field or path.startswith(field + ".")), None)
+
+
+def continuation_case_problems(case: dict, parent: dict) -> tuple[list[str], list[str]]:
+    """Problems with continuing ``parent`` (its input case) under ``case``, and the fields changed.
+
+    Only ``CONTINUATION_NUMERICS`` may differ, and the membrane extension may only grow; the
+    stop time changes through ``--t-end``. As in the driver, membrane grading is never removed
+    and changes only together with a longer extension. Whether that extension also passes a
+    membrane that automatic extension has already lengthened needs the checkpoint, so the driver
+    checks it when it reads the restart. Both lists are empty for an unchanged case.
+    """
+    problems: list[str] = []
+    changed: set[str] = set()
+    current, previous = _flatten(case), _flatten(parent)
+    for path in sorted(set(current) | set(previous)):
+        if current.get(path, _MISSING) == previous.get(path, _MISSING):
+            continue
+        field = _numerics_field(path)
+        if field is None:
+            hint = " (use --t-end)" if path.startswith("completion.") else ""
+            problems.append(f"a continuation may not change {path}{hint}")
+        else:
+            changed.add(field)
+    new_ext = current.get("physics.far_field.extension")
+    old_ext = previous.get("physics.far_field.extension")
+    if _number(new_ext) and _number(old_ext) and new_ext < old_ext:
+        problems.append("a continuation may lengthen but never shorten physics.far_field.extension")
+    new_far, old_far = _membrane(case), _membrane(parent)
+    if new_far is not None and old_far is not None and new_far.get("grading") != old_far.get("grading"):
+        if new_far.get("grading") is None:
+            problems.append("a continuation may not remove physics.far_field.grading")
+        elif not (_number(new_ext) and _number(old_ext) and new_ext > old_ext):
+            problems.append("a continuation may change physics.far_field.grading only together "
+                            "with a longer physics.far_field.extension")
+    return problems, sorted(changed)
+
+
+def _membrane(case: dict) -> dict | None:
+    """The case's membrane far-field settings, or None for another far field."""
+    physics = case.get("physics")
+    far = physics.get("far_field") if isinstance(physics, dict) else None
+    return far if isinstance(far, dict) and far.get("mode") == "membrane" else None
+
+
+_MISSING = object()
 
 
 def validate_case(case: object, problem: str | None = None) -> None:
@@ -422,6 +548,8 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
         "--checkpoint-every", str(output["checkpoint_every"]),
         "--max-step", str(solver["max_step"]),
         "--max-newton", str(solver["max_newton"]),
+        "--interval-start", str(solver.get("interval_start", "legacy")),
+        "--initial-guess", str(solver.get("initial_guess", "previous")),
         "--temporal-error", str(tolerances["temporal_error"]),
         "--max-volume-error", str(tolerances["max_volume_error"]),
         "--max-tip-pin-residual", str(tolerances["max_tip_pin_residual"]),
@@ -433,6 +561,10 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
         "--arrest-trend-tolerance", str(arrest["trend_tolerance"]),
         "--arrest-radius-span", str(arrest["radius_span_tolerance"]),
     ]
+    if "temporal_error_fields" in solver:
+        arguments += ["--temporal-error-fields", json.dumps(solver["temporal_error_fields"], sort_keys=True)]
+    if "newton_floor_max_dt" in solver:
+        arguments += ["--newton-floor-max-dt", str(solver["newton_floor_max_dt"])]
     if physics.get("passive_conformation", False):
         arguments.append("--passive-conformation")
     sponge = physics.get("sponge")
@@ -450,9 +582,14 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
             extension = far_field_extension
         arguments += ["--far-field", "membrane", "--far-field-extension", str(extension)]
         for key, flag in (("inner_fraction", "--far-field-inner-fraction"),
-                          ("node_spacing", "--far-field-node-spacing")):
+                          ("node_spacing", "--far-field-node-spacing"),
+                          ("interpolation", "--far-field-interpolation"),
+                          ("history", "--far-field-history")):
             if key in far_field:
                 arguments += [flag, str(far_field[key])]
+        for key, flag in (("grading", "--far-field-grading"), ("auto_extend", "--far-field-auto-extend")):
+            if key in far_field:
+                arguments += [flag, json.dumps(far_field[key], sort_keys=True)]
     elif far_field_extension is not None:
         raise ValueError("--far-field-extension requires a membrane far field")
     if "max_positive_sponge_power" in tolerances:

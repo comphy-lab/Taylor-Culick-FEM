@@ -202,6 +202,21 @@ from pyoomph.meshes.zeta import (
     AssignZetaCoordinatesByEulerianCoordinate,
 )
 
+INITIAL_GUESSES = ("previous", "extrapolate")
+
+
+def extrapolated_guess(level1, level2, dt: float, dt_previous: float):
+    """Linear extrapolation ``level1 + (dt/dt_previous) (level1 - level2)`` of two dof vectors.
+
+    Returns None when the levels differ in length or are not finite, so the caller keeps
+    the default guess.
+    """
+    level1 = np.asarray(level1, dtype=float)
+    level2 = np.asarray(level2, dtype=float)
+    if level1.shape != level2.shape or not (np.all(np.isfinite(level1)) and np.all(np.isfinite(level2))):
+        return None
+    return level1 + (dt / dt_previous) * (level1 - level2)
+
 
 class ComovingAnnularSheetMesh(AnnularSheetMesh):
     """``AnnularSheetMesh`` whose outer edge follows the window, not the lab.
@@ -284,6 +299,14 @@ class AxisymmetricComovingProblem(Problem):
         self.mesh_grading_length = 6.0  # inherited grading rule; see AnnularSheetMesh
         self.newton_tolerance_at_unit_radius = 1e-8
         self.newton_tolerance_safety = 10.0
+        # Largest dt used in the round-off floor below. The eps*R^2/dt law was tuned at
+        # dt <= 0.025; at the much larger adaptive steps the true residual floor stops
+        # shrinking with dt, so a cap keeps the tolerance reachable. None: no cap.
+        self.newton_floor_max_dt: float | None = None
+        # Newton's starting point at each time step. "previous" (oomph-lib's default) starts
+        # from the last solution; "extrapolate" starts from the linear extrapolation of the
+        # last two, which keeps Newton convergent at much larger adaptive steps.
+        self.initial_guess = "previous"
         # Which radius enters the eps*R^2/dt floor: the window's outer edge
         # (X + L, the largest radius in the mesh) or the tip alone (X). See the
         # module docstring's Newton-floor section.
@@ -293,6 +316,39 @@ class AxisymmetricComovingProblem(Problem):
         # its radial velocity and thickness are global parameters, updated by
         # the driver from the coupled far-field membrane between intervals.
         self.far_field = "rest"
+        # Membrane edge data within an output interval: "hold" applies the interval-end
+        # state for the whole interval (first order in the interval length); "linear"
+        # moves from the start state to the end state in time (second order). Linear
+        # updates the same global parameters before every Newton solve, so the state
+        # file, and restarts from earlier checkpoints, are unchanged.
+        self.far_field_interpolation = "hold"
+        self._far_field_ramp: dict | None = None
+        # pyoomph re-applies every Dirichlet value before each Newton solve and writes
+        # it to time levels 0 AND 1, evaluated at each level's time. A parameter-driven
+        # value has no time dependence, so the previous step's edge value is replaced by
+        # the current one and BDF2 sees the wrong rate of change at the far edge.
+        # "keep" restores level 1 of those far-edge dofs after the update; "overwrite"
+        # is pyoomph's behaviour, kept as the default so existing runs reproduce.
+        self.far_field_history = "overwrite"
+
+    def set_far_field_ramp(self, start_time: float, end_time: float, values: dict) -> None:
+        """Move the named global parameters linearly from their start to their end
+        values over [start_time, end_time]; ``values`` maps a name to (start, end)."""
+
+        if not end_time > start_time:
+            raise ValueError("far-field ramp needs an end after its start")
+        self._far_field_ramp = {"start": float(start_time), "end": float(end_time),
+                                "values": dict(values)}
+        self._apply_far_field_ramp(float(start_time))
+
+    def _apply_far_field_ramp(self, time: float) -> None:
+        ramp = self._far_field_ramp
+        if ramp is None:
+            return
+        fraction = (time - ramp["start"]) / (ramp["end"] - ramp["start"])
+        weight = min(1.0, max(0.0, fraction))
+        for name, (start, end) in ramp["values"].items():
+            self.get_global_parameter(name).value = start + weight * (end - start)
 
     @property
     def R_out(self) -> float:
@@ -356,6 +412,10 @@ class AxisymmetricComovingProblem(Problem):
             # between output intervals, never unknowns, so DirichletBC is legal.
             far_velocity = self.define_global_parameter(far_field_velocity=0.0)
             half = self.define_global_parameter(far_field_half_thickness=0.5)
+            if self.far_field_interpolation not in ("hold", "linear"):
+                raise ValueError("far_field_interpolation must be 'hold' or 'linear'")
+            if self.far_field_history not in ("overwrite", "keep"):
+                raise ValueError("far_field_history must be 'overwrite' or 'keep'")
             eqs += DirichletBC(velocity_x=far_velocity) @ "far"
             eqs += DirichletBC(mesh_y=half) @ "interface/far"
         else:
@@ -392,7 +452,15 @@ class AxisymmetricComovingProblem(Problem):
         without bound by construction. Before the ODE domain exists (the very
         first setup) the initial value ``X0`` is used.
         """
+        if self._far_field_ramp is not None:
+            # The step's new time level is already set: evaluate the edge there, before
+            # the Dirichlet values are applied.
+            self._apply_far_field_ramp(float(self.get_current_time(as_float=True)))
+        kept = self._far_edge_history() if self.far_field_history == "keep" else []
         super().actions_before_newton_solve()
+        self._restore_far_edge_history(kept)
+        if self.initial_guess == "extrapolate":
+            self._extrapolate_initial_guess()
         base = self.newton_tolerance_at_unit_radius
         try:
             dt = float(self.time_pt().dt(0))
@@ -404,8 +472,70 @@ class AxisymmetricComovingProblem(Problem):
         scale = self.window_position()
         if self.newton_scale_uses_window:
             scale += self.window_length
-        floor = _MACHINE_EPSILON * scale * scale / dt
+        floor_dt = dt if self.newton_floor_max_dt is None else min(dt, self.newton_floor_max_dt)
+        floor = _MACHINE_EPSILON * scale * scale / floor_dt
         self.newton_solver_tolerance = max(base, self.newton_tolerance_safety * floor)
+
+    def _extrapolate_initial_guess(self) -> None:
+        """Start Newton from ``u_n + (dt/dt_prev) (u_n - u_n-1)`` instead of ``u_n``.
+
+        After the solve's shift, history level 1 holds ``u_n`` and level 2 ``u_n-1``, and the
+        current values are still ``u_n``. Only the unknowns change: Dirichlet data, including the
+        far edge set just above, are not in the dof vector. The converged solution is unchanged;
+        what changes is whether Newton reaches it. From ``u_n`` the first residual is dominated by
+        the volume constraint, about the window inflow times dt, and above dt ~ 0.3 the first
+        updates diverge; from the extrapolation it is O(dt^2). A step without two history levels
+        (no timestepper yet, a stationary solve) keeps the default guess.
+        """
+        try:
+            dt = float(self.time_pt().dt(0))
+            dt_previous = float(self.time_pt().dt(1))
+        except Exception:  # noqa: BLE001 -- no timestepper yet
+            return
+        if not (dt > 0.0 and dt_previous > 0.0):
+            return
+        guess = extrapolated_guess(self.get_history_dofs(1), self.get_history_dofs(2), dt, dt_previous)
+        if guess is not None:
+            self.set_current_dofs(guess)
+
+    #: Nodal fields that the membrane edge prescribes through global parameters.
+    far_edge_history_fields: tuple[str, ...] = ("velocity_x",)
+
+    def _far_edge_history(self) -> list:
+        """Level-1 values of the pinned far-edge dofs that the Dirichlet update rewrites.
+
+        Covers the prescribed nodal fields and the pinned corner height (``mesh_y``).
+        Constant Dirichlet values on the same nodes are saved too; restoring them is a
+        no-op. Empty before the first time step (no history level 1 yet).
+        """
+        if self.far_field != "membrane":
+            return []
+        try:
+            mesh = self.get_mesh("liquid")
+            nodes = list(mesh.boundary_nodes("far"))
+        except Exception:  # noqa: BLE001 -- mesh not built yet
+            return []
+        if not nodes or nodes[0].ntstorage() < 2:
+            return []
+        indices = mesh.get_nodal_field_indices()
+        fields = [indices[name] for name in self.far_edge_history_fields if name in indices]
+        kept = []
+        for node in nodes:
+            for index in fields:
+                if node.is_pinned(index):
+                    kept.append((node, index, None, node.value_at_t(1, index)))
+            if node.position_is_pinned(1):
+                kept.append((node, None, 1, node.x_at_t(1, 1)))
+        return kept
+
+    @staticmethod
+    def _restore_far_edge_history(kept: list) -> None:
+        """Put back the level-1 values saved by ``_far_edge_history``."""
+        for node, index, coordinate, value in kept:
+            if coordinate is None:
+                node.set_value_at_t(1, index, value)
+            else:
+                node.set_x_at_t(1, coordinate, value)
 
     # ---------------------------------------------------------------- readers
 

@@ -99,8 +99,8 @@ uv run python -m pytest testCases
 
 The runner validates the case, writes `run-manifest.json` before any other
 output and refuses an output folder that already holds anything. A continuation
-uses the same case with `--restart-from <run>/checkpoints/ckpt_NNNNN.dump` into
-its own new folder. `simulationCases/README.md` lists the case fields; each
+uses the same case, or one that differs only in its numerics, with
+`--restart-from <run>/checkpoints/ckpt_NNNNN.dump` into its own new folder. `simulationCases/README.md` lists the case fields; each
 study folder's README says how to run that study. Set `HWLOC_COMPONENTS=-gl`
 where hwloc could probe an unresponsive graphics display while MPI starts.
 

@@ -207,8 +207,9 @@ class _StubMembrane:
     def radii(self):
         return np.linspace(self.inner, self.outer, 11)
 
-    def advance(self, t1, inner1, drive0, drive1):
+    def advance(self, t1, inner1, drive0, drive1, watch=None):
         self.calls.append((t1, inner1, drive0, drive1))
+        self.watched_peak = float(np.max(np.abs(self.u[watch]))) if watch is not None else 0.0
 
     def state_at(self, radius):
         self.calls.append(("state", radius))
