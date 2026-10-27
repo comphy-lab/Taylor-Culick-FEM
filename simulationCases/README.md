@@ -13,7 +13,8 @@ default case.
 python simulationCases/run_axisymmetric_viscoelastic.py simulationCases/axisymmetric_viscoelastic.json --out <new folder>
 python simulationCases/run_axisymmetric_viscoelastic.py simulationCases/axisymmetric_viscoelastic.json --out <new folder> --check
 python simulationCases/run_axisymmetric_viscoelastic.py <case> --out <new folder> \
-    --restart-from <parent run>/checkpoints/ckpt_NNNNN.dump [--t-end T] [--far-field-extension E]
+    --restart-from <parent run>/checkpoints/ckpt_NNNNN.dump [--t-end T] [--far-field-extension E] \
+    [--newton-tolerance-safety S]
 ```
 
 The runner refuses an invalid case or option, and an output folder that already holds
@@ -21,8 +22,17 @@ anything, before it writes; `--check` stops there. A continuation uses the **sam
 file**: `--restart-from` names a checkpoint of an earlier run of that case, whose
 `run-manifest.json` must carry the same case hash, and the runner pins the parent's
 checkpoint, input case, metadata and histories by SHA-256 before continuing. The only
-changes a continuation may make are a later stop time (`--t-end`) and a longer far-field
-membrane (`--far-field-extension`), and the manifest records both in its command line.
+changes a continuation may make are a later stop time (`--t-end`), a longer far-field
+membrane (`--far-field-extension`) and a looser Newton acceptance
+(`--newton-tolerance-safety`), and the manifest records each in its command line.
+
+`--newton-tolerance-safety S` (default 10, at least 1) accepts a Newton solve once the
+residual's max-norm falls below `S` times the roundoff floor `eps (X + L)^2 / dt`, where
+`X + L` is the window's outer radius. On very fine tip meshes the actual floor can exceed
+ten times that estimate, so Newton stagnates just above the tolerance and rejects time
+steps that are already converged to roundoff. Raising `S` moves the acceptance above that
+floor; it does not change the equations or the discretisation. The run's `case.json`
+records the effective factor as `newton_tolerance_safety`.
 The exit status is 0 when the run ends at its declared stop with every check passing.
 
 **Case file** (`pyoomph-case-v1`). Every field below is read by the runner and listed in

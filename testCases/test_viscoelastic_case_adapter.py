@@ -1029,3 +1029,69 @@ def test_small_fem_membrane_restart_may_lengthen_but_not_shorten_the_extension(t
         / "far-field.txt", ndmin=2)
     assert len(resumed) == 4 and np.all(np.isfinite(resumed))
     assert metadata["status"] == "passed"
+
+
+def test_newton_tolerance_safety_is_a_runner_option_mapped_only_when_given(tmp_path: Path) -> None:
+    from taylor_culick_fem.cases import driver_arguments
+
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    default = driver_arguments(case, tmp_path)
+    assert "--newton-tolerance-safety" not in default
+    raised = driver_arguments(case, tmp_path, newton_tolerance_safety=30)
+    index = raised.index("--newton-tolerance-safety")
+    assert raised[index + 1] == "30.0"
+    assert [a for a in raised if a != "--newton-tolerance-safety" and a != "30.0"] == default
+
+    args = runner.build_parser().parse_args(["case.json", "--out", str(tmp_path / "o")])
+    assert runner.option_problems(args) == []
+    for bad in ("0.5", "nan", "inf", "-3"):
+        args = runner.build_parser().parse_args(
+            ["case.json", "--out", str(tmp_path / "o"), "--newton-tolerance-safety", bad])
+        assert any("--newton-tolerance-safety" in p for p in runner.option_problems(args)), bad
+    args = runner.build_parser().parse_args(
+        ["case.json", "--out", str(tmp_path / "o"), "--newton-tolerance-safety", "30"])
+    assert runner.option_problems(args) == []
+
+
+def test_small_fem_restart_may_change_the_newton_tolerance_safety(tmp_path):
+    from taylor_culick_fem import viscoelastic_driver as driver
+
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["output"].update(cadence=0.02, checkpoint_every=1)
+    scratch = tmp_path / "project-scratch"
+    scratch.mkdir()
+    bundle = tmp_path / "attempt-bundle"
+    parent_input = scratch / "parent-input.json"
+    parent_input.write_text(json.dumps(case))
+    parent_metadata = driver.run_case(adapter.case_to_driver_args(parent_input, bundle / "parent"))
+    assert parent_metadata["newton_tolerance_safety"] == 10.0
+    parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+    output = parent / "run_viscoelastic_axi"
+    rows = np.loadtxt(output / "control.txt", ndmin=2)
+
+    continued = copy.deepcopy(case)
+    continued["completion"]["value"] = 0.08
+    continued["restart"] = {
+        **{
+            key: _reference(path)
+            for key, path in {
+                "checkpoint": parent / "checkpoints" / "ckpt_00002.dump",
+                "input_case": parent_input,
+                "metadata": parent / "case.json",
+                "control": output / "control.txt",
+                "rim_height": output / "rim-height.txt",
+                "pvd": output / "liquid.pvd",
+            }.items()
+        },
+        "time": float(rows[-1, 0]),
+        "control_index": 2,
+        "field_index": 2,
+    }
+    restart_input = scratch / "continued.json"
+    restart_input.write_text(json.dumps(continued))
+    metadata = driver.run_case(
+        adapter.case_to_driver_args(restart_input, bundle / "continued", newton_tolerance_safety=30.0))
+    assert metadata["status"] == "passed"
+    assert metadata["newton_tolerance_safety"] == 30.0
+    assert metadata["restart_time"] == pytest.approx(float(rows[-1, 0]))

@@ -10,8 +10,9 @@ lists its fields); the run manifest records the case and the options. The defaul
 Before it creates anything, the runner refuses an invalid case or option and an output
 folder that already holds anything, for a fresh run and a restart alike. A restart
 (``--restart-from <parent>/checkpoints/ckpt_NNNNN.dump``) continues a run of the same case
-into its own new folder, and may only extend the stop time (``--t-end``) or lengthen the
-far-field membrane (``--far-field-extension``); the run list joins it to its parent with
+into its own new folder, and may only extend the stop time (``--t-end``), lengthen the
+far-field membrane (``--far-field-extension``) or set the Newton acceptance as a multiple of
+the roundoff floor (``--newton-tolerance-safety``); the run list joins it to its parent with
 ``continues``. ``run-manifest.json`` is written before any other output and is never
 replaced. ``--check`` stops after the checks that need neither pyoomph nor the solver.
 """
@@ -63,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="replace the case's stop time (time value or event horizon)")
     parser.add_argument("--far-field-extension", type=float, default=None,
                         help="lengthen the far-field membrane beyond the case's extension")
+    parser.add_argument("--newton-tolerance-safety", type=float, default=None,
+                        help="accept a Newton solve below this multiple of the eps*R^2/dt "
+                             "roundoff floor (default 10; at least 1)")
     parser.add_argument("--check", action="store_true",
                         help="validate the case, options and output folder, then exit without output")
     return parser
@@ -74,6 +78,9 @@ def option_problems(args: argparse.Namespace) -> list[str]:
     for name, value in (("--t-end", args.t_end), ("--far-field-extension", args.far_field_extension)):
         if value is not None and (not math.isfinite(value) or value <= 0):
             problems.append(f"{name} must be finite and positive")
+    safety = args.newton_tolerance_safety
+    if safety is not None and (not math.isfinite(safety) or safety < 1):
+        problems.append("--newton-tolerance-safety must be finite and at least 1")
     return problems
 
 
@@ -114,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence = restart_evidence(args.restart_from, parent) if restart is not None else None
         driver_args = case_to_driver_args(case_path, args.out, restart_evidence=evidence,
                                           t_end=args.t_end, far_field_extension=args.far_field_extension,
+                                          newton_tolerance_safety=args.newton_tolerance_safety,
                                           run_dir=args.out)
         _read_restart(driver_args)
     except (OSError, KeyError, TypeError, ValueError) as exc:

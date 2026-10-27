@@ -14,8 +14,9 @@ case onto the solver driver's command-line options.
 
 A case carries the physics and the numerics of one run. Continuation is not part of the
 case: a restart uses the same case file with ``--restart-from``, and may only extend the
-stop time (``--t-end``) or lengthen the far-field membrane (``--far-field-extension``); an
-equilibrium continuation may only move the stop value of ``Ec`` (``--ec-stop``).
+stop time (``--t-end``), lengthen the far-field membrane (``--far-field-extension``) or
+set the Newton acceptance relative to the roundoff floor (``--newton-tolerance-safety``);
+an equilibrium continuation may only move the stop value of ``Ec`` (``--ec-stop``).
 """
 
 from __future__ import annotations
@@ -393,11 +394,13 @@ def stop_time(case: dict) -> float:
 
 
 def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
-                     far_field_extension: float | None = None) -> list[str]:
+                     far_field_extension: float | None = None,
+                     newton_tolerance_safety: float | None = None) -> list[str]:
     """Map a valid case onto the driver's options; ``ValueError`` names every problem.
 
-    ``t_end`` replaces the declared stop time and ``far_field_extension`` lengthens the
-    membrane; both are runner options, so the run manifest records them in argv.
+    ``t_end`` replaces the declared stop time, ``far_field_extension`` lengthens the
+    membrane and ``newton_tolerance_safety`` sets the Newton acceptance as a multiple of the
+    roundoff floor; all are runner options, so the run manifest records them in argv.
     """
     problems = case_problems(case, VISCOELASTIC)
     if problems:
@@ -455,6 +458,8 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
                 arguments += [flag, str(far_field[key])]
     elif far_field_extension is not None:
         raise ValueError("--far-field-extension requires a membrane far field")
+    if newton_tolerance_safety is not None:
+        arguments += ["--newton-tolerance-safety", str(float(newton_tolerance_safety))]
     if "max_positive_sponge_power" in tolerances:
         arguments += ["--max-positive-sponge-power", str(tolerances["max_positive_sponge_power"])]
     end = stop_time(case) if t_end is None else float(t_end)
