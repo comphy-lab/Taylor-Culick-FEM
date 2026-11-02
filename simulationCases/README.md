@@ -35,12 +35,14 @@ numerics schedule of `case.json`.
 | `physics.far_field.extension` (longer only), `.interpolation`, `.history`, `.grading`, `.auto_extend` | far-edge treatment of a membrane far field |
 
 `--newton-tolerance-safety S` (default 10, at least 1) accepts a Newton solve once the
-residual's max-norm falls below `S` times the roundoff floor `eps (X + L)^2 / dt`, where
-`X + L` is the window's outer radius. On very fine tip meshes the actual floor can exceed
-ten times that estimate, so Newton stagnates just above the tolerance and rejects time
-steps that are already converged to roundoff. Raising `S` moves the acceptance above that
-floor; it does not change the equations or the discretisation. The run's `case.json`
-records the effective factor as `newton_tolerance_safety`.
+residual's max-norm falls below `max(1e-8, S eps (X + L)^2 / dt_f)`. Here `X + L` is the
+window's outer radius and `dt_f` the time step, capped at `solver.newton_floor_max_dt` when
+the case sets it; `eps (X + L)^2 / dt_f` estimates the roundoff floor. On very fine tip
+meshes the actual floor can exceed ten times that estimate, so Newton stagnates just above
+the tolerance and rejects time steps that are already converged to roundoff. Raising `S`
+moves the acceptance above that floor; it does not change the equations or the
+discretisation. The run's `case.json` records the effective factor as
+`newton_tolerance_safety`.
 The exit status is 0 when the run ends at its declared stop with every check passing.
 
 **Case file** (`pyoomph-case-v1`). Every field below is read by the runner and listed in
