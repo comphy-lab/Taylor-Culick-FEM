@@ -1360,6 +1360,16 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.temporal_error_factors = dict(args.temporal_error_fields or {})
             problem.newton_floor_max_dt = args.newton_floor_max_dt
             problem.initial_guess = args.initial_guess
+            safety = getattr(args, "newton_tolerance_safety", None)
+            if safety is not None:
+                problem.newton_tolerance_safety = safety
+            # The effective factor, explicit or the problem's default; a continuation may
+            # change it, so it is recorded but is not part of the restart identity.
+            effective = getattr(problem, "newton_tolerance_safety", safety)
+            metadata["newton_tolerance_safety"] = None if effective is None else float(effective)
+            # Persist it now: the first case.json predates it, and a run that is still
+            # going (or is killed) must show the acceptance factor it uses.
+            _write_json(run_dir / "case.json", metadata)
             problem.initialise()
             # Preserve the original ALE reference before restoring the deformed state.
             volume0 = problem.volume()
@@ -2023,6 +2033,13 @@ def build_parser() -> argparse.ArgumentParser:
             "linear extrapolation of the last two"
         ),
     )
+    parser.add_argument(
+        "--newton-tolerance-safety",
+        type=_positive_float,
+        default=None,
+        help="multiple of the eps*R^2/dt roundoff floor below which a Newton solve is "
+        "accepted (default: the problem's own, 10); at least 1",
+    )
     parser.add_argument("--max-volume-error", type=_positive_float, default=5e-3)
     parser.add_argument("--max-tip-pin-residual", type=_positive_float, default=1e-6)
     parser.add_argument("--min-radius-increase", type=_nonnegative_float, default=1e-4)
@@ -2114,6 +2131,9 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--n-outputs must be at least 1")
     if args.max_newton < 1:
         parser.error("--max-newton must be at least 1")
+    safety = getattr(args, "newton_tolerance_safety", None)
+    if safety is not None and safety < 1:
+        parser.error("--newton-tolerance-safety must be at least 1")
     if args.arrest_consecutive < 2:
         parser.error("--arrest-consecutive must be at least 2")
     if args.checkpoint_every < 0:
