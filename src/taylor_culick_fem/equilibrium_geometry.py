@@ -261,7 +261,8 @@ def deformed_surface(fmap: FieldMap, length: float, r0=1.0, n_arc=400, n_line=15
 def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
                  max_spacing: float = 300.0, core_fraction: float = 0.5, r0: float = 1.0,
                  first_aspect: float = 1.0, columns: str = "vertical",
-                 shoulder_angle: float = 10.0, blend: float = 4.0) -> dict[str, np.ndarray]:
+                 shoulder_angle: float = 10.0, blend: float = 4.0,
+                 column_radii=None) -> dict[str, np.ndarray]:
     """Nine-node reference grids whose deformed images are a well-shaped mesh of the current
     state: every node, mid-side and centre nodes included, is pulled back from its designed
     deformed position, so the deformed elements are the designed ones.
@@ -276,6 +277,11 @@ def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
     surface spacing equal to their midplane spacing. Behind the rim top (the first surface
     point whose tangent is within ``shoulder_angle`` degrees of horizontal) they relax
     smoothly to vertical over ``blend`` rim half-heights.
+
+    ``column_radii``, when given, replaces the geometric column grading: it is called as
+    ``column_radii(start, first, far_r)`` with the deformed radius of the cap end, the first
+    spacing and the deformed far radius, and returns the increasing deformed midplane radii of
+    the column vertices from ``start`` to ``far_r``.
     """
     if columns not in ("vertical", "fan"):
         raise ValueError("columns must be 'vertical' or 'fan'")
@@ -324,7 +330,12 @@ def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
     # Sheet: vertical columns from the cap outward, graded in deformed radius.
     far_r = length + fmap.forward(np.array([length, 0.0]))[0]
     first = first_aspect * shoulder[1] / (2 * n)
-    radii = radial_nodes(centre[0], first, growth, far_r, max_spacing)
+    if column_radii is None:
+        radii = radial_nodes(centre[0], first, growth, far_r, max_spacing)
+    else:
+        radii = np.asarray(column_radii(centre[0], first, far_r), dtype=float)
+        if radii[0] != centre[0] or radii[-1] != far_r or not np.all(np.diff(radii) > 0):
+            raise ValueError("column_radii must increase from the cap end to the far radius")
     radii = np.insert(radii, np.arange(1, len(radii)), 0.5 * (radii[1:] + radii[:-1]))
     fractions = np.concatenate([np.linspace(0.0, f, m + 1), np.linspace(f, 1.0, m + 1)[1:]])
     sheet = np.empty((len(radii), 2 * m + 1, 2))

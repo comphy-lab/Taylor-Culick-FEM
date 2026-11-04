@@ -76,6 +76,23 @@ def _error_fields(text: str) -> dict[str, float]:
     return fields
 
 
+#: Band widths of the opt-in near-tip hoop-force diagnostic, as the Lagrangian solver's.
+TIP_HOOP_BANDS = (1e-3, 3e-3, 0.015, 0.06, 0.5)
+
+
+def _face_layer(text: str) -> dict[str, float]:
+    from taylor_culick_fem.cases import face_layer_problems
+
+    try:
+        layer = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"--face-layer is not JSON: {exc}") from exc
+    problems = face_layer_problems(layer)
+    if problems:
+        raise argparse.ArgumentTypeError("; ".join(problems))
+    return {key: float(layer[key]) for key in ("spacing", "growth", "thickness")}
+
+
 def _relaxation_time(text: str) -> float:
     if text.strip().lower() in {"inf", "+inf", "infinity", "+infinity"}:
         return math.inf
@@ -786,6 +803,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "r0": args.r0,
         "resolution": args.resolution,
         "far_resolution": args.far_resolution,
+        "face_layer": getattr(args, "face_layer", None),
         "output_step": args.output_step,
         "field_stride": args.field_stride,
         "stabilization_option": args.stabilization,
@@ -1240,6 +1258,8 @@ def run_case(args: argparse.Namespace) -> dict:
         "far_resolution": args.far_resolution,
         "length": args.length,
         "r0": args.r0,
+        **({"face_layer": args.face_layer} if getattr(args, "face_layer", None) else {}),
+        **({"tip_diagnostics": list(TIP_HOOP_BANDS)} if getattr(args, "tip_diagnostics", False) else {}),
         "n_outputs": args.n_outputs,
         "output_step": args.output_step,
         "field_stride": args.field_stride,
@@ -1356,6 +1376,9 @@ def run_case(args: argparse.Namespace) -> dict:
             problem.window_length = args.length
             problem.resolution = args.resolution
             problem.far_resolution = args.far_resolution
+            problem.face_layer = getattr(args, "face_layer", None)
+            if getattr(args, "tip_diagnostics", False):
+                problem.tip_hoop_bands = TIP_HOOP_BANDS
             problem.max_newton_iterations = args.max_newton
             problem.temporal_error_factors = dict(args.temporal_error_fields or {})
             problem.newton_floor_max_dt = args.newton_floor_max_dt
@@ -1687,6 +1710,10 @@ def run_case(args: argparse.Namespace) -> dict:
                 height_segment.add_row(now, height)
                 diagnostics = problem.polymer_diagnostic_extrema()
                 _assert_finite("polymer diagnostics", diagnostics.values())
+                if getattr(args, "tip_diagnostics", False):
+                    tip = {"t": now, **problem.tip_diagnostics()}
+                    with (run_dir / "tip-diagnostics.jsonl").open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps(tip) + "\n")
                 if sponge_history is not None:
                     sponge_diagnostics = problem.sponge_diagnostics()
                     _assert_finite("sponge diagnostics", sponge_diagnostics.values())
@@ -1907,6 +1934,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--resolution", type=_positive_float, default=0.25)
     parser.add_argument("--far-resolution", type=_positive_float, default=0.5)
+    parser.add_argument(
+        "--tip-diagnostics",
+        action="store_true",
+        help="write tip-diagnostics.jsonl: near-tip hoop-force bands and the effective tip R0",
+    )
+    parser.add_argument(
+        "--face-layer",
+        type=_face_layer,
+        default=None,
+        help='opt-in graded layer normal to the hole face, JSON {"spacing", "growth", "thickness"}',
+    )
     parser.add_argument(
         "--length",
         type=_positive_float,
@@ -2148,6 +2186,9 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("tip-arrest completion requires --field-stride=1")
     if args.length <= args.resolution:
         parser.error("--length must exceed --resolution")
+    layer = getattr(args, "face_layer", None)
+    if layer is not None and layer["spacing"] >= args.resolution:
+        parser.error("--face-layer spacing must be finer than --resolution")
     try:
         _sponge_parameters(args)
         _far_field_config(args)

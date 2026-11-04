@@ -244,13 +244,22 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
         self.default_resolution = pr.resolution
 
         cap_r = planar_comoving.HALF_THICKNESS
+        # Opt-in graded layer normal to the hole-facing surface; None keeps the mesh unchanged.
+        layer = getattr(pr, "face_layer", None)
 
         if self.is_remeshing():
             segments = self.get_boundary_coordinates(
                 "liquid/interface", sort_along_axis="x+"
             )
             pts = [self.point(x, y) for x, y in segments[0]]
-            self.spline(pts, name="interface")
+            if layer is None:
+                self.spline(pts, name="interface")
+            else:
+                # The hole-facing part of the free surface, from the tip to the rim top,
+                # carries the face layer; the rest of the surface is a second spline.
+                end = face_end_index(segments[0])
+                face = self.spline(pts[: end + 1], name="interface")
+                self.spline(pts[end:], name="interface")
             p_tip, p_far_top = pts[0], pts[-1]
             tip_x = float(segments[0][0][0])
             # The live outer radius: X(t) + L, read off the geometry rather
@@ -262,7 +271,7 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
             p_far_top = self.point(
                 pr.R_out, planar_comoving.HALF_THICKNESS, size=pr.far_resolution
             )
-            self.circle_arc(
+            face = self.circle_arc(
                 p_tip, p_shoulder, center=(pr.X0 + cap_r, 0.0), name="interface"
             )
             self.line(p_shoulder, p_far_top, name="interface")
@@ -278,6 +287,31 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
         self.line(p_far_top, p_far_bot, name="far")
         self.line(p_far_bot, p_tip, name="symmetry")
         self.plane_surface("interface", "far", "symmetry", name="liquid")
+        if layer is not None:
+            # Wall-normal layers grown from the face: first height ``spacing``, geometric
+            # ratio ``growth``, total ``thickness``; the tangential size stays the graded
+            # tip resolution of the size callback.
+            field = self.add_mesh_size_field(
+                "BoundaryLayer", CurvesList=[face], Size=float(layer["spacing"]),
+                Ratio=float(layer["growth"]), Thickness=float(layer["thickness"]), Quads=0,
+            )
+            self.set_mesh_size_boundary_layer_field(field)
+
+
+def face_end_index(points, rise_fraction: float = 1e-6) -> int:
+    """Index of the rim top on a free surface ordered from the tip.
+
+    The hole-facing surface runs from the tip on the midplane to the first point whose
+    height is within ``rise_fraction`` (relative) of the largest height on the surface. Before
+    a rim has formed that is the end of the cap, where the flat film begins. The index is
+    kept at least 2 and at most ``len(points) - 2`` so both splines have a segment.
+    """
+    heights = np.asarray([float(p[1]) for p in points])
+    if len(heights) < 4:
+        raise ValueError("the free surface needs at least four points to split")
+    top = float(heights.max())
+    index = int(np.argmax(heights >= top * (1.0 - rise_fraction)))
+    return min(max(index, 2), len(heights) - 2)
 
 
 class AxisymmetricComovingProblem(Problem):
@@ -297,6 +331,9 @@ class AxisymmetricComovingProblem(Problem):
         self.resolution = 0.06  # near-tip element size, ~8 across HALF_THICKNESS
         self.far_resolution = 0.25  # far-film element size, ~2 across HALF_THICKNESS
         self.mesh_grading_length = 6.0  # inherited grading rule; see AnnularSheetMesh
+        # Opt-in graded mesh layer normal to the hole-facing surface: a mapping with
+        # ``spacing`` (first layer), ``growth`` (ratio) and ``thickness``. None: no layer.
+        self.face_layer: dict | None = None
         self.newton_tolerance_at_unit_radius = 1e-8
         self.newton_tolerance_safety = 10.0
         # Largest dt used in the round-off floor below. The eps*R^2/dt law was tuned at

@@ -1,0 +1,37 @@
+{
+  "schema": "pyoomph-case-v1",
+  "case_id": "oh1-ec1-laminf-lagrangian-n8",
+  "description": "Opening hole in a Kelvin-Voigt neo-Hookean sheet (Oldroyd-B with infinite relaxation time) solved in the reference configuration: Oh = 1, Ec = 1, from the flat sheet with its rounded cap at r0 = 1 through the first stop of the rim.",
+  "geometry": {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "lagrangian"},
+  "nondimensionalization": {
+    "length_scale": "h0",
+    "time_scale": "sqrt(rho*h0^3/sigma)",
+    "velocity_scale": "sqrt(sigma/(rho*h0))",
+    "modulus": "Ec = G h0 / sigma"
+  },
+  "physics": {
+    "problem": "axisymmetric_lagrangian_retraction",
+    "Oh": 1,
+    "elastic_modulus": 1,
+    "relaxation_time": "inf",
+    "r0": 1,
+    "surface_tension": 1,
+    "far_edge": "robin"
+  },
+  "mesh": {
+    "elements_per_quarter": 8,
+    "length": 30000,
+    "growth": 1.1,
+    "max_spacing": 300,
+    "sweep_spacing": 0.25,
+    "sweep_ahead": 20,
+    "sweep_ahead_fraction": 0.3,
+    "columns": "fan",
+    "shoulder_angle": 10,
+    "blend": 4
+  },
+  "remesh": {"log_radius_growth": 0.1, "front_margin": 5},
+  "solver": {"dt": 0.01, "max_newton": 10, "newton_tolerance": 1e-8, "newton_tolerance_safety": 10},
+  "output": {"cadence": 0.05, "checkpoint_every": 200, "diagnostics_every": 20},
+  "completion": {"kind": "time", "value": 30}
+}
