@@ -18,6 +18,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
@@ -48,12 +49,55 @@ def load_runner():
     return module
 
 
-def face_end_index(points):
+def face_end_index(points, max_slope_degrees=1.0):
     # The mesh module imports pyoomph; this copy of its rule is checked against it below.
-    heights = np.asarray([float(p[1]) for p in points])
-    top = float(heights.max())
-    index = int(np.argmax(heights >= top * (1.0 - 1e-6)))
-    return min(max(index, 2), len(heights) - 2)
+    pts = np.asarray(points, dtype=float)
+    chords = np.diff(pts, axis=0)
+    slopes = np.degrees(np.arctan2(chords[:, 1], chords[:, 0]))
+    flat = np.flatnonzero(slopes[2:] < max_slope_degrees)
+    index = int(flat[0]) + 2 if flat.size else len(pts) - 3
+    return min(index, len(pts) - 3)
+
+
+def cap_surface(tip=1.0, step=0.0075):
+    """Points on the initial rounded cap (radius 1/2, centre on the midplane), tip first."""
+    count = max(4, round(0.25 * math.pi / step))
+    return [(tip + 0.5 - 0.5 * math.cos(a), 0.5 * math.sin(a))
+            for a in np.linspace(0.0, 0.5 * math.pi, count + 1)]
+
+
+def film_surface(start, end, height, tip, bump=None, first=0.0075):
+    """Film points from ``start`` to ``end``: from ``first`` the spacing grows by 1.1 per point
+    up to half the graded tip spacing (boundary coordinates include the mid-side nodes, and
+    a mesh's boundary spacing has no jumps); ``bump(r)`` is added to ``height``."""
+    points, r, step = [], start, first
+    while r < end - 1e-12:
+        r = min(end, r + min(step, 0.5 * (0.015 + 0.235 * min(1.0, (r - tip) / 6.0))))
+        step *= 1.1
+        points.append((r, height(r) + (bump(r) if bump else 0.0)))
+    return points
+
+
+def early_surface(length=20.0):
+    """The surface at which the 2.5e-4 run failed (t = 0.0025): the cap, then a film carrying
+    a 6.5e-6 bump that peaks at r = 1.8, i.e. well beyond the cap end."""
+    cap = cap_surface()
+    film = film_surface(1.5, 1.0 + length, lambda r: 0.5, 1.0,
+                        lambda r: 6.5e-6 * math.exp(-(((r - 1.8) / 0.4) ** 2)))
+    return cap + film
+
+
+def rim_surface(tip=5.0, rim=1.0, length=20.0, step=0.0075):
+    """A formed rim: a quarter-circle face of radius ``rim`` from the tip to the rim top, then
+    a Gaussian fall to the half-thickness 1/2 of the film, whose width makes the curvature
+    continuous (1/rim) at the top."""
+    count = round(0.5 * math.pi * rim / step)
+    face = [(tip + rim - rim * math.cos(a), rim * math.sin(a))
+            for a in np.linspace(0.0, 0.5 * math.pi, count + 1)]
+    width = math.sqrt(2.0 * rim * (rim - 0.5))
+    back = film_surface(tip + rim, tip + length, lambda r: 0.5 + (rim - 0.5) * math.exp(
+        -(((r - tip - rim) / width) ** 2)), tip, first=step)
+    return face + back
 
 
 class FaceLayerCaseTests(unittest.TestCase):
@@ -97,12 +141,140 @@ class FaceLayerCaseTests(unittest.TestCase):
         rim = [(10 + 0.1 * k, 2 * math.sin(math.pi * k / 20)) for k in range(21)] + [(13, 0.5)] * 3
         self.assertEqual(face_end_index(rim), 10)
 
+    def test_face_end_before_a_rim_forms_is_the_cap_end(self) -> None:
+        # The 2.5e-4 run remeshed at t = 0.0025 with a 6.5e-6 bump on the film beyond the cap.
+        # The face must still end at the cap (r ~ 1.5), not at the bump's crest (r = 1.8).
+        surface = early_surface()
+        end = face_end_index(surface)
+        self.assertLess(abs(surface[end][0] - 1.5), 0.01)
+        self.assertGreater(surface[end][1], 0.4999)
+        self.assertGreater(max(range(len(surface)), key=lambda i: surface[i][1]), end)
+
+    def test_face_end_of_a_formed_rim_is_its_top(self) -> None:
+        surface = rim_surface()
+        end = face_end_index(surface)
+        self.assertLess(abs(surface[end][0] - 6.0), 0.02)
+        self.assertGreater(surface[end][1], 0.9998)
+
+    def test_face_end_leaves_both_splines_a_segment(self) -> None:
+        rising = [(1 + 0.1 * k, 0.1 * k) for k in range(8)]
+        self.assertEqual(face_end_index(rising), len(rising) - 3)
+
     @unittest.skipUnless(SOLVER, "set LAGRANGIAN_SOLVER_TESTS=1 in the pinned pyoomph environment")
     def test_the_module_rule_matches(self) -> None:
         from taylor_culick_fem.axisymmetric_comoving import face_end_index as module_rule
 
         rim = [(10 + 0.1 * k, 2 * math.sin(math.pi * k / 20)) for k in range(21)] + [(13, 0.5)] * 3
-        self.assertEqual(module_rule(rim), face_end_index(rim))
+        for surface in (rim, early_surface(), rim_surface(), [(1 + 0.1 * k, 0.1 * k) for k in range(8)]):
+            self.assertEqual(module_rule(surface), face_end_index(surface))
+        with self.assertRaises(ValueError):
+            module_rule(rim[:4])
+
+
+def mesh_quality(msh: Path) -> dict:
+    """minSICN, minSJ and the largest interior angle (degrees) of the vertex triangles."""
+    import gmsh
+
+    gmsh.initialize()
+    try:
+        gmsh.option.setNumber("General.Verbosity", 0)
+        gmsh.open(str(msh))
+        tags, coords, _ = gmsh.model.mesh.getNodes()
+        coords = coords.reshape(-1, 3)
+        index = {t: i for i, t in enumerate(tags)}
+        _, elements, nodes = gmsh.model.mesh.getElements(2)
+        elements = np.asarray(elements[0])
+        nodes = np.asarray(nodes[0]).reshape(len(elements), -1)
+        sicn = np.asarray(gmsh.model.mesh.getElementQualities(elements, "minSICN"))
+        sj = np.asarray(gmsh.model.mesh.getElementQualities(elements, "minSJ"))
+    finally:
+        gmsh.finalize()
+    vertices = np.array([[coords[index[n]][:2] for n in row[:3]] for row in nodes])
+    largest = np.zeros(len(vertices))
+    for i in range(3):
+        u = vertices[:, (i + 1) % 3] - vertices[:, i]
+        w = vertices[:, (i + 2) % 3] - vertices[:, i]
+        cosine = (u * w).sum(1) / np.linalg.norm(u, axis=1) / np.linalg.norm(w, axis=1)
+        largest = np.maximum(largest, np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+    edges = np.concatenate([np.linalg.norm(vertices[:, i] - vertices[:, (i + 1) % 3], axis=1)
+                            for i in range(3)])
+    return {"sicn": float(sicn.min()), "sj": float(sj.min()), "angle": float(largest.max()),
+            "shortest": float(edges.min()), "count": len(elements)}
+
+
+@unittest.skipUnless(SOLVER, "set LAGRANGIAN_SOLVER_TESTS=1 in the pinned pyoomph environment")
+class FaceLayerMeshQualityTests(unittest.TestCase):
+    """The face-layer mesher on the initial cap and on remeshed (deformed) surfaces.
+
+    Floors, against the defect of 1a89aa9 (spacing 2.5e-4 / 1e-3) in brackets:
+    - largest interior angle below 125 degrees: a sliver approaches 180 (179.95 / 178.5);
+      layer triangles stay near 90, and the fixed mesher gives at most ~114;
+    - minimum scaled Jacobian of the quadratic elements above 0.5 (0.63 / 0.93; the fix
+      gives ~0.96, and 0.07 on a large rim before the face spacing was capped);
+    - minSICN above 0.1 x spacing / resolution, a tenth of the layer's intended anisotropy
+      (0.0024 / 0.05 of it).
+    """
+
+    LAYERS: ClassVar[dict[float, float]] = {1e-3: 0.07, 2.5e-4: 0.08}
+
+    def build(self, spacing, surface=None):
+        from pyoomph.equations.poisson import PoissonEquation
+
+        from taylor_culick_fem.axisymmetric_comoving import (
+            AxisymmetricComovingProblem,
+            ComovingAnnularSheetMesh,
+        )
+
+        class SurfaceMesh(ComovingAnnularSheetMesh):
+            # Remeshes from a given surface, as the remesher does from the deformed one.
+            def is_remeshing(self):
+                return surface is not None
+
+            def get_boundary_coordinates(self, name, sort_along_axis=None, **kwargs):
+                return [list(surface)]
+
+        class MeshOnly(AxisymmetricComovingProblem):
+            def define_problem(self):
+                self.add_mesh(SurfaceMesh())
+                self.add_equations(PoissonEquation(name="u", space="C1") @ "liquid")
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        problem = MeshOnly()
+        problem.ignore_command_line = True
+        problem.set_output_directory(tmp)
+        problem.X0, problem.window_length = 1.0, 20.0
+        problem.resolution, problem.far_resolution = 0.015, 0.25
+        problem.face_layer = {"spacing": spacing, "growth": 1.2, "thickness": self.LAYERS[spacing]}
+        problem.initialise()
+        quality = mesh_quality(Path(tmp) / "_gmsh" / "SurfaceMesh.msh")
+        problem.release()
+        return quality
+
+    def check(self, quality, spacing):
+        self.assertLess(quality["angle"], 125.0, quality)
+        self.assertGreater(quality["sj"], 0.5, quality)
+        self.assertGreater(quality["sicn"], 0.1 * spacing / 0.015, quality)
+        self.assertGreater(quality["shortest"], 0.7 * spacing, quality)
+        self.assertLess(quality["shortest"], 1.25 * spacing, quality)
+
+    def test_initial_mesh(self) -> None:
+        for spacing in self.LAYERS:
+            with self.subTest(spacing=spacing):
+                self.check(self.build(spacing), spacing)
+
+    def test_remesh_of_the_failing_early_surface(self) -> None:
+        for spacing in self.LAYERS:
+            with self.subTest(spacing=spacing):
+                self.check(self.build(spacing, early_surface()), spacing)
+
+    def test_remesh_of_a_formed_rim(self) -> None:
+        # Radius 4: the face is long and curved, so the face spacing cap matters.
+        for spacing in self.LAYERS:
+            for rim in (1.0, 4.0):
+                with self.subTest(spacing=spacing, rim=rim):
+                    surface = rim_surface(tip=3.0 + 2.0 * rim, rim=rim, length=20.0 + 2.0 * rim)
+                    self.check(self.build(spacing, surface), spacing)
 
 
 class LagrangianCaseTests(unittest.TestCase):
