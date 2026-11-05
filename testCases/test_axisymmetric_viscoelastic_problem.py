@@ -20,7 +20,15 @@ from taylor_culick_fem.viscoelastic import (
 )
 
 
-def _define_problem(monkeypatch, *, elastic_modulus: float, passive: bool):
+def _define_problem(
+    monkeypatch,
+    *,
+    elastic_modulus: float,
+    passive: bool,
+    relaxation_time: float = float("inf"),
+    far_field: str = "rest",
+    temporal_error_factors: dict | None = None,
+):
     captured: dict[str, object] = {}
 
     def factory(params, **kwargs):
@@ -39,8 +47,11 @@ def _define_problem(monkeypatch, *, elastic_modulus: float, passive: bool):
     problem = axisymmetric.AxisymmetricViscoelasticProblem()
     problem.elastic_modulus = elastic_modulus
     problem.passive_conformation = passive
+    problem.relaxation_time = relaxation_time
+    problem.far_field = far_field
+    problem.temporal_error_factors = dict(temporal_error_factors or {})
     problem.define_problem()
-    return problem, captured["equations"], captured
+    return problem, captured.get("equations"), captured
 
 
 def test_active_mode_preserves_polymer_feedback_default(monkeypatch) -> None:
@@ -52,6 +63,42 @@ def test_active_mode_preserves_polymer_feedback_default(monkeypatch) -> None:
     assert captured["kwargs"]["add_polymer_stress_to_momentum"] is True
     assert equations.add_polymer_stress_to_momentum is True
     assert equations.output_conformation is True
+
+
+FINITE_DE_ERROR_FIELDS = {
+    "velocity": 1, "log_conformation_xx": 1, "log_conformation_xy": 1,
+    "log_conformation_yy": 1, "log_conformation_aa": 1,
+}
+
+
+def _liquid_estimators(problem) -> list:
+    equations = problem.additional_equations._children["liquid"]._equation_list
+    found = []
+    for equation in equations:
+        stack = [equation]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, axisymmetric.TemporalErrorEstimator):
+                found.append(item)
+            stack.extend(getattr(item, "_subelements", []) or [])
+    return found
+
+
+@pytest.mark.parametrize("relaxation_time", [0.001, 1.0, 1000.0])
+def test_finite_relaxation_registers_the_velocity_and_tensor_error_only_on_request(
+    monkeypatch, relaxation_time
+):
+    problem, _, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False, relaxation_time=relaxation_time
+    )
+    assert _liquid_estimators(problem) == []
+    problem, _, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False, relaxation_time=relaxation_time,
+        temporal_error_factors=FINITE_DE_ERROR_FIELDS,
+    )
+    estimators = _liquid_estimators(problem)
+    assert len(estimators) == 1
+    assert dict(estimators[0].fieldfactors) == FINITE_DE_ERROR_FIELDS
 
 
 def test_zero_modulus_passive_mode_retains_log_conformation_and_boundaries(monkeypatch) -> None:
@@ -71,13 +118,39 @@ def test_zero_modulus_passive_mode_retains_log_conformation_and_boundaries(monke
     assert set(liquid._children) == {"far", "symmetry"}
 
 
-def test_zero_modulus_active_mode_is_rejected(monkeypatch) -> None:
-    problem = axisymmetric.AxisymmetricViscoelasticProblem()
-    problem.elastic_modulus = 0.0
+def test_zero_modulus_is_exact_newtonian_without_passive_transport(monkeypatch) -> None:
+    problem, equations, captured = _define_problem(
+        monkeypatch, elastic_modulus=0.0, passive=False
+    )
 
-    with pytest.raises(
-        ValueError, match="elastic_modulus=0 requires passive_conformation=True"
-    ):
+    assert equations is None
+    assert captured == {}
+    assert problem.viscoelastic_parameters is None
+
+
+@pytest.mark.parametrize("passive", [False, True])
+def test_zero_relaxation_is_exact_newtonian_regardless_of_mode(
+    monkeypatch, passive: bool
+) -> None:
+    problem, equations, captured = _define_problem(
+        monkeypatch,
+        elastic_modulus=1.0,
+        passive=passive,
+        relaxation_time=0.0,
+    )
+
+    assert equations is None
+    assert captured == {}
+    assert problem.viscoelastic_parameters is None
+    assert problem.polymer_diagnostic_extrema() == {}
+
+
+@pytest.mark.parametrize("relaxation_time", [-1.0, float("nan")])
+def test_invalid_relaxation_time_is_rejected(monkeypatch, relaxation_time: float) -> None:
+    problem = axisymmetric.AxisymmetricViscoelasticProblem()
+    problem.relaxation_time = relaxation_time
+
+    with pytest.raises(ValueError, match="relaxation_time must be non-negative"):
         problem.define_problem()
 
 
@@ -117,6 +190,63 @@ def test_passive_mode_requires_a_boolean(monkeypatch) -> None:
 
     with pytest.raises(TypeError, match="passive_conformation must be a boolean"):
         problem.define_problem()
+
+
+@pytest.mark.parametrize("relaxation_time", [1.0, 31.622776601683793, float("inf")])
+def test_relaxing_membrane_incoming_conformation_accepts_finite_and_infinite_relaxation(
+    monkeypatch, relaxation_time
+):
+    problem, equations, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False,
+        relaxation_time=relaxation_time, far_field="relaxing_membrane",
+    )
+    assert equations is not None
+    assert problem.viscoelastic_parameters.relaxation_time == relaxation_time
+    for component in ("xx", "yy", "aa"):
+        assert problem.get_global_parameter(f"far_field_log_c_{component}").value == 0
+
+
+@pytest.mark.parametrize("elastic_modulus,relaxation_time,passive", [
+    (0.0, 1.0, False), (1.0, 0.0, False), (1.0, 1.0, True),
+])
+def test_relaxing_membrane_requires_active_positive_time_elasticity(
+    monkeypatch, elastic_modulus, relaxation_time, passive
+):
+    with pytest.raises(ValueError, match="requires active Oldroyd-B elasticity"):
+        _define_problem(
+            monkeypatch, elastic_modulus=elastic_modulus, passive=passive,
+            relaxation_time=relaxation_time, far_field="relaxing_membrane",
+        )
+
+
+@pytest.mark.parametrize("elastic_modulus,relaxation_time,passive", [
+    (0.0, float("inf"), False), (1.0, 1.0, False), (1.0, float("inf"), True),
+])
+def test_trouton_membrane_still_requires_active_infinite_relaxation(
+    monkeypatch, elastic_modulus, relaxation_time, passive
+):
+    with pytest.raises(ValueError, match="requires active lambda=inf elasticity"):
+        _define_problem(
+            monkeypatch, elastic_modulus=elastic_modulus, passive=passive,
+            relaxation_time=relaxation_time, far_field="membrane",
+        )
+
+
+def test_set_far_field_maps_full_thickness_and_diagonal_log_tensor(monkeypatch):
+    problem, _, _ = _define_problem(
+        monkeypatch, elastic_modulus=1.0, passive=False,
+        relaxation_time=1.0, far_field="relaxing_membrane",
+    )
+    # The base setup was skipped for this software test; register its two
+    # boundary parameters explicitly, without assembling a native FEM problem.
+    problem.define_global_parameter(far_field_velocity=0.0)
+    problem.define_global_parameter(far_field_half_thickness=0.5)
+    problem.set_far_field(0.2, 0.8, (0.1, -0.2, 0.3))
+    assert problem.get_global_parameter("far_field_velocity").value == pytest.approx(0.2)
+    assert problem.get_global_parameter("far_field_half_thickness").value == pytest.approx(0.4)
+    assert problem.get_global_parameter("far_field_log_c_yy").value == pytest.approx(-0.2)
+    with pytest.raises(ValueError, match="positive"):
+        problem.set_far_field(0.2, 0.0, (0.1, -0.2, 0.3))
 
 
 def test_rim_height_finds_quadratic_maximum_between_interface_nodes(monkeypatch) -> None:

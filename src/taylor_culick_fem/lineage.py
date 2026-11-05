@@ -174,7 +174,7 @@ def restart_evidence(state: Path, parent: Path) -> dict:
     # A continued run's liquid.pvd lists only its own fields; liquid-history.pvd is the
     # parent prefix plus its own fields, the complete history a further restart needs.
     pvd = history if history.is_file() else run / "liquid.pvd"
-    return {
+    evidence = {
         "checkpoint": reference(state),
         "input_case": reference(input_case),
         "metadata": reference(parent / "case.json"),
@@ -185,3 +185,9 @@ def restart_evidence(state: Path, parent: Path) -> dict:
         "control_index": control_index,
         "field_index": control_index // stride,
     }
+    far_field = parent_case.get("physics", {}).get("far_field")
+    if isinstance(far_field, dict) and far_field.get("mode") == "relaxing_membrane":
+        # The finite-relaxation exterior's state and history are pinned with the FEM state.
+        evidence["far_field_state"] = reference(state.with_suffix(".farfield.npz"))
+        evidence["far_field_history"] = reference(run / "far-field.txt")
+    return evidence

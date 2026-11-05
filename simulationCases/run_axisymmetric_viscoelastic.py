@@ -22,6 +22,7 @@ replaced. ``--check`` stops after the checks that need neither pyoomph nor the s
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import math
 import sys
@@ -119,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
                          "(pyproject.toml, uv.lock)") from exc
     from taylor_culick_fem.case_adapter import case_to_driver_args
     from taylor_culick_fem.viscoelastic_driver import (
+        _check_relaxing_endpoint,
         _enforce_launcher_affinity,
         _read_restart,
         run_case,
@@ -131,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                                           t_end=args.t_end, far_field_extension=args.far_field_extension,
                                           newton_tolerance_safety=args.newton_tolerance_safety,
                                           run_dir=args.out)
-        _read_restart(driver_args)
+        _check_relaxing_endpoint(driver_args, _read_restart(driver_args))
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise SystemExit(f"refused: {exc}") from exc
     affinity = _enforce_launcher_affinity()
@@ -142,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
                        pyoomph_module=getattr(pyoomph, "__file__", None))
     append_progress(args.out, "started", case_id=case["case_id"], component_commit=commit,
                     launcher_affinity=affinity)
+    # The driver reports the relaxing far field's per-sample boundary gates through this.
+    driver_args.progress_callback = functools.partial(append_progress, args.out)
     try:
         summary = run_case(driver_args)
     except BaseException as exc:

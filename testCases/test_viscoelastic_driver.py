@@ -20,7 +20,11 @@ from taylor_culick_fem.viscoelastic_driver import (
     ArrestTracker,
     HeightPlateauTracker,
     MembraneCoupling,
+    RelaxingMembraneCoupling,
+    _characteristic_valid,
     _check_extension_not_shorter,
+    _constitutive_metadata,
+    _interval_step_bounds,
     _output_times,
     _without_extension,
     _zero_crossing,
@@ -129,12 +133,16 @@ def test_allow_recoil_is_an_explicit_fixed_horizon_option(tmp_path) -> None:
     assert not args.stop_when_arrested
 
 
-def test_zero_modulus_requires_explicit_passive_conformation(tmp_path, capsys) -> None:
+def test_zero_modulus_defaults_to_exact_newtonian(tmp_path) -> None:
     parser = build_parser()
     args = parser.parse_args(["--results", str(tmp_path), "--elastic-modulus", "0"])
-    with pytest.raises(SystemExit):
-        validate_args(parser, args)
-    assert "--elastic-modulus=0 requires --passive-conformation" in capsys.readouterr().err
+    validate_args(parser, args)
+    assert args.passive_conformation is False
+    assert _constitutive_metadata(0.0, args.relaxation_time, False) == {
+        "constitutive_model": "Newtonian",
+        "polymer_stress": None,
+        "conformation_formulation": None,
+    }
 
     passive = parser.parse_args(
         [
@@ -147,6 +155,129 @@ def test_zero_modulus_requires_explicit_passive_conformation(tmp_path, capsys) -
     )
     validate_args(parser, passive)
     assert passive.passive_conformation is True
+    assert _constitutive_metadata(0.0, passive.relaxation_time, True)[
+        "constitutive_model"
+    ] == "Oldroyd-B"
+
+
+def test_zero_relaxation_cli_is_newtonian(tmp_path) -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--results", str(tmp_path), "--relaxation-time", "0"])
+    validate_args(parser, args)
+    assert args.relaxation_time == 0.0
+    assert _constitutive_metadata(1.0, 0.0, False)["constitutive_model"] == "Newtonian"
+
+
+@pytest.mark.parametrize("value", ["-1", "nan"])
+def test_invalid_relaxation_cli_is_rejected(value: str, tmp_path) -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--results", str(tmp_path), "--relaxation-time", value])
+
+
+def _step_args(tmp_path, *extra):
+    parser = build_parser()
+    args = parser.parse_args(["--results", str(tmp_path), "--max-step", "0.01", *extra])
+    validate_args(parser, args)
+    return args
+
+
+def test_relaxation_start_cap_is_opt_in_and_caps_only_evolved_finite_relaxation(tmp_path) -> None:
+    finite = ["--relaxation-time", "1e-3"]
+    # Without the option the first step of an interval is unchanged (1% of it).
+    assert _interval_step_bounds(_step_args(tmp_path, *finite), 0.0, 0.5, None) \
+        == pytest.approx((0.01, 0.005))
+    capped = _step_args(tmp_path, *finite, "--relaxation-start-fraction", "0.1")
+    assert _interval_step_bounds(capped, 0.0, 0.5, None) == pytest.approx((0.01, 1e-4))
+    for endpoint in (["--relaxation-time", "inf"], ["--relaxation-time", "0"],
+                     [*finite, "--elastic-modulus", "0"]):
+        args = _step_args(tmp_path, *endpoint, "--relaxation-start-fraction", "0.1")
+        assert _interval_step_bounds(args, 0.0, 0.5, None) == pytest.approx((0.01, 0.005))
+
+
+@pytest.mark.parametrize("value", ["0", "1.5"])
+def test_relaxation_start_fraction_outside_the_unit_interval_is_refused(value, tmp_path):
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        validate_args(parser, parser.parse_args(
+            ["--results", str(tmp_path), "--relaxation-start-fraction", value]))
+
+
+def test_characteristic_gate_accepts_only_roundoff_neutrality():
+    assert _characteristic_valid(0.0, 0.0, 0.0)
+    assert _characteristic_valid(-np.finfo(float).eps, 0.0, 0.0)
+    assert not _characteristic_valid(-1e-10, 0.0, 0.0)
+    # Positive rim velocity alone is insufficient if edge material is faster.
+    assert not _characteristic_valid(0.1 - 0.2, 0.1, 0.2)
+
+
+def test_relaxing_coupling_rejects_inner_material_inflow_before_advance():
+    class Membrane:
+        time, inner = 0.0, 5.0
+
+        def advance(self, *_):
+            pytest.fail("invalid characteristic must reject before advancing")
+
+    coupling = RelaxingMembraneCoupling(Membrane(), inner_fraction=0.5, length=8.0)
+    with pytest.raises(RuntimeError, match="inner material outflow validity rejected"):
+        coupling.before_interval(0.0, 0.1, radius=1.0, speed=0.1, drive=0.2)
+
+
+def test_relaxing_outflow_is_half_sheet_full_thickness_identity():
+    from types import SimpleNamespace
+
+    coupling = RelaxingMembraneCoupling(SimpleNamespace(time=0.0), inner_fraction=0.5, length=8.0)
+    coupling.predicted_edge_radius = 9.1
+    edge = SimpleNamespace(thickness=0.8, velocity=0.1)
+    coupling.after_interval(edge, 0.1, 9.0, 9.1, 1.0, 1.0, 0.1)
+    # The half-sheet factor pi belongs in expected_volume, not this integral.
+    assert coupling.outflow == pytest.approx(0.1 * 9.05 * (0.8 * 0.1 - (0.8 - 1.0) * 1.0))
+
+
+def test_relaxing_sidecar_roundtrip_binds_checkpoint_and_finite_relaxation(tmp_path):
+    import hashlib
+
+    from taylor_culick_fem.relaxing_farfield_membrane import RelaxingFarFieldMembrane
+
+    def make(relaxation_time=1.0):
+        return RelaxingMembraneCoupling(
+            RelaxingFarFieldMembrane(
+                elastic_modulus=1.0, relaxation_time=relaxation_time, viscosity=1.0,
+                inner=5.0, outer=20.0, nodes=31,
+            ), inner_fraction=0.5, length=8.0,
+        )
+
+    original = make()
+    # A homogeneous exterior is a deterministic zero state; this exercises
+    # the sidecar contract without running a native FEM solve.
+    edge = original.before_interval(0.0, 0.1, 1.0, 0.0, 0.0)
+    original.after_interval(edge, 0.1, 9.0, 9.0, 0.0, 0.0, 0.1)
+    checkpoint = tmp_path / "ckpt.dump"
+    checkpoint.write_bytes(b"selected FEM state")
+    digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    sidecar = tmp_path / "ckpt.farfield.npz"
+    original.save(sidecar, checkpoint)
+    restored = make()
+    restored.load(sidecar, digest)
+    assert restored.membrane.relaxation_time == 1.0
+    assert restored.previous == original.previous
+    assert restored.outflow == original.outflow
+    for name in ("u", "h", "log_c_rr", "log_c_zz", "log_c_th"):
+        np.testing.assert_array_equal(getattr(restored.membrane, name), getattr(original.membrane, name))
+    with pytest.raises(ValueError, match="does not bind"):
+        restored.load(sidecar, "0" * 64)
+    with pytest.raises(ValueError, match="constitutive identity"):
+        make(2.0).load(sidecar, digest)
+
+
+def test_relaxing_extension_may_grow_but_never_shrink():
+    parent = {"mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 100.0,
+              "node_spacing": 0.5}
+    _check_extension_not_shorter({**parent, "extension": 200.0}, parent)
+    with pytest.raises(ValueError, match="never shorten"):
+        _check_extension_not_shorter({**parent, "extension": 50.0}, parent)
+    assert _without_extension(parent) == {"mode": "relaxing_membrane", "inner_fraction": 0.5,
+                                          "node_spacing": 0.5}
 
 
 def test_tip_arrest_requires_a_field_at_every_scalar_sample(tmp_path, capsys) -> None:

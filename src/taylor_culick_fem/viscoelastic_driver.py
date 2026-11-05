@@ -2,8 +2,9 @@
 
 Time is the physical capillary time used by the FEM problem.  This driver does
 not use the viscous ``t*`` clock, which is undefined when the solvent
-Ohnesorge number is zero.  ``lambda=inf`` selects the exact non-relaxing
-Oldroyd-B/Kelvin--Voigt limit.
+Ohnesorge number is zero.  ``lambda=0`` selects the exact Newtonian endpoint,
+while ``lambda=inf`` selects the exact non-relaxing Oldroyd-B/Kelvin--Voigt
+limit.
 
 The modulus is non-dimensionalised as ``G = G_dim h0 / sigma`` using the full
 sheet thickness, consistently with the inherited FEM problem.
@@ -26,7 +27,10 @@ import numpy as np
 from pyoomph.output.states import copy_state_file
 
 from taylor_culick_fem.absorbing_layer import RayleighSpongeParameters
-from taylor_culick_fem.axisymmetric_viscoelastic import AxisymmetricViscoelasticProblem
+from taylor_culick_fem.axisymmetric_viscoelastic import (
+    AxisymmetricViscoelasticProblem,
+    evolves_conformation,
+)
 
 # The pure schedule helpers live in ``lineage``, which the runner's restart checks share.
 from taylor_culick_fem.lineage import (  # noqa: F401 -- LANDING_* are re-exported for tests
@@ -79,7 +83,7 @@ def _error_fields(text: str) -> dict[str, float]:
 def _relaxation_time(text: str) -> float:
     if text.strip().lower() in {"inf", "+inf", "infinity", "+infinity"}:
         return math.inf
-    return _positive_float(text)
+    return _nonnegative_float(text)
 
 
 def _parameter_label(value: float) -> str:
@@ -108,6 +112,44 @@ def _passive_conformation(args: argparse.Namespace) -> bool:
     return value
 
 
+def _constitutive_metadata(
+    elastic_modulus: float,
+    relaxation_time: float,
+    passive_conformation: bool,
+) -> dict[str, str | None]:
+    """Describe the equations actually assembled for this parameter endpoint."""
+
+    if not evolves_conformation(elastic_modulus, relaxation_time, passive_conformation):
+        return {
+            "constitutive_model": "Newtonian",
+            "polymer_stress": None,
+            "conformation_formulation": None,
+        }
+    return {
+        "constitutive_model": "Oldroyd-B",
+        "polymer_stress": "G*(C-I)",
+        "conformation_formulation": "log-conf",
+    }
+
+
+def _relaxation_capped_start(startstep: float, args: argparse.Namespace) -> float:
+    """Cap an interval's first step at ``fraction * lambda`` to resolve finite relaxation.
+
+    Opt-in through ``--relaxation-start-fraction``; it acts only when the conformation is
+    evolved with a finite relaxation time, so without it every step is unchanged.
+    """
+    fraction = getattr(args, "relaxation_start_fraction", None)
+    if (
+        fraction is not None
+        and math.isfinite(args.relaxation_time)
+        and evolves_conformation(
+            args.elastic_modulus, args.relaxation_time, _passive_conformation(args)
+        )
+    ):
+        return min(startstep, fraction * args.relaxation_time)
+    return startstep
+
+
 def _sponge_parameters(args: argparse.Namespace) -> RayleighSpongeParameters | None:
     values = (args.sponge_start, args.sponge_width, args.sponge_gamma_max)
     if all(value is None for value in values):
@@ -132,6 +174,16 @@ FAR_FIELD_HEADER = [
     "t", "drive", "u_edge", "h_edge", "log_c_rr", "log_c_zz", "log_c_th", "outflow",
     "outer_velocity",
 ]
+#: The finite-relaxation far field (``taylor_culick_fem.relaxing_farfield_membrane``).
+RELAXING_MEMBRANE = "relaxing_membrane"
+#: Its far-field history, with the coupling's validity and prediction diagnostics.
+RELAXING_FAR_FIELD_HEADER = [
+    "t", "drive", "u_edge", "h_edge", "log_c_rr", "log_c_zz", "log_c_th", "outflow",
+    "outer_velocity", "outer_thickness_deviation", "outer_log_conformation",
+    "outer_polymer_stress", "relative_edge_inflow", "inner_material_outflow",
+    "predicted_edge_radius", "realised_edge_radius", "edge_radius_prediction_error",
+    "predicted_inner_radius", "realised_inner_radius", "inner_radius_prediction_error",
+]
 
 
 def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
@@ -151,6 +203,8 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
         if any(value is not None for value in tuning.values()):
             raise ValueError("far-field membrane settings require --far-field=membrane")
         return {"mode": "rest"}
+    if mode == RELAXING_MEMBRANE:
+        return _relaxing_far_field_config(args, tuning)
     if mode != "membrane":
         raise ValueError(f"unknown far-field mode {mode!r}")
     if tuning["extension"] is None:
@@ -194,6 +248,37 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
     return config
 
 
+def _relaxing_far_field_config(args: argparse.Namespace, tuning: dict) -> dict[str, object]:
+    """The finite-relaxation far field: exactly inner fraction, extension and node spacing.
+
+    None of them has a default, and the edge numerics of the neo-Hookean membrane
+    (interpolation, history, grading, automatic extension) do not apply.
+    """
+    keys = ("inner_fraction", "extension", "node_spacing")
+    if any(tuning[key] is not None for key in tuning if key not in keys):
+        raise ValueError("relaxing membrane far field takes only inner fraction, extension "
+                         "and node spacing")
+    if any(tuning[key] is None for key in keys):
+        raise ValueError(
+            "relaxing membrane far field requires explicit inner fraction, extension and node spacing"
+        )
+    config = {"mode": RELAXING_MEMBRANE, **{key: float(tuning[key]) for key in keys}}
+    if not all(math.isfinite(config[key]) for key in keys):
+        raise ValueError("far-field membrane settings must be finite")
+    if not 0 < config["inner_fraction"] < 1:
+        raise ValueError("far-field inner fraction must lie strictly inside the window")
+    if config["extension"] <= 0 or config["node_spacing"] <= 0:
+        raise ValueError("far-field extension and node spacing must be positive")
+    if _passive_conformation(args) or not evolves_conformation(
+        args.elastic_modulus, args.relaxation_time, False
+    ):
+        raise ValueError("relaxing membrane far field requires active Oldroyd-B elasticity")
+    sponge = _sponge_parameters(args)
+    if sponge is not None and sponge.gamma_max > 0:
+        raise ValueError("a relaxing membrane far field cannot be combined with a sponge")
+    return config
+
+
 def _require_finite_numbers(values: dict, context: str) -> None:
     """Reject non-numeric, boolean and non-finite settings up front.
 
@@ -214,6 +299,8 @@ def _without_extension(config: object) -> object:
             key: value for key, value in config.items()
             if key not in ("extension", "interpolation", "history", "grading", "auto_extend")
         }
+    if isinstance(config, dict) and config.get("mode") == RELAXING_MEMBRANE:
+        return {key: value for key, value in config.items() if key != "extension"}
     return config
 
 
@@ -221,6 +308,12 @@ def _check_extension_not_shorter(current: object, parent: object) -> None:
     """A restart may lengthen the membrane but never shorten it, and may change its
     grading only together with a longer extension (the checkpoint keeps its grid; only
     the added length takes the new layout). Grading is never removed."""
+    if (
+        isinstance(current, dict) and isinstance(parent, dict)
+        and current.get("mode") == parent.get("mode") == RELAXING_MEMBRANE
+        and current["extension"] < parent["extension"]
+    ):
+        raise ValueError("restart may lengthen but never shorten the far-field extension")
     if not (
         isinstance(current, dict) and isinstance(parent, dict)
         and current.get("mode") == parent.get("mode") == "membrane"
@@ -439,6 +532,136 @@ class MembraneCoupling:
                 self.last_edge = EdgeState(*(float(v) for v in data["last_edge"]))
 
 
+def _characteristic_valid(relative_velocity: float, *speeds: float) -> bool:
+    """Accept a neutral characteristic only within floating-point roundoff."""
+    tolerance = 32 * np.finfo(float).eps * max(1.0, *(abs(v) for v in speeds))
+    return bool(math.isfinite(relative_velocity) and relative_velocity >= -tolerance)
+
+
+class RelaxingMembraneCoupling:
+    """Couple the 2D window to the finite-relaxation far field (``"relaxing_membrane"``).
+
+    Predict the exterior state before an interval and integrate the edge flux. The
+    membrane's inner radius is ``X+inner_fraction*L`` and its outer radius is fixed.
+    Boundary values are held over each 2D output interval; the temporal estimator does
+    not estimate this coupling error. Both material characteristics are checked: the
+    window edge must swallow film (``Xdot >= u_e``) and the membrane's inner end must be an
+    outflow for its state (``a' >= u(a)``), each to within roundoff.
+    """
+
+    def __init__(self, membrane, *, inner_fraction: float, length: float) -> None:
+        self.membrane = membrane
+        self.inner_fraction = inner_fraction
+        self.length = length
+        self.previous: tuple[float, float] | None = None
+        self.outflow = 0.0
+        self.outer_deviation = dict.fromkeys(
+            ("velocity", "thickness", "log_conformation", "polymer_stress"), 0.0
+        )
+        self.minimum_inner_outflow = math.inf
+        self.predicted_edge_radius = 0.0
+        self.maximum_radius_prediction_error = 0.0
+
+    @property
+    def outer_velocity(self) -> float:
+        return self.outer_deviation["velocity"]
+
+    def before_interval(self, time: float, target: float, radius: float, speed: float,
+                        drive: float):
+        interval = target - time
+        if interval <= 0:
+            raise ValueError("membrane coupling requires a later output target")
+        if self.previous is None or time <= self.previous[0]:
+            drive_end = drive
+        else:
+            slope = (drive - self.previous[1]) / (time - self.previous[0])
+            drive_end = drive + slope * interval
+        predicted = radius + speed * interval
+        inner_end = predicted + self.inner_fraction * self.length
+        # Use the actual linear membrane motion, including any accumulated
+        # discrepancy between the previous radius prediction and the 2D solve.
+        actual_adot = (inner_end - self.membrane.inner) / (target - self.membrane.time)
+        inner_outflow = min(actual_adot - drive, actual_adot - drive_end)
+        self.minimum_inner_outflow = min(self.minimum_inner_outflow, inner_outflow)
+        if not _characteristic_valid(inner_outflow, actual_adot, drive, drive_end):
+            raise RuntimeError("far-field inner material outflow validity rejected")
+        self.previous = (time, drive)
+        self.predicted_edge_radius = predicted + self.length
+        self.membrane.advance(target, inner_end, drive, drive_end)
+        deviations = self.membrane.outer_state_deviation()
+        _assert_finite("membrane outer state", deviations.values())
+        for key in self.outer_deviation:
+            self.outer_deviation[key] = max(self.outer_deviation[key], deviations[key])
+        return self.membrane.state_at(self.predicted_edge_radius)
+
+    def after_interval(self, edge, time_end: float, outer_start: float, outer_end: float,
+                       speed_start: float, speed_end: float, interval: float) -> None:
+        h, u = edge.thickness, edge.velocity
+        self.membrane.time = time_end
+        self.outflow += 0.5 * interval * (
+            outer_start * (h * u - (h - 1.0) * speed_start)
+            + outer_end * (h * u - (h - 1.0) * speed_end)
+        )
+        self.maximum_radius_prediction_error = max(
+            self.maximum_radius_prediction_error, abs(outer_end - self.predicted_edge_radius)
+        )
+
+    def save(self, path: Path, checkpoint: Path) -> None:
+        """Write the exterior state beside ``checkpoint``, bound to it by its SHA-256."""
+        previous = np.array(self.previous if self.previous is not None else (np.nan, np.nan))
+        with path.open("xb") as stream:
+            np.savez(
+                stream, **self.membrane.to_arrays(), previous=previous,
+                outflow=np.array(self.outflow),
+                outer_deviation=np.array(list(self.outer_deviation.values())),
+                minimum_inner_outflow=np.array(self.minimum_inner_outflow),
+                predicted_edge_radius=np.array(self.predicted_edge_radius),
+                maximum_radius_prediction_error=np.array(self.maximum_radius_prediction_error),
+                coupling_inner_fraction=np.array(self.inner_fraction),
+                coupling_length=np.array(self.length),
+                checkpoint_sha256=np.array(_file_reference(checkpoint)["sha256"]),
+                coupling_version=np.array("finite-de-membrane-coupling-v1"),
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def load(self, path: Path, checkpoint_sha256: str) -> None:
+        from taylor_culick_fem.relaxing_farfield_membrane import RelaxingFarFieldMembrane
+
+        with np.load(path, allow_pickle=False) as data:
+            if str(data["coupling_version"]) != "finite-de-membrane-coupling-v1":
+                raise ValueError("restart membrane coupling version mismatch")
+            if str(data["checkpoint_sha256"]) != checkpoint_sha256:
+                raise ValueError("restart membrane sidecar does not bind the selected checkpoint")
+            if (
+                float(data["coupling_inner_fraction"]) != self.inner_fraction
+                or float(data["coupling_length"]) != self.length
+            ):
+                raise ValueError("restart membrane coupling geometry mismatch")
+            restored = RelaxingFarFieldMembrane.from_arrays(data)
+            if (
+                restored.G != self.membrane.G or restored.mu != self.membrane.mu
+                or restored.relaxation_time != self.membrane.relaxation_time
+            ):
+                raise ValueError("restart membrane constitutive identity mismatch")
+            self.membrane = restored
+            previous = data["previous"]
+            self.previous = None if np.isnan(previous).all() else tuple(map(float, previous))
+            self.outflow = float(data["outflow"])
+            deviation = np.asarray(data["outer_deviation"], dtype=float)
+            if deviation.shape != (4,) or np.any(deviation < 0):
+                raise ValueError("restart membrane outer diagnostics are invalid")
+            self.outer_deviation = dict(zip(self.outer_deviation, deviation, strict=True))
+            self.minimum_inner_outflow = float(data["minimum_inner_outflow"])
+            self.predicted_edge_radius = float(data["predicted_edge_radius"])
+            self.maximum_radius_prediction_error = float(data["maximum_radius_prediction_error"])
+            _assert_finite("restart coupling state", [
+                self.outflow, *deviation, self.minimum_inner_outflow,
+                self.predicted_edge_radius, self.maximum_radius_prediction_error,
+                *(self.previous or ()),
+            ])
+
+
 def _write_json(path: Path, data: dict) -> None:
     """Replace ``path`` atomically: a reader sees the old record or the new one, never a torn one."""
     temporary = path.with_name(f".{path.name}.tmp")
@@ -520,7 +743,8 @@ def _interval_step_bounds(
         maxstep = min(args.fixed_step, interval)
     else:
         maxstep = min(args.max_step, interval) if args.max_step is not None else interval
-    return maxstep, _interval_start_step(args.interval_start, previous_target, interval, maxstep, carried)
+    startstep = _interval_start_step(args.interval_start, previous_target, interval, maxstep, carried)
+    return maxstep, _relaxation_capped_start(startstep, args)
 
 
 def _solver_without_step_policy(solver: dict) -> dict:
@@ -704,11 +928,17 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "checkpoint", "input_case", "metadata", "control", "rim_height", "pvd", "time",
         "control_index", "field_index",
     }
+    relaxing = _far_field_config(args)["mode"] == RELAXING_MEMBRANE
+    if relaxing:
+        # The relaxing exterior's state and history are pinned like the FEM state.
+        decoupled_required |= {"far_field_state", "far_field_history"}
     keys = set(restart) if isinstance(restart, dict) else set()
     if keys not in (legacy_required, decoupled_required):
         raise ValueError(
             "restart requires either legacy output_index lineage or decoupled "
             "control_index, field_index and rim_height lineage"
+            + ("; a relaxing membrane also requires hash-bound far_field_state and "
+               "far_field_history" if relaxing else "")
         )
     legacy = keys == legacy_required
     if legacy:
@@ -789,7 +1019,12 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         "output_step": args.output_step,
         "field_stride": args.field_stride,
         "stabilization_option": args.stabilization,
-        "conformation_supg_factor": args.supg_factor,
+        "conformation_supg_factor": (
+            args.supg_factor
+            if evolves_conformation(args.elastic_modulus, args.relaxation_time, passive_conformation)
+            else None
+        ),
+        "relaxation_start_fraction": getattr(args, "relaxation_start_fraction", None),
         "temporal_error": args.temporal_error,
         "sponge": (
             _sponge_parameters(args).as_json_dict()
@@ -801,7 +1036,7 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         observed = metadata.get(key)
         if key == "field_stride" and observed is None:
             observed = 1
-        if key == "conformation_supg_factor" and observed is None:
+        if key == "conformation_supg_factor" and key not in metadata:
             # Attempts written before this control was exposed used the
             # problem class's factor-one default.
             observed = 1.0
@@ -894,6 +1129,45 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
         if not far_state.is_file():
             raise ValueError("restart checkpoint has no far-field membrane state")
         _check_grading_change_is_applied(args, metadata, far_state)
+    elif relaxing:
+        far_state = paths["far_field_state"]
+        if far_state != paths["checkpoint"].with_suffix(".farfield.npz"):
+            raise ValueError("restart membrane state does not belong to the selected checkpoint")
+        far_path = paths["far_field_history"]
+        if far_path != paths["control"].parent / "far-field.txt":
+            raise ValueError("restart membrane history does not belong to the parent case")
+        far_rows = np.loadtxt(far_path, ndmin=2)
+        if (
+            far_rows.shape[1] != len(RELAXING_FAR_FIELD_HEADER)
+            or len(far_rows) < control_index
+            or not np.all(np.isfinite(far_rows))
+        ):
+            raise ValueError("restart far-field history is incomplete or invalid")
+        far_rows = far_rows[:control_index]
+        if not np.allclose(far_rows[:, 0], rows[:, 0], rtol=1e-10, atol=1e-10):
+            raise ValueError("restart far-field and control times disagree")
+        if any(
+            not _characteristic_valid(relative, speed, edge_speed)
+            for relative, speed, edge_speed in zip(
+                far_rows[:, 12], rows[:, 2], far_rows[:, 2], strict=True
+            )
+        ) or any(not _characteristic_valid(value, value) for value in far_rows[:, 13]):
+            raise ValueError("restart membrane history failed a characteristic gate")
+        if np.max(far_rows[:, 8:12]) > FAR_FIELD_OUTER_TOLERANCE:
+            raise ValueError("restart membrane pulse had already reached the outer boundary")
+        with np.load(far_state, allow_pickle=False) as sidecar:
+            if str(sidecar["checkpoint_sha256"]) != restart["checkpoint"]["sha256"]:
+                raise ValueError("restart membrane sidecar does not bind the selected checkpoint")
+            if not math.isclose(float(sidecar["time"]), time, rel_tol=1e-10, abs_tol=1e-10):
+                raise ValueError("restart membrane state time disagrees with lineage")
+            if not math.isclose(
+                float(sidecar["outflow"]), far_rows[-1, 7], rel_tol=1e-10, abs_tol=1e-10
+            ):
+                raise ValueError("restart membrane flux state disagrees with history")
+            if not np.allclose(
+                sidecar["outer_deviation"], far_rows[-1, 8:12], rtol=1e-10, atol=1e-10
+            ):
+                raise ValueError("restart membrane outer diagnostics disagree with history")
     if paths["checkpoint"].parent != root / "checkpoints":
         raise ValueError("restart checkpoint does not belong to the parent case")
     if paths["control"].parent != root / "run_viscoelastic_axi":
@@ -973,6 +1247,28 @@ def _output_times(args: argparse.Namespace) -> np.ndarray:
     if not len(times) or times[-1] < args.t_end * (1 - 1e-14):
         times = np.append(times, args.t_end)
     return times
+
+
+def _check_relaxing_endpoint(args: argparse.Namespace, restart: dict | None) -> None:
+    """Refuse a relaxing-membrane run whose last sample is not on a field boundary.
+
+    Its endpoint checkpoint and far-field sidecar are written only there, so that field
+    indices stay the deterministic stride sequence that restarts check. The case validator
+    refuses this for the declared stop; this also covers ``--t-end`` and a continuation
+    whose output grid restarts at a changed cadence.
+    """
+    if _far_field_config(args)["mode"] != RELAXING_MEMBRANE:
+        return
+    targets = _output_times(args)
+    last = len(targets)
+    if restart is not None:
+        targets, _ = _continuation_targets(args, restart, targets)
+        last = restart["control_index"] + len(targets)
+    if last % args.field_stride:
+        raise ValueError(
+            f"relaxing membrane run would end at sample {last}, not a multiple of the field "
+            f"stride {args.field_stride}, so without a field and a bound checkpoint"
+        )
 
 
 def _zero_crossing(previous: list[float], current: list[float]) -> dict[str, float]:
@@ -1197,11 +1493,15 @@ def _enforce_launcher_affinity() -> dict[str, object]:
 
 def run_case(args: argparse.Namespace) -> dict:
     passive_conformation = _passive_conformation(args)
-    if args.elastic_modulus == 0 and not passive_conformation:
-        raise ValueError("elastic_modulus=0 requires passive_conformation=True")
+    # lambda=0, or G=0 without passive transport, is the exact Newtonian endpoint.
+    conformation_evolved = evolves_conformation(
+        args.elastic_modulus, args.relaxation_time, passive_conformation
+    )
     restart = _read_restart(args)
+    _check_relaxing_endpoint(args, restart)
     sponge = _sponge_parameters(args)
     far_field = _far_field_config(args)
+    relaxing = far_field["mode"] == RELAXING_MEMBRANE
     affinity = _enforce_launcher_affinity()
     preset = getattr(args, "run_dir", None)
     if preset is not None:
@@ -1226,12 +1526,12 @@ def run_case(args: argparse.Namespace) -> dict:
         "elastic_modulus_definition": "G_dim*h0/sigma",
         "passive_conformation": passive_conformation,
         "relaxation_time": relaxation_json,
-        "constitutive_model": "Oldroyd-B",
-        "polymer_stress": "G*(C-I)",
-        "conformation_formulation": "log-conf",
+        **_constitutive_metadata(args.elastic_modulus, args.relaxation_time, passive_conformation),
         "stabilization_option": args.stabilization,
-        "conformation_stabilization": "SUPG" if args.stabilization == "supg" else None,
-        "conformation_supg_factor": args.supg_factor,
+        "conformation_stabilization": (
+            "SUPG" if conformation_evolved and args.stabilization == "supg" else None
+        ),
+        "conformation_supg_factor": args.supg_factor if conformation_evolved else None,
         "coordinate_system": "axisymmetric",
         "velocity_frame": "laboratory",
         "time_scale": "capillary",
@@ -1302,6 +1602,26 @@ def run_case(args: argparse.Namespace) -> dict:
         "launcher_affinity": affinity,
         "status": "initialising",
     }
+    # Opt-in records only, so the metadata of an elastic run without them is unchanged.
+    if not conformation_evolved:
+        metadata["conformation_evolved"] = False
+        metadata["polymer_feedback"] = False
+    if getattr(args, "relaxation_start_fraction", None) is not None:
+        metadata["relaxation_start_fraction"] = args.relaxation_start_fraction
+    if relaxing:
+        metadata["far_field_coupling"] = {
+            "scheme": "linear-drive-predictor-held-edge-v1",
+            "interval": args.output_step,
+            "error_estimated_by_bulk_temporal_estimator": False,
+            "outer_state_tolerance": FAR_FIELD_OUTER_TOLERANCE,
+        }
+        metadata["boundary_gate"] = {
+            "allow_recoil": args.allow_recoil,
+            "rim_speed_floor": None if args.allow_recoil else 0.0,
+            "relative_edge_inflow_required": True,
+            "inner_material_outflow_required": True,
+            "neutral_characteristic_tolerance": "32 machine eps times velocity scale",
+        }
     serialized_case = getattr(args, "serialized_case", None)
     if serialized_case is not None:
         snapshot = run_dir / "input-case.json"
@@ -1417,6 +1737,37 @@ def run_case(args: argparse.Namespace) -> dict:
                             "from_outer": coupling.membrane.outer, "to_outer": outer,
                         }
                         coupling.membrane = coupling.lengthened(outer)
+            elif relaxing:
+                from taylor_culick_fem.relaxing_farfield_membrane import RelaxingFarFieldMembrane
+
+                inner = radius0 + far_field["inner_fraction"] * args.length
+                outer = radius0 + args.length + far_field["extension"]
+                coupling = RelaxingMembraneCoupling(
+                    RelaxingFarFieldMembrane(
+                        elastic_modulus=args.elastic_modulus,
+                        relaxation_time=args.relaxation_time,
+                        viscosity=math.sqrt(2.0) * args.oh,
+                        inner=inner, outer=outer,
+                        nodes=math.ceil((outer - inner) / far_field["node_spacing"]) + 1,
+                    ),
+                    inner_fraction=far_field["inner_fraction"], length=args.length,
+                )
+                if restart is not None:
+                    coupling.load(
+                        restart["far_state"], restart["evidence"]["checkpoint"]["sha256"]
+                    )
+                    if not math.isclose(
+                        coupling.membrane.time, restart["time"], rel_tol=1e-10, abs_tol=1e-10
+                    ):
+                        raise ValueError("far-field membrane state time disagrees with lineage")
+                    metadata["restart_far_field_state"] = restart["evidence"]["far_field_state"]
+                    if outer > coupling.membrane.outer + 1e-9:
+                        metadata["restart_far_field_extended"] = {
+                            "from_outer": coupling.membrane.outer, "to_outer": outer,
+                        }
+                        coupling.membrane = coupling.membrane.extended(
+                            outer, far_field["node_spacing"]
+                        )
             if restart is not None:
                 checkpoint = restart["paths"]["checkpoint"]
                 state_time, state_index = problem._get_time_of_state_file(str(checkpoint))
@@ -1480,7 +1831,8 @@ def run_case(args: argparse.Namespace) -> dict:
             # arrest run may retain explicit output-indexed checkpoints.
             problem.write_states = False
             checkpoint_dir = run_dir / "checkpoints"
-            if args.checkpoint_every:
+            # A relaxing membrane always checkpoints its endpoint, bound to its exterior state.
+            if args.checkpoint_every or relaxing:
                 checkpoint_dir.mkdir()
 
             metadata["volume_initial_reference"] = volume0
@@ -1518,11 +1870,10 @@ def run_case(args: argparse.Namespace) -> dict:
             )
             far_history = far_segment = None
             if coupling is not None:
-                far_history = problem.create_text_file_output(
-                    "far-field.txt", header=FAR_FIELD_HEADER
-                )
+                header = RELAXING_FAR_FIELD_HEADER if relaxing else FAR_FIELD_HEADER
+                far_history = problem.create_text_file_output("far-field.txt", header=header)
                 far_segment = problem.create_text_file_output(
-                    "far-field-segment.txt", header=FAR_FIELD_HEADER
+                    "far-field-segment.txt", header=header
                 )
             sponge_history = None
             if sponge is not None and sponge.gamma_max > 0:
@@ -1535,6 +1886,8 @@ def run_case(args: argparse.Namespace) -> dict:
             worst_volume_error = 0.0
             worst_tip_pin = 0.0
             minimum_sampled_speed = math.inf
+            minimum_relative_edge_inflow = math.inf
+            boundary_failures: list[str] = []
             last_row: list[float] | None = None
             diagnostics: dict[str, float] = {}
             sponge_diagnostics: dict[str, float] = {}
@@ -1570,6 +1923,9 @@ def run_case(args: argparse.Namespace) -> dict:
             )
             control_offset = 0
             field_index = 0
+            if relaxing:
+                # case.json is rewritten at each relaxing-membrane checkpoint.
+                metadata["status"] = "running"
             if restart is not None:
                 for row in restart["rows"]:
                     history.add_row(*row)
@@ -1581,6 +1937,8 @@ def run_case(args: argparse.Namespace) -> dict:
                 if far_history is not None:
                     for far_row in restart["far_rows"]:
                         far_history.add_row(*far_row)
+                if relaxing:
+                    minimum_relative_edge_inflow = float(np.min(restart["far_rows"][:, 12]))
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
                 out_times, previous_target = _continuation_targets(args, restart, out_times)
@@ -1596,7 +1954,22 @@ def run_case(args: argparse.Namespace) -> dict:
                 maxstep, startstep = _interval_step_bounds(
                     args, previous_target, interval, carried_step
                 )
-                if coupling is not None:
+                if relaxing:
+                    start_now = float(problem.get_current_time(as_float=True))
+                    radius_start = problem.window_position()
+                    speed_start = problem.retraction_speed()
+                    drive = problem.midplane_radial_velocity(
+                        radius_start + far_field["inner_fraction"] * args.length
+                    )
+                    edge = coupling.before_interval(
+                        start_now, float(target), radius_start, speed_start, drive
+                    )
+                    if not _characteristic_valid(
+                        speed_start - edge.velocity, speed_start, edge.velocity
+                    ):
+                        raise RuntimeError("far-boundary inflow validity rejected before interval")
+                    problem.set_far_field(edge.velocity, edge.thickness, edge.log_conformation())
+                elif coupling is not None:
                     # Integrate over the solver's own clock, not the nominal
                     # targets, so a restart lands on the same outflow history.
                     start_now = float(problem.get_current_time(as_float=True))
@@ -1638,7 +2011,54 @@ def run_case(args: argparse.Namespace) -> dict:
                 radius = problem.window_position()
                 speed = problem.retraction_speed()
                 volume = problem.volume()
-                if coupling is not None:
+                if relaxing:
+                    coupling.after_interval(
+                        edge, now, radius_start + args.length, radius + args.length,
+                        speed_start, speed, now - start_now,
+                    )
+                    relative_inflow = speed - edge.velocity
+                    minimum_relative_edge_inflow = min(
+                        minimum_relative_edge_inflow, relative_inflow, speed_start - edge.velocity
+                    )
+                    outer = coupling.outer_deviation
+                    far_row = [
+                        now, drive, edge.velocity, edge.thickness, *edge.log_conformation(),
+                        coupling.outflow, outer["velocity"], outer["thickness"],
+                        outer["log_conformation"], outer["polymer_stress"],
+                        relative_inflow, coupling.minimum_inner_outflow,
+                        coupling.predicted_edge_radius, radius + args.length,
+                        radius + args.length - coupling.predicted_edge_radius,
+                        coupling.predicted_edge_radius - (1 - far_field["inner_fraction"]) * args.length,
+                        radius + far_field["inner_fraction"] * args.length,
+                        radius + args.length - coupling.predicted_edge_radius,
+                    ]
+                    _assert_finite("far-field row", far_row)
+                    far_history.add_row(*far_row)
+                    far_segment.add_row(*far_row)
+                    if not _characteristic_valid(relative_inflow, speed, edge.velocity):
+                        boundary_failures.append("far-boundary inflow validity rejected")
+                    if not args.allow_recoil and not _characteristic_valid(speed, speed):
+                        boundary_failures.append("negative rim speed rejected by allow_recoil=false")
+                    reached = {
+                        key: value for key, value in outer.items()
+                        if value > FAR_FIELD_OUTER_TOLERANCE
+                    }
+                    if reached:
+                        boundary_failures.append(
+                            "far-field pulse reached the end of the membrane extension: "
+                            + ", ".join(f"{key}={value:.3e}" for key, value in reached.items())
+                        )
+                    callback = getattr(args, "progress_callback", None)
+                    if callback is not None:
+                        callback(
+                            "far_field_sample", physical_time=now, control_index=control_index,
+                            relative_edge_inflow=relative_inflow,
+                            inner_material_outflow=coupling.minimum_inner_outflow,
+                            outer_state_deviation=outer,
+                            edge_radius_prediction_error=far_row[-1],
+                            boundary_gate_passed=not boundary_failures,
+                        )
+                elif coupling is not None:
                     coupling.after_interval(
                         edge,
                         now,
@@ -1717,11 +2137,49 @@ def run_case(args: argparse.Namespace) -> dict:
                     ):
                         height_plateau = plateau_candidate
 
-                if control_index % args.field_stride == 0:
+                if control_index % args.field_stride == 0 or boundary_failures:
                     problem.output(quiet=True)
                     field_index += 1
 
-                if args.checkpoint_every and control_index % args.checkpoint_every == 0:
+                if relaxing:
+                    scheduled_checkpoint = (
+                        args.checkpoint_every and control_index % args.checkpoint_every == 0
+                    )
+                    membrane_endpoint = bool(boundary_failures) or (
+                        control_index % args.field_stride == 0
+                        and (
+                            target == out_times[-1]
+                            or arrest is not None
+                            or height_plateau is not None
+                        )
+                    )
+                    if scheduled_checkpoint or membrane_endpoint:
+                        checkpoint = checkpoint_dir / f"ckpt_{control_index:05d}.dump"
+                        problem.save_state(str(checkpoint), quiet=True)
+                        sidecar = checkpoint.with_suffix(".farfield.npz")
+                        coupling.save(sidecar, checkpoint)
+                        metadata["latest_checkpoint"] = {
+                            "time": now, "control_index": control_index,
+                            "field_index": field_index,
+                            "checkpoint": {
+                                **_file_reference(checkpoint),
+                                "path": os.path.relpath(checkpoint, run_dir),
+                            },
+                            "boundary_gate_passed": not boundary_failures,
+                            "far_field_state": {
+                                **_file_reference(sidecar),
+                                "path": os.path.relpath(sidecar, run_dir),
+                            },
+                        }
+                        metadata["t_reached"] = now
+                        metadata["scalar_samples_written"] = control_index
+                        metadata["fields_written"] = field_index
+                        _write_json(run_dir / "case.json", metadata)
+                        _write_field_history(
+                            Path(problem.get_output_directory()),
+                            restart["fields"] if restart else [],
+                        )
+                elif args.checkpoint_every and control_index % args.checkpoint_every == 0:
                     problem.save_state(
                         str(checkpoint_dir / f"ckpt_{control_index:05d}.dump"), quiet=True
                     )
@@ -1730,7 +2188,7 @@ def run_case(args: argparse.Namespace) -> dict:
                     _write_field_history(
                         Path(problem.get_output_directory()), restart["fields"] if restart else []
                     )
-                if arrest is not None or height_plateau is not None:
+                if arrest is not None or height_plateau is not None or boundary_failures:
                     break
 
             assert last_row is not None
@@ -1739,7 +2197,7 @@ def run_case(args: argparse.Namespace) -> dict:
             )
             radius_final = last_row[1]
             radius_increase = radius_final - radius0
-            failures = []
+            failures = list(boundary_failures)
             if radius_increase < args.min_radius_increase:
                 failures.append(
                     f"hole growth {radius_increase:.6e} is below {args.min_radius_increase:.6e}"
@@ -1748,12 +2206,21 @@ def run_case(args: argparse.Namespace) -> dict:
             # normal velocity is -U.  Psi=0 is an inflow condition only while
             # U>=0; elastic recoil would turn that edge into outflow and make
             # the strong conformation condition invalid.
-            if coupling is not None and coupling.outer_velocity > FAR_FIELD_OUTER_TOLERANCE:
+            # The relaxing membrane records its own outer-state failure in boundary_failures.
+            if (
+                coupling is not None
+                and not relaxing
+                and coupling.outer_velocity > FAR_FIELD_OUTER_TOLERANCE
+            ):
                 failures.append(
                     "far-field pulse reached the end of the membrane extension "
                     f"(|u| = {coupling.outer_velocity:.3e} in its outer tenth)"
                 )
-            if args.max_recoil_speed is not None and minimum_sampled_speed < -args.max_recoil_speed:
+            if (
+                conformation_evolved
+                and args.max_recoil_speed is not None
+                and minimum_sampled_speed < -args.max_recoil_speed
+            ):
                 failures.append(
                     "far boundary ceased to be inflow at an output sample "
                     f"(minimum sampled U={minimum_sampled_speed:.6e})"
@@ -1820,7 +2287,11 @@ def run_case(args: argparse.Namespace) -> dict:
                     "R_final": radius_final,
                     "R_increase": radius_increase,
                     "minimum_sampled_U": minimum_sampled_speed,
-                    "far_boundary_remained_sampled_inflow": minimum_sampled_speed >= 0,
+                    "far_boundary_remained_sampled_inflow": (
+                        not any("far-boundary inflow validity rejected" in reason
+                                for reason in boundary_failures)
+                        if relaxing else minimum_sampled_speed >= 0
+                    ),
                     "U_final": last_row[2],
                     "ustar_final": last_row[3],
                     "worst_volume_rel_error": worst_volume_error,
@@ -1831,7 +2302,7 @@ def run_case(args: argparse.Namespace) -> dict:
                     "sponge_diagnostics_final": sponge_diagnostics,
                     "largest_positive_sponge_power": largest_positive_sponge_power,
                     "far_field_outflow": coupling.outflow if coupling is not None else None,
-                    "far_field_extensions": coupling.extensions if coupling is not None else None,
+                    "far_field_extensions": getattr(coupling, "extensions", None),
                     "far_field_outer_velocity_max": (
                         coupling.outer_velocity if coupling is not None else None
                     ),
@@ -1849,10 +2320,24 @@ def run_case(args: argparse.Namespace) -> dict:
                     "failure_reasons": failures,
                 }
             )
+            if relaxing:
+                metadata.update(
+                    {
+                        "minimum_relative_edge_inflow": minimum_relative_edge_inflow,
+                        "far_field_outer_state_deviation": coupling.outer_deviation,
+                        "far_field_minimum_inner_material_outflow": coupling.minimum_inner_outflow,
+                        "far_field_maximum_radius_prediction_error": (
+                            coupling.maximum_radius_prediction_error
+                        ),
+                    }
+                )
     except BaseException as exc:
         metadata["status"] = "error"
         metadata["error_type"] = type(exc).__name__
         metadata["error"] = str(exc)
+        callback = getattr(args, "progress_callback", None)
+        if callback is not None and "validity rejected" in str(exc):
+            callback("boundary_gate_rejected", reason=str(exc))
         _write_json(run_dir / "case.json", metadata)
         raise
     finally:
@@ -1887,14 +2372,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "evolve log-conformation diagnostics without feeding polymer stress "
-            "back into momentum; required when G=0"
+            "back into momentum; at G=0 this opts into diagnostic transport"
         ),
     )
     parser.add_argument(
         "--relaxation-time",
         type=_relaxation_time,
         default=math.inf,
-        help="dimensionless lambda, or 'inf' for no relaxation",
+        help="dimensionless lambda (0 is Newtonian), or 'inf' for no relaxation",
     )
     parser.add_argument(
         "--results",
@@ -1951,9 +2436,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--far-field",
-        choices=("rest", "membrane"),
+        choices=("rest", "membrane", RELAXING_MEMBRANE),
         default="rest",
-        help="far-edge film: at rest (default) or coupled to the thin-film far-field membrane",
+        help="far-edge film: at rest (default), coupled to the thin-film far-field membrane "
+        "(lambda=inf), or coupled to the finite-relaxation thin film (relaxing_membrane)",
     )
     parser.add_argument("--far-field-inner-fraction", type=_positive_float, default=None)
     parser.add_argument("--far-field-extension", type=_positive_float, default=None)
@@ -2016,6 +2502,13 @@ def build_parser() -> argparse.ArgumentParser:
             '\'{"velocity_x": 1, "velocity_y": 1, "X": 1}\'; without it no estimator is '
             "registered and every step runs at the cap"
         ),
+    )
+    parser.add_argument(
+        "--relaxation-start-fraction",
+        type=_positive_float,
+        default=None,
+        help="cap each output interval's first step at this multiple of a finite lambda "
+        "(evolved conformation only); off by default",
     )
     parser.add_argument("--max-newton", type=int, default=20)
     parser.add_argument(
@@ -2122,11 +2615,12 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Apply cross-argument checks shared by CLI and serialized-case runners."""
     try:
-        passive_conformation = _passive_conformation(args)
+        _passive_conformation(args)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.elastic_modulus == 0 and not passive_conformation:
-        parser.error("--elastic-modulus=0 requires --passive-conformation")
+    fraction = getattr(args, "relaxation_start_fraction", None)
+    if fraction is not None and not 0 < fraction <= 1:
+        parser.error("--relaxation-start-fraction must lie in (0, 1]")
     if args.n_outputs < 1:
         parser.error("--n-outputs must be at least 1")
     if args.max_newton < 1:

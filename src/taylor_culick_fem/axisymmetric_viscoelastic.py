@@ -8,16 +8,21 @@ the polymer conformation equation and its stress ``G (C - I)``.
 The dimensionless modulus used here is ``G = G_dim h0 / sigma``, on the same
 full-thickness ``h0`` and surface-tension scale as the inherited problem.
 ``passive_conformation=True`` retains the log-conformation transport and
-diagnostic output while omitting polymer feedback in the momentum equation;
-it is required when ``G=0``.
+diagnostic output while omitting polymer feedback in the momentum equation.
+At ``lambda=0``, or at ``G=0`` without that explicit diagnostic mode, the
+problem is exactly the inherited Newtonian problem and has no conformation
+unknowns.
 
 ``relaxation_time=math.inf`` is an exact non-relaxing limit: no large finite
 surrogate is used.  The incoming film is unstretched (``log(C)=0``), while the
 midplane imposes only the tensor symmetry condition.  With the opt-in
 ``far_field="membrane"`` the incoming film instead carries the stretch of the
 coupled far-field membrane, ``log(C) = diag(2 log lam_r, 2 log lam_z,
-2 log lam_th)``, supplied through global parameters.  The free surface has no
-conformation boundary condition because it is a material boundary.
+2 log lam_th)``, supplied through global parameters.  The opt-in
+``far_field="relaxing_membrane"`` supplies the diagonal log-conformation of an
+independently evolved Oldroyd-B exterior instead, including finite relaxation.
+The free surface has no conformation boundary condition because it is a
+material boundary.
 """
 
 from __future__ import annotations
@@ -37,6 +42,19 @@ from taylor_culick_fem.viscoelastic import (
     GLambdaOldroydBParameters,
     make_g_lambda_oldroyd_b_equations,
 )
+
+
+def evolves_conformation(
+    elastic_modulus: float, relaxation_time: float, passive_conformation: bool
+) -> bool:
+    """Return whether this case carries conformation unknowns.
+
+    Zero relaxation time is the exact Newtonian endpoint.  Zero modulus is
+    also Newtonian unless positive-time passive transport was explicitly
+    requested for diagnostics.
+    """
+
+    return relaxation_time > 0 and (elastic_modulus > 0 or passive_conformation)
 
 
 class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
@@ -75,12 +93,25 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             raise ValueError("solvent_oh must be finite and non-negative")
         if not math.isfinite(self.elastic_modulus) or self.elastic_modulus < 0:
             raise ValueError("elastic_modulus must be finite and non-negative")
-        if not (self.relaxation_time > 0):
-            raise ValueError("relaxation_time must be positive (or infinity)")
+        if math.isnan(self.relaxation_time) or self.relaxation_time < 0:
+            raise ValueError("relaxation_time must be non-negative (or infinity)")
         if type(self.passive_conformation) is not bool:
             raise TypeError("passive_conformation must be a boolean")
-        if self.elastic_modulus == 0 and not self.passive_conformation:
-            raise ValueError("elastic_modulus=0 requires passive_conformation=True")
+        if self.far_field == "membrane" and (
+            self.passive_conformation
+            or not math.isinf(self.relaxation_time)
+            or self.elastic_modulus == 0
+        ):
+            raise ValueError("far_field='membrane' requires active lambda=inf elasticity")
+        if self.far_field == "relaxing_membrane":
+            if self.passive_conformation or not evolves_conformation(
+                self.elastic_modulus, self.relaxation_time, False
+            ):
+                raise ValueError(
+                    "far_field='relaxing_membrane' requires active Oldroyd-B elasticity"
+                )
+            if self.sponge is not None and self.sponge.gamma_max > 0:
+                raise ValueError("a relaxing membrane far field cannot be combined with a sponge")
 
         # NavierStokesEquations in the inherited problem carries the solvent
         # stress only.  Velocities remain laboratory-frame velocities.
@@ -105,52 +136,67 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
                 )
                 self += sponge_eqs @ "liquid"
 
-        params = GLambdaOldroydBParameters(
-            elastic_modulus=self.elastic_modulus,
-            relaxation_time=self.relaxation_time,
-        )
-        self.viscoelastic_parameters = params
-        eqs = make_g_lambda_oldroyd_b_equations(
-            params,
-            formulation="log-conf",
-            space=self.conformation_space,
-            stabilization=self.conformation_stabilization,
-            supg_factor=self.conformation_supg_factor,
-            add_polymer_stress_to_momentum=not self.passive_conformation,
-            output_conformation=True,
-        )
+        # At a Newtonian endpoint (lambda=0, or G=0 without passive transport) the
+        # problem is the inherited Newtonian one, with no conformation unknowns.
+        self.viscoelastic_parameters = None
+        if evolves_conformation(
+            self.elastic_modulus, self.relaxation_time, self.passive_conformation
+        ):
+            params = GLambdaOldroydBParameters(
+                elastic_modulus=self.elastic_modulus,
+                relaxation_time=self.relaxation_time,
+            )
+            self.viscoelastic_parameters = params
+            eqs = make_g_lambda_oldroyd_b_equations(
+                params,
+                formulation="log-conf",
+                space=self.conformation_space,
+                stabilization=self.conformation_stabilization,
+                supg_factor=self.conformation_supg_factor,
+                add_polymer_stress_to_momentum=not self.passive_conformation,
+                output_conformation=True,
+            )
 
-        # Undisturbed material enters through the translating far boundary.
-        # In axisymmetry the azimuthal tensor component is named ``aa``.
-        if self.far_field == "membrane":
-            if self.passive_conformation or not math.isinf(self.relaxation_time):
-                raise ValueError("far_field='membrane' requires active lambda=inf elasticity")
-            # Pure stretching of a thin film: C = diag(lam_r^2, lam_z^2,
-            # lam_th^2) from the far-field membrane. Parameters, not unknowns.
-            eqs += (
-                DirichletBC(
-                    log_conformation_xx=self.define_global_parameter(far_field_log_c_xx=0.0),
-                    log_conformation_xy=0,
-                    log_conformation_yy=self.define_global_parameter(far_field_log_c_yy=0.0),
-                    log_conformation_aa=self.define_global_parameter(far_field_log_c_aa=0.0),
+            # Undisturbed material enters through the translating far boundary.
+            # In axisymmetry the azimuthal tensor component is named ``aa``.
+            if self.far_field == "relaxing_membrane":
+                # The relaxing exterior's diagonal log C, known parameters as above.
+                eqs += (
+                    DirichletBC(
+                        log_conformation_xx=self.define_global_parameter(far_field_log_c_xx=0.0),
+                        log_conformation_xy=0,
+                        log_conformation_yy=self.define_global_parameter(far_field_log_c_yy=0.0),
+                        log_conformation_aa=self.define_global_parameter(far_field_log_c_aa=0.0),
+                    )
+                    @ "far"
                 )
-                @ "far"
-            )
-        else:
-            eqs += (
-                DirichletBC(
-                    log_conformation_xx=0,
-                    log_conformation_xy=0,
-                    log_conformation_yy=0,
-                    log_conformation_aa=0,
+            elif self.far_field == "membrane":
+                # Pure stretching of a thin film: C = diag(lam_r^2, lam_z^2,
+                # lam_th^2) from the far-field membrane. Parameters, not unknowns.
+                eqs += (
+                    DirichletBC(
+                        log_conformation_xx=self.define_global_parameter(far_field_log_c_xx=0.0),
+                        log_conformation_xy=0,
+                        log_conformation_yy=self.define_global_parameter(far_field_log_c_yy=0.0),
+                        log_conformation_aa=self.define_global_parameter(far_field_log_c_aa=0.0),
+                    )
+                    @ "far"
                 )
-                @ "far"
-            )
-        # Reflection symmetry forbids only the r-z shear component.  The
-        # normal components are evolved, not prescribed.  There is
-        # deliberately no conformation condition on ``interface``.
-        eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
-        self += eqs @ "liquid"
+            else:
+                eqs += (
+                    DirichletBC(
+                        log_conformation_xx=0,
+                        log_conformation_xy=0,
+                        log_conformation_yy=0,
+                        log_conformation_aa=0,
+                    )
+                    @ "far"
+                )
+            # Reflection symmetry forbids only the r-z shear component.  The
+            # normal components are evolved, not prescribed.  There is
+            # deliberately no conformation condition on ``interface``.
+            eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
+            self += eqs @ "liquid"
 
         factors = dict(self.temporal_error_factors)
         if not all(math.isfinite(v) and v > 0 for v in factors.values()):
@@ -176,8 +222,8 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         evaluated at each step's new time level.
         """
 
-        if self.far_field != "membrane":
-            raise RuntimeError("set_far_field requires far_field='membrane'")
+        if self.far_field not in ("membrane", "relaxing_membrane"):
+            raise RuntimeError("set_far_field requires a membrane far field")
         linear = self.far_field_interpolation == "linear"
         if linear != (start is not None and interval is not None):
             raise ValueError("start state and interval are given exactly with linear interpolation")

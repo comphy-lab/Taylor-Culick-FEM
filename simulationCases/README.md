@@ -55,13 +55,13 @@ the manifest's `case_fields_used`; other fields are descriptive.
 | `geometry` | `{"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "laboratory"}` |
 | `nondimensionalization` | the length, velocity and time scales (full thickness `h0`, capillary scales) |
 | `physics.Oh` | Ohnesorge number `mu / sqrt(2 h0 rho sigma)`; the coded viscosity is `sqrt(2) Oh` |
-| `physics.elastic_modulus` | elastocapillary number `Ec = G h0 / sigma`; 0 requires `passive_conformation` |
-| `physics.relaxation_time` | relaxation time in capillary units, or `"inf"` |
+| `physics.elastic_modulus` | elastocapillary number `Ec = G h0 / sigma`; 0 without `passive_conformation` is the Newtonian endpoint (no conformation unknowns) |
+| `physics.relaxation_time` | relaxation time `De` in capillary units, or `"inf"`; 0 is the Newtonian endpoint |
 | `physics.stabilization` | conformation stabilisation, `"supg"` or `"none"` |
 | `physics.supg_factor` | optional SUPG factor (default 1) |
 | `physics.passive_conformation` | optional; `true` transports the conformation without its stress |
 | `physics.sponge` | optional absorbing layer: `start`, `width`, `gamma_max`, `profile` (`"quintic"`) |
-| `physics.far_field` | optional far edge: `{"mode": "rest"}` (default) or `{"mode": "membrane", "extension": E}` with optional `inner_fraction`, `node_spacing`, `interpolation` (`"hold"`, default, or `"linear"`: the edge data vary linearly over each coupling interval), `history` (`"overwrite"`, default, or `"keep"`: the far edge keeps its previous time level), `grading` (`{"near_length", "growth"}`: membrane nodes grow geometrically beyond `near_length`) and `auto_extend` (`{"tail_fraction", "factor"}`: the membrane lengthens itself before the pulse or the window reaches its outer `tail_fraction`) |
+| `physics.far_field` | optional far edge: `{"mode": "rest"}` (default) or `{"mode": "membrane", "extension": E}` with optional `inner_fraction`, `node_spacing`, `interpolation` (`"hold"`, default, or `"linear"`: the edge data vary linearly over each coupling interval), `history` (`"overwrite"`, default, or `"keep"`: the far edge keeps its previous time level), `grading` (`{"near_length", "growth"}`: membrane nodes grow geometrically beyond `near_length`) and `auto_extend` (`{"tail_fraction", "factor"}`: the membrane lengthens itself before the pulse or the window reaches its outer `tail_fraction`). The membrane is the neo-Hookean thin film and needs `relaxation_time = "inf"`. `{"mode": "relaxing_membrane", "inner_fraction": a, "extension": E, "node_spacing": d}`, all three required, couples the edge instead to an Oldroyd-B thin film that relaxes at the case's finite or infinite `relaxation_time`; it needs active elasticity and no sponge, writes a checkpoint at its endpoint with the film state bound to it by SHA-256 (so the last sample must fall on a field boundary, a multiple of `output.field_stride`; the runner refuses a case, `--t-end` or continuation for which it does not), and stops the run when either material characteristic at the coupling stops being an inflow to the window or an outflow from the film, or when the disturbance reaches the film's outer end |
 | `mesh.length`, `mesh.r0` | window length `L` and initial hole radius |
 | `mesh.resolution`, `mesh.far_resolution` | target element sizes near the rim and in the far field |
 | `output.cadence` | time between control samples |
@@ -73,11 +73,20 @@ the manifest's `case_fields_used`; other fields are descriptive.
 | `solver.initial_guess` | optional Newton start of each step: `"previous"` (default) or `"extrapolate"` (linear extrapolation of the last two steps) |
 | `solver.temporal_error_fields` | optional field weights that register the temporal error estimator, e.g. `{"X": 1, "U": 1}`; `X` and `U` need equal weights; without it every step runs at the cap |
 | `solver.newton_floor_max_dt` | optional cap on the step used in the Newton round-off floor |
+| `solver.relaxation_start_fraction` | optional, in (0, 1]: cap the first step of each output interval at this fraction of a finite `relaxation_time` when the conformation is evolved; not changed by a continuation |
 | `tolerances.temporal_error` | adaptive time-step error tolerance (used only with `solver.temporal_error_fields`) |
 | `tolerances.max_volume_error`, `.max_tip_pin_residual`, `.min_radius_increase`, `.min_polymer_stress` | checks that fail a run |
 | `tolerances.max_positive_sponge_power` | optional check on the absorbing layer |
 | `arrest.*` | `opening_ustar`, `arrest_ustar`, `consecutive_samples`, `trend_tolerance`, `radius_span_tolerance`: the tip-arrest detector |
 | `completion` | `{"kind": "time", "value": T}` with optional `allow_recoil`; `{"kind": "event", "value": "first_post_startup_turning_point", "horizon": T}` (stop at arrest); or `{"kind": "event", "value": "height_plateau", "horizon": T, ...}` with the plateau thresholds `hold`, `minimum_window`, `window_time_fraction`, `slope_window_fraction`, `instantaneous_slope_fraction`, `residual_rms_fraction`, `adjacent_mean_fraction`, `residual_envelope_growth_fraction` and optional `oscillation_period` |
+
+**Deborah-number cases.** [`prepare_de_sweep.py`](prepare_de_sweep.py) writes, but never
+launches, one case per `De` at fixed `Ec` (`python simulationCases/prepare_de_sweep.py
+--output <new folder>`). `De = 0` and `Ec = 0` are the Newtonian endpoints. A case with
+an evolved conformation and a finite `De` sets `solver.temporal_error_fields` to the
+velocity and the four log-conformation components and `solver.relaxation_start_fraction`
+to 0.1, so the adaptive step follows the relaxing fields; the endpoints and `De = inf`
+keep the default numerics.
 
 # axisymmetric_elastocapillary_equilibrium
 

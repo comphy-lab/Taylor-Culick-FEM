@@ -173,12 +173,85 @@ def test_passive_conformation_maps_and_allows_zero_modulus(tmp_path: Path) -> No
     assert args.passive_conformation is True
 
 
-def test_missing_passive_conformation_rejects_zero_modulus(tmp_path: Path) -> None:
+def test_missing_passive_conformation_selects_newtonian_zero_modulus(tmp_path: Path) -> None:
     case = _case({"kind": "time", "value": 1.0, "allow_recoil": True})
     case["physics"]["elastic_modulus"] = 0.0
 
-    with pytest.raises(ValueError, match="requires physics.passive_conformation = true"):
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    assert args.elastic_modulus == 0
+    assert not args.passive_conformation
+
+
+@pytest.mark.parametrize("relaxation_time", [1.0, 31.622776601683793, "inf"])
+def test_relaxing_membrane_config_maps_to_finite_or_infinite_driver(tmp_path, relaxation_time):
+    case = _case({"kind": "time", "value": 200.0})
+    case["physics"]["relaxation_time"] = relaxation_time
+    case["physics"]["far_field"] = {
+        "mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 1000.0,
+        "node_spacing": 0.5,
+    }
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    assert args.far_field == "relaxing_membrane"
+    assert args.far_field_inner_fraction == 0.5
+    assert args.far_field_extension == 1000.0
+    assert args.far_field_node_spacing == 0.5
+    assert args.relaxation_time == float(relaxation_time)
+
+
+@pytest.mark.parametrize("missing", ["inner_fraction", "extension", "node_spacing"])
+def test_relaxing_membrane_case_never_invents_missing_coupling_settings(tmp_path, missing):
+    case = _case({"kind": "time", "value": 1.0})
+    config = {"mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 1000.0,
+              "node_spacing": 0.5}
+    config.pop(missing)
+    case["physics"]["far_field"] = config
+    with pytest.raises(ValueError, match="requires exactly"):
         adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+def test_relaxing_membrane_and_sponge_are_rejected_as_two_exterior_treatments(tmp_path):
+    case = _case({"kind": "time", "value": 1.0})
+    case["physics"].update(
+        far_field={"mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 1000.0,
+                   "node_spacing": 0.5},
+        sponge={"start": 50.0, "width": 25.0, "gamma_max": 1.0, "profile": "quintic"},
+    )
+    with pytest.raises(ValueError, match="cannot be combined with a sponge"):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+@pytest.mark.parametrize("physics", [
+    {"elastic_modulus": 0.0}, {"relaxation_time": 0.0}, {"passive_conformation": True},
+])
+def test_relaxing_membrane_requires_active_elasticity(tmp_path, physics):
+    case = _case({"kind": "time", "value": 1.0})
+    case["physics"].update(
+        far_field={"mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 1000.0,
+                   "node_spacing": 0.5},
+        **physics,
+    )
+    with pytest.raises(ValueError, match="requires active Oldroyd-B elasticity"):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+def test_trouton_membrane_still_refuses_a_zero_modulus(tmp_path):
+    case = _case({"kind": "time", "value": 1.0})
+    case["physics"].update(elastic_modulus=0.0, far_field={"mode": "membrane", "extension": 10.0})
+    with pytest.raises(ValueError, match="membrane requires active elasticity"):
+        adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+
+
+def test_relaxation_start_fraction_is_optional_validated_and_mapped(tmp_path):
+    case = _case({"kind": "time", "value": 1.0})
+    assert adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "a") \
+        .relaxation_start_fraction is None
+    case["solver"]["relaxation_start_fraction"] = 0.1
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "b")
+    assert args.relaxation_start_fraction == 0.1
+    for bad in (0.0, 1.5, "0.1", True):
+        case["solver"]["relaxation_start_fraction"] = bad
+        with pytest.raises(ValueError, match="relaxation_start_fraction"):
+            adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "c")
 
 
 def test_adapter_rejects_non_boolean_passive_conformation(tmp_path: Path) -> None:
@@ -817,11 +890,31 @@ def test_legacy_restart_without_rim_height_is_rejected(tmp_path, restart_case):
         _read_restart(args)
 
 
-def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
-    """A short coarse-mesh solve checks the real state/output API, not convergence."""
+FINITE_DE_NUMERICS = {
+    "temporal_error_fields": {"velocity": 1, "log_conformation_xx": 1, "log_conformation_xy": 1,
+                              "log_conformation_yy": 1, "log_conformation_aa": 1},
+    "relaxation_start_fraction": 0.1,
+}
+
+
+@pytest.mark.parametrize("relaxation,finite_de_numerics", [
+    ("inf", False), (0.0, False), (0.001, False), (0.001, True),
+])
+def test_small_fem_checkpoint_continuation_matches_uninterrupted(
+    tmp_path, relaxation, finite_de_numerics
+):
+    """A short coarse-mesh solve checks the real state/output API, not convergence.
+
+    Also at the Newtonian endpoint lambda=0 and at a finite lambda, with and without the
+    opt-in finite-relaxation numerics (field error estimator and capped first step).
+    """
     from taylor_culick_fem import viscoelastic_driver as driver
 
     case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case["physics"]["relaxation_time"] = relaxation
+    if finite_de_numerics:
+        case["solver"].update(copy.deepcopy(FINITE_DE_NUMERICS))
+    case_name = driver._case_name(1.0, 1.0, float(relaxation))
     case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
     case["output"].update(cadence=0.02, checkpoint_every=1)
     scratch = tmp_path / "project-scratch"
@@ -830,7 +923,7 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     parent_input = scratch / "parent-input.json"
     parent_input.write_text(json.dumps(case))
     parent_metadata = driver.run_case(adapter.case_to_driver_args(parent_input, bundle / "parent"))
-    parent = bundle / "parent" / "axi_viscoelastic_Oh_1_G_1_lambda_inf"
+    parent = bundle / "parent" / case_name
     assert (parent / "input-case.json").read_bytes() == parent_input.read_bytes()
     assert parent_metadata["input_case"]["sha256"] == _reference(parent_input)["sha256"]
     parent_output = parent / "run_viscoelastic_axi"
@@ -865,7 +958,7 @@ def test_small_fem_checkpoint_continuation_matches_uninterrupted(tmp_path):
     reference_input = scratch / "reference-input.json"
     reference_input.write_text(json.dumps(continued))
     driver.run_case(adapter.case_to_driver_args(reference_input, bundle / "reference"))
-    suffix = Path("axi_viscoelastic_Oh_1_G_1_lambda_inf/run_viscoelastic_axi/control.txt")
+    suffix = Path(case_name) / "run_viscoelastic_axi/control.txt"
     resumed = np.loadtxt(bundle / "next" / suffix)
     reference = np.loadtxt(bundle / "reference" / suffix)
     np.testing.assert_allclose(resumed, reference, rtol=1e-9, atol=1e-10)
@@ -2150,3 +2243,316 @@ def test_effective_newton_tolerance_safety_is_persisted_before_the_solver_starts
         driver.run_case(adapter.case_to_driver_args(case_path, out, newton_tolerance_safety=30.0))
     assert seen["live"]["newton_tolerance_safety"] == 30.0
     assert seen["live"]["status"] == "initialising"
+
+
+def test_zero_ec_or_de_produces_identical_newtonian_histories(tmp_path):
+    """Actual coarse FEM endpoints coincide without passive tensor unknowns."""
+    from taylor_culick_fem import viscoelastic_driver as driver
+
+    histories = []
+    for index, (ec, de) in enumerate([(1.0, 0.0), (0.0, "inf"), (0.0, 0.0)]):
+        case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+        case["physics"].update(elastic_modulus=ec, relaxation_time=de)
+        case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+        case["output"].update(cadence=0.02, checkpoint_every=0)
+        args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / str(index))
+        metadata = driver.run_case(args)
+        assert metadata["status"] == "passed"
+        assert metadata["constitutive_model"] == "Newtonian"
+        assert metadata["conformation_evolved"] is False
+        assert metadata["conformation_supg_factor"] is None
+        assert metadata["polymer_diagnostics_available"] is False
+        root = args.results / driver._case_name(1.0, ec, float(de))
+        histories.append(np.loadtxt(root / "run_viscoelastic_axi/control.txt"))
+    for history in histories[1:]:
+        np.testing.assert_allclose(history, histories[0], rtol=1e-11, atol=1e-12)
+
+
+RELAXING = {"mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 1000.0,
+            "node_spacing": 0.5}
+
+
+@pytest.fixture
+def relaxing_restart_case(restart_case):
+    from taylor_culick_fem.viscoelastic_driver import RELAXING_FAR_FIELD_HEADER
+
+    case = copy.deepcopy(restart_case)
+    case["physics"]["far_field"] = dict(RELAXING)
+    root = Path(case["restart"]["metadata"]["path"]).parent
+    parent = json.loads((root / "input-case.json").read_text())
+    parent["physics"]["far_field"] = dict(RELAXING)
+    (root / "input-case.json").write_text(json.dumps(parent))
+    case["restart"]["input_case"] = _reference(root / "input-case.json")
+    metadata = json.loads((root / "case.json").read_text())
+    metadata["far_field"] = dict(RELAXING)
+    (root / "case.json").write_text(json.dumps(metadata))
+    case["restart"]["metadata"] = _reference(root / "case.json")
+    far_history = root / "run_viscoelastic_axi" / "far-field.txt"
+    rows = np.zeros((2, len(RELAXING_FAR_FIELD_HEADER)))
+    rows[:, 0] = [0.05, 0.1]
+    rows[:, 3] = 1.0
+    rows[:, 12:14] = 0.1
+    np.savetxt(far_history, rows)
+    far_state = Path(case["restart"]["checkpoint"]["path"]).with_suffix(".farfield.npz")
+    np.savez(
+        far_state, time=np.array(0.1), outflow=np.array(0.0), outer_deviation=np.zeros(4),
+        checkpoint_sha256=np.array(case["restart"]["checkpoint"]["sha256"]),
+    )
+    case["restart"]["far_field_state"] = _reference(far_state)
+    case["restart"]["far_field_history"] = _reference(far_history)
+    return case
+
+
+def test_relaxing_restart_requires_sha_bound_state_and_history(tmp_path, relaxing_restart_case):
+    from taylor_culick_fem.viscoelastic_driver import _read_restart
+
+    args = adapter.case_to_driver_args(_write_case(tmp_path, relaxing_restart_case), tmp_path / "next")
+    restart = _read_restart(args)
+    assert restart["far_state"] == Path(relaxing_restart_case["restart"]["far_field_state"]["path"])
+    np.testing.assert_allclose(restart["far_rows"][:, 0], [0.05, 0.1])
+
+
+@pytest.mark.parametrize("mutation,match", [
+    ("missing", "hash-bound far_field_state"),
+    ("hash", "hash mismatch"),
+    ("binding", "does not bind"),
+    ("rest", "case mismatch: physics"),
+    ("characteristic", "characteristic gate"),
+    ("outer", "already reached the outer boundary"),
+])
+def test_relaxing_restart_rejects_missing_or_incompatible_exterior(
+    tmp_path, relaxing_restart_case, mutation, match
+):
+    from taylor_culick_fem.viscoelastic_driver import _read_restart
+
+    case = copy.deepcopy(relaxing_restart_case)
+    if mutation == "missing":
+        case["restart"].pop("far_field_state")
+    elif mutation == "hash":
+        case["restart"]["far_field_state"]["sha256"] = "0" * 64
+    elif mutation == "binding":
+        path = Path(case["restart"]["far_field_state"]["path"])
+        np.savez(path, checkpoint_sha256=np.array("0" * 64))
+        case["restart"]["far_field_state"] = _reference(path)
+    elif mutation == "rest":
+        parent = Path(case["restart"]["input_case"]["path"])
+        payload = json.loads(parent.read_text())
+        payload["physics"].pop("far_field")
+        parent.write_text(json.dumps(payload))
+        case["restart"]["input_case"] = _reference(parent)
+    else:
+        path = Path(case["restart"]["far_field_history"]["path"])
+        rows = np.loadtxt(path)
+        rows[-1, 12 if mutation == "characteristic" else 9] = (
+            -0.1 if mutation == "characteristic" else 1e-3
+        )
+        np.savetxt(path, rows)
+        case["restart"]["far_field_history"] = _reference(path)
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "next")
+    with pytest.raises(ValueError, match=match):
+        _read_restart(args)
+
+
+def test_lineage_pins_the_relaxing_exterior_only_for_that_mode(tmp_path):
+    from taylor_culick_fem.lineage import restart_evidence
+
+    for mode in ("rest", "relaxing_membrane"):
+        case = _case({"kind": "time", "value": 0.1})
+        if mode != "rest":
+            case["physics"]["far_field"] = dict(RELAXING)
+        parent = tmp_path / mode
+        run = parent / "run_viscoelastic_axi"
+        (parent / "checkpoints").mkdir(parents=True)
+        run.mkdir()
+        (parent / "input-case.json").write_text(json.dumps(case))
+        (parent / "case.json").write_text(json.dumps({"output_step": 0.05}))
+        (run / "control.txt").write_text("#t R\n0.05 1.0\n0.1 1.1\n")
+        (run / "rim-height.txt").write_text("#t H\n0.05 1.0\n0.1 1.0\n")
+        (run / "liquid.pvd").write_text("<VTKFile/>")
+        state = parent / "checkpoints" / "ckpt_00002.dump"
+        state.write_bytes(b"state")
+        if mode == "rest":
+            evidence = restart_evidence(state, parent)
+            assert "far_field_state" not in evidence and "far_field_history" not in evidence
+            continue
+        with pytest.raises(ValueError, match="missing"):
+            restart_evidence(state, parent)
+        (parent / "checkpoints" / "ckpt_00002.farfield.npz").write_bytes(b"exterior")
+        (run / "far-field.txt").write_text("#t\n")
+        evidence = restart_evidence(state, parent)
+        assert evidence["far_field_state"]["path"].endswith("ckpt_00002.farfield.npz")
+        assert evidence["far_field_history"]["path"].endswith("far-field.txt")
+
+
+def test_relaxing_driver_forwards_finite_de_and_saves_bound_endpoint(tmp_path, monkeypatch):
+    import xml.etree.ElementTree as ET
+
+    from taylor_culick_fem import viscoelastic_driver as driver
+
+    class History:
+        def __init__(self, path, header):
+            self.path = path
+            path.write_text("#" + " ".join(header) + "\n")
+
+        def add_row(self, *row):
+            with self.path.open("a") as stream:
+                stream.write(" ".join(map(str, row)) + "\n")
+
+    class Problem:
+        def __init__(self):
+            self.time, self._output_step = 0.0, 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def set_output_directory(self, path):
+            self.output_dir = Path(path)
+
+        def get_output_directory(self):
+            return str(self.output_dir)
+
+        def initialise(self):
+            self.output_dir.mkdir()
+            assert self.far_field == "relaxing_membrane"
+            assert self.relaxation_time == 31.622776601683793
+
+        def get_current_time(self, **_):
+            return self.time
+
+        def window_position(self):
+            return 1.0 + 0.1 * self.time
+
+        def hole_radius(self):
+            return self.window_position()
+
+        def retraction_speed(self):
+            return 0.1
+
+        def rim_height(self):
+            return 1.0
+
+        def midplane_radial_velocity(self, radius):
+            assert radius == pytest.approx(self.window_position() + 0.5 * self.window_length)
+            return 0.0
+
+        def set_far_field(self, velocity, thickness, logs):
+            assert velocity == pytest.approx(0.0)
+            assert thickness == pytest.approx(1.0)
+            assert logs == pytest.approx((0.0, 0.0, 0.0))
+
+        def volume(self):
+            return self.expected_volume(1.0, 1.0)
+
+        def expected_volume(self, volume0, radius0, far_outflow=0.0):
+            return volume0 + np.pi / 2 * ((self.window_position() + self.window_length) ** 2
+                                          - (radius0 + self.window_length) ** 2) - np.pi * far_outflow
+
+        def create_text_file_output(self, filename, header):
+            return History(self.output_dir / filename, header)
+
+        def run(self, target, **_):
+            self.time = target
+
+        def output(self, **_):
+            field = self.output_dir / f"liquid_{self._output_step:06d}.vtu"
+            field.write_text("mock field")
+            pvd = self.output_dir / "liquid.pvd"
+            root = (ET.parse(pvd).getroot() if pvd.exists()
+                    else ET.fromstring("<VTKFile><Collection/></VTKFile>"))
+            ET.SubElement(root.find("Collection"), "DataSet", timestep=str(self.time),
+                          file=field.name)
+            ET.ElementTree(root).write(pvd)
+            self._output_step += 1
+
+        def save_state(self, path, **_):
+            Path(path).write_bytes(b"mock FEM endpoint")
+
+        def polymer_diagnostic_extrema(self):
+            return {}
+
+    monkeypatch.setattr(driver, "AxisymmetricViscoelasticProblem", Problem)
+    monkeypatch.setattr(driver, "_enforce_launcher_affinity", dict)
+    case = _case({"kind": "time", "value": 0.1})
+    case["physics"].update(
+        relaxation_time=31.622776601683793,
+        far_field={"mode": "relaxing_membrane", "inner_fraction": 0.5, "extension": 20.0,
+                   "node_spacing": 0.5},
+    )
+    case["mesh"]["length"] = 8.0
+    case["output"]["checkpoint_every"] = 0
+    events = []
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    args.progress_callback = lambda event, **values: events.append((event, values))
+    metadata = driver.run_case(args)
+    assert metadata["status"] == "passed"
+    assert metadata["minimum_relative_edge_inflow"] == pytest.approx(0.1)
+    assert metadata["far_field_maximum_radius_prediction_error"] == pytest.approx(0.0)
+    assert len(events) == 2
+    receipt = metadata["latest_checkpoint"]
+    root = args.results / driver._case_name(1.0, 1.0, args.relaxation_time)
+    with np.load(root / receipt["far_field_state"]["path"], allow_pickle=False) as sidecar:
+        assert float(sidecar["relaxation_time"]) == args.relaxation_time
+        assert str(sidecar["checkpoint_sha256"]) == receipt["checkpoint"]["sha256"]
+    far_rows = np.loadtxt(root / "run_viscoelastic_axi" / "far-field.txt")
+    assert far_rows.shape == (2, len(driver.RELAXING_FAR_FIELD_HEADER))
+    np.testing.assert_allclose(far_rows[:, 12], 0.1)
+
+
+def _relaxing_stride_case(horizon: float) -> dict:
+    case = _case({"kind": "time", "value": horizon, "allow_recoil": True})
+    case["physics"]["far_field"] = dict(RELAXING)
+    case["output"].update(cadence=0.05, field_stride=2, checkpoint_every=0)
+    return case
+
+
+def test_relaxing_endpoint_off_the_field_stride_is_refused_before_output(tmp_path):
+    from taylor_culick_fem.cases import case_problems
+
+    # Three samples at stride 2: the last one would carry no field and no bound checkpoint.
+    refused = _relaxing_stride_case(0.15)
+    assert any("field_stride" in p for p in case_problems(refused))
+    assert case_problems(_relaxing_stride_case(0.2)) == []
+    rest = copy.deepcopy(refused)
+    rest["physics"].pop("far_field")
+    assert case_problems(rest) == []  # other far fields keep their behaviour
+    path = _write_case(tmp_path, refused)
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit, match="field_stride"):
+        runner.main([str(path), "--out", str(out)])
+    assert not out.exists()
+    # A stop-time override is checked by the runner's pre-flight, still before output exists.
+    override = tmp_path / "override"
+    with pytest.raises(SystemExit, match="field stride"):
+        runner.main([str(_write_case(tmp_path, _relaxing_stride_case(0.2))), "--out", str(override),
+                     "--t-end", "0.25"])
+    assert not override.exists()
+
+
+def test_relaxing_continuation_coarsening_the_cadence_is_admitted(tmp_path):
+    from taylor_culick_fem.viscoelastic_driver import _check_relaxing_endpoint
+
+    # Parent stopped at sample 4 (t = 0.2) on a 0.05 grid; the child coarsens to 0.2 and stops at
+    # t = 0.6, so it ends at cumulative sample 6, a field boundary. Mapping the case must not
+    # refuse it by counting samples from zero (3).
+    case = _relaxing_stride_case(0.8)
+    case["output"]["cadence"] = 0.2
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt", t_end=0.6)
+    restart = {"control_index": 4, "nominal_time": 0.2, "time": 0.2, "cadence_changed": True}
+    _check_relaxing_endpoint(args, restart)
+
+
+def test_relaxing_continuation_at_a_changed_cadence_must_end_on_a_field_boundary(tmp_path):
+    from taylor_culick_fem.viscoelastic_driver import _check_relaxing_endpoint
+
+    case = _relaxing_stride_case(0.6)
+    case["output"]["cadence"] = 0.1
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    # The parent stopped at sample 4 (t = 0.2) on a 0.05 grid; the child's grid starts there.
+    restart = {"control_index": 4, "nominal_time": 0.2, "time": 0.2, "cadence_changed": True}
+    _check_relaxing_endpoint(args, restart)  # 0.3 .. 0.6: last sample 8
+    args.t_end = 0.5
+    with pytest.raises(ValueError, match="sample 7"):
+        _check_relaxing_endpoint(args, restart)

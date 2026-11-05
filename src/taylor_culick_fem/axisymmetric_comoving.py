@@ -37,8 +37,10 @@ throughout. Consequently:
     whose far field is an outgoing pulse that reaches the edge: the edge then
     takes its radial velocity and thickness from a coupled thin-film model
     (``taylor_culick_fem.farfield_membrane``) through global parameters (see
-    ``define_problem``). The default ``"rest"`` is the formulation above,
-    unchanged.
+    ``define_problem``). ``far_field="relaxing_membrane"`` sets the same edge
+    conditions from a finite-relaxation exterior
+    (``taylor_culick_fem.relaxing_farfield_membrane``). The default ``"rest"`` is
+    the formulation above, unchanged.
   * volume is therefore **not** conserved (the lab case's sharpest
     diagnostic). It is replaced by an exact modified check -- see
     ``expected_volume()`` below, which is just as sharp.
@@ -404,7 +406,7 @@ class AxisymmetricComovingProblem(Problem):
         # condition (same reasoning as planar's pinned inflow cross-section).
         if self.far_field == "rest":
             eqs += DirichletBC(mesh_y=True, velocity_x=0, velocity_y=0) @ "far"
-        elif self.far_field == "membrane":
+        elif self.far_field in ("membrane", "relaxing_membrane"):
             # A thin film in plane motion: u_r uniform across the thickness,
             # shear-free (velocity_y natural), and the thickness set by the far
             # field through the corner height; edge nodes slide vertically
@@ -419,7 +421,8 @@ class AxisymmetricComovingProblem(Problem):
             eqs += DirichletBC(velocity_x=far_velocity) @ "far"
             eqs += DirichletBC(mesh_y=half) @ "interface/far"
         else:
-            raise ValueError(f"far_field must be 'rest' or 'membrane', not {self.far_field!r}")
+            raise ValueError("far_field must be 'rest', 'membrane' or 'relaxing_membrane', "
+                             f"not {self.far_field!r}")
         # TRAP (measured, see the module docstring's CORNER section): the
         # free-surface kinematic multiplier at the far/interface CORNER must be
         # pinned, or the Jacobian is exactly singular.

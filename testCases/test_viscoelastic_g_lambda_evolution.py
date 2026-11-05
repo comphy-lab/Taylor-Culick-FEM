@@ -165,3 +165,24 @@ def test_infinite_lambda_axisymmetric_extension_is_isochoric(tmp_path: Path) -> 
     )
     np.testing.assert_allclose(conformation, expected, rtol=2e-7, atol=2e-9)
     assert np.linalg.det(conformation) == pytest.approx(1.0, abs=5e-8)
+
+
+@pytest.mark.parametrize("relaxation_time", [1e-3, 1.0, 1e3])
+def test_finite_de_startup_shear_against_exact_solution(tmp_path, relaxation_time):
+    """Check relaxation across six decades against homogeneous Oldroyd-B shear."""
+    # Fixed Wi and t/lambda isolate time scaling from strain amplitude.
+    wi = 0.4
+    scaled_time = 0.5
+    shear_rate = wi / relaxation_time
+    conformation, _ = _run(
+        tmp_path / "shear",
+        vector(shear_rate * var("coordinate_y"), 0),
+        _adapter_equations(GLambdaOldroydBParameters(1.0, relaxation_time)),
+        end_time=scaled_time * relaxation_time,
+        time_step=0.002 * relaxation_time,
+    )
+    decay = math.exp(-scaled_time)
+    expected = np.identity(3)
+    expected[0, 1] = expected[1, 0] = wi * (1 - decay)
+    expected[0, 0] += 2 * wi**2 * (1 - (1 + scaled_time) * decay)
+    np.testing.assert_allclose(conformation, expected, rtol=1e-5, atol=2e-7)

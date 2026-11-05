@@ -69,6 +69,9 @@ TOLERANCES = ("temporal_error", "max_volume_error", "max_tip_pin_residual",
 ARREST = ("opening_ustar", "arrest_ustar", "trend_tolerance", "radius_span_tolerance")
 INTERVAL_STARTS = ("legacy", "max_step", "carry")
 INITIAL_GUESSES = ("previous", "extrapolate")
+#: The finite-relaxation far field and the settings it requires (none has a default).
+RELAXING_MEMBRANE = "relaxing_membrane"
+RELAXING_MEMBRANE_KEYS = ("inner_fraction", "extension", "node_spacing")
 #: Dotted case fields a viscoelastic continuation may change from its parent's case. They are
 #: numerics: the output cadence (which is also the far-field coupling interval), the step
 #: policy and error control, and the far-edge treatment. The membrane extension may only grow.
@@ -90,6 +93,7 @@ CASE_FIELDS_USED = [
     "output.cadence", "output.write_states", "output.field_stride", "output.checkpoint_every",
     "solver.max_step", "solver.max_newton", "solver.interval_start", "solver.initial_guess",
     "solver.temporal_error_fields", "solver.newton_floor_max_dt",
+    "solver.relaxation_start_fraction",
     *(f"tolerances.{name}" for name in TOLERANCES), "tolerances.max_positive_sponge_power",
     *(f"arrest.{name}" for name in ARREST), "arrest.consecutive_samples",
     "completion.kind", "completion.value", "completion.horizon", "completion.allow_recoil",
@@ -135,8 +139,9 @@ def _physics_problems(physics: dict, mesh: dict, problems: list[str]) -> None:
     if not _number(modulus) or modulus < 0:
         problems.append("physics.elastic_modulus must be a finite non-negative number")
     relaxation = physics.get("relaxation_time")
-    if not (relaxation == "inf" or (_number(relaxation) and relaxation > 0)):
-        problems.append('physics.relaxation_time must be "inf" or a finite positive number')
+    if not (relaxation == "inf" or (_number(relaxation) and relaxation >= 0)):
+        problems.append('physics.relaxation_time must be "inf" or a finite non-negative number '
+                        "(0 is the Newtonian endpoint)")
     if physics.get("stabilization") not in ("supg", "none"):
         problems.append('physics.stabilization must be "supg" or "none"')
     if "supg_factor" in physics:
@@ -144,8 +149,8 @@ def _physics_problems(physics: dict, mesh: dict, problems: list[str]) -> None:
     passive = physics.get("passive_conformation", False)
     if type(passive) is not bool:
         problems.append("physics.passive_conformation must be a boolean")
-    elif modulus == 0 and not passive:
-        problems.append("physics.elastic_modulus = 0 requires physics.passive_conformation = true")
+    # elastic_modulus = 0 without passive_conformation, like relaxation_time = 0, is the exact
+    # Newtonian endpoint: the run carries no conformation unknowns.
     sponge = physics.get("sponge")
     if sponge is not None:
         if not isinstance(sponge, dict):
@@ -173,7 +178,7 @@ def _physics_problems(physics: dict, mesh: dict, problems: list[str]) -> None:
             if set(far_field) != {"mode"}:
                 problems.append("physics.far_field mode 'rest' takes no other keys")
         elif far_field.get("mode") == "membrane":
-            if passive is True or relaxation != "inf":
+            if passive is True or relaxation != "inf" or modulus == 0:
                 problems.append("physics.far_field membrane requires active elasticity with "
                                 'physics.relaxation_time = "inf" and no passive_conformation')
             allowed = {"mode", "inner_fraction", "extension", "node_spacing", "interpolation",
@@ -190,8 +195,69 @@ def _physics_problems(physics: dict, mesh: dict, problems: list[str]) -> None:
                 if not _number(fraction) or not 0 < fraction < 1:
                     problems.append("physics.far_field.inner_fraction must lie strictly between 0 and 1")
                 _far_edge_problems(far_field, problems)
+        elif far_field.get("mode") == RELAXING_MEMBRANE:
+            _relaxing_membrane_problems(far_field, physics, problems)
         else:
             problems.append(f"unsupported physics.far_field mode: {far_field.get('mode')!r}")
+
+
+def _relaxing_membrane_problems(far_field: dict, physics: dict, problems: list[str]) -> None:
+    """The finite-relaxation far field: every coupling setting explicit, active elasticity."""
+    if set(far_field) != {"mode", *RELAXING_MEMBRANE_KEYS}:
+        problems.append("physics.far_field relaxing_membrane requires exactly mode, "
+                        + ", ".join(RELAXING_MEMBRANE_KEYS))
+        return
+    _positive(far_field, "extension", "physics.far_field", problems)
+    _positive(far_field, "node_spacing", "physics.far_field", problems)
+    fraction = far_field["inner_fraction"]
+    if not _number(fraction) or not 0 < fraction < 1:
+        problems.append("physics.far_field.inner_fraction must lie strictly between 0 and 1")
+    modulus, relaxation = physics.get("elastic_modulus"), physics.get("relaxation_time")
+    active = (_number(modulus) and modulus > 0
+              and (relaxation == "inf" or (_number(relaxation) and relaxation > 0)))
+    if physics.get("passive_conformation", False) is not False or not active:
+        problems.append("physics.far_field relaxing_membrane requires active Oldroyd-B elasticity: "
+                        "elastic_modulus > 0, relaxation_time > 0 and no passive_conformation")
+    sponge = physics.get("sponge")
+    if isinstance(sponge, dict) and _number(sponge.get("gamma_max")) and sponge["gamma_max"] > 0:
+        problems.append("physics.far_field relaxing_membrane cannot be combined with a sponge")
+
+
+def output_sample_count(t_end: float, cadence: float) -> int:
+    """Number of control samples a fresh run writes up to ``t_end`` at ``cadence``.
+
+    The driver's output grid (``viscoelastic_driver._output_times``): every whole cadence up
+    to ``t_end``, plus a short final interval when ``t_end`` is not on the grid.
+    """
+    count = math.floor(t_end / cadence)
+    if count < 1 or cadence * count < t_end * (1 - 1e-14):
+        count += 1
+    return count
+
+
+def relaxing_endpoint_problem(case: dict, t_end: float) -> str | None:
+    """Why a relaxing-membrane run to ``t_end`` would end without a bound checkpoint, if it would.
+
+    Its endpoint checkpoint and far-field sidecar are written on a field boundary only, so
+    that field indices stay the deterministic stride sequence restarts rely on; a run whose
+    last sample is not a multiple of ``output.field_stride`` would end with neither.
+    """
+    physics, output = case.get("physics"), case.get("output")
+    far = physics.get("far_field") if isinstance(physics, dict) else None
+    if not (isinstance(far, dict) and far.get("mode") == RELAXING_MEMBRANE
+            and isinstance(output, dict)):
+        return None
+    cadence, stride = output.get("cadence"), output.get("field_stride", 1)
+    if not (_number(cadence) and cadence > 0 and type(stride) is int and stride >= 1
+            and _number(t_end) and t_end > 0):
+        return None
+    samples = output_sample_count(float(t_end), float(cadence))
+    if samples % stride:
+        return (f"physics.far_field relaxing_membrane: the run's last sample ({samples} at "
+                f"cadence {cadence} to t = {t_end:g}) is not a multiple of output.field_stride "
+                f"{stride}, so it would end without a field and a bound checkpoint; choose a "
+                "stop time or stride that puts the last sample on a field boundary")
+    return None
 
 
 def _far_edge_problems(far_field: dict, problems: list[str]) -> None:
@@ -237,6 +303,9 @@ def _solver_policy_problems(solver: dict, problems: list[str]) -> None:
             problems.append("solver.temporal_error_fields must weight X and U equally")
     if "newton_floor_max_dt" in solver:
         _positive(solver, "newton_floor_max_dt", "solver", problems)
+    fraction = solver.get("relaxation_start_fraction")
+    if fraction is not None and not (_number(fraction) and 0 < fraction <= 1):
+        problems.append("solver.relaxation_start_fraction must be a number in (0, 1]")
 
 
 def _completion_problems(completion: dict, physics: dict, output: dict, problems: list[str]) -> None:
@@ -442,6 +511,10 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
         _positive(arrest, key, "arrest", problems)
     _integer(arrest, "consecutive_samples", "arrest", 2, problems)
     _completion_problems(completion, physics, output, problems)
+    if not problems:
+        endpoint = relaxing_endpoint_problem(case, stop_time(case))
+        if endpoint is not None:
+            problems.append(endpoint)
     return problems
 
 
@@ -568,6 +641,8 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
         arguments += ["--temporal-error-fields", json.dumps(solver["temporal_error_fields"], sort_keys=True)]
     if "newton_floor_max_dt" in solver:
         arguments += ["--newton-floor-max-dt", str(solver["newton_floor_max_dt"])]
+    if "relaxation_start_fraction" in solver:
+        arguments += ["--relaxation-start-fraction", str(solver["relaxation_start_fraction"])]
     if physics.get("passive_conformation", False):
         arguments.append("--passive-conformation")
     sponge = physics.get("sponge")
@@ -593,12 +668,24 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
         for key, flag in (("grading", "--far-field-grading"), ("auto_extend", "--far-field-auto-extend")):
             if key in far_field:
                 arguments += [flag, json.dumps(far_field[key], sort_keys=True)]
+    elif far_field is not None and far_field["mode"] == RELAXING_MEMBRANE:
+        extension = far_field["extension"]
+        if far_field_extension is not None:
+            if far_field_extension < extension:
+                raise ValueError("--far-field-extension may lengthen but never shorten "
+                                 "physics.far_field.extension")
+            extension = far_field_extension
+        arguments += ["--far-field", RELAXING_MEMBRANE, "--far-field-extension", str(extension),
+                      "--far-field-inner-fraction", str(far_field["inner_fraction"]),
+                      "--far-field-node-spacing", str(far_field["node_spacing"])]
     elif far_field_extension is not None:
         raise ValueError("--far-field-extension requires a membrane far field")
     if newton_tolerance_safety is not None:
         arguments += ["--newton-tolerance-safety", str(float(newton_tolerance_safety))]
     if "max_positive_sponge_power" in tolerances:
         arguments += ["--max-positive-sponge-power", str(tolerances["max_positive_sponge_power"])]
+    # A relaxing-membrane endpoint off the field stride is refused by case validation for the
+    # declared stop and by the driver's restart-aware check for overrides and continuations.
     end = stop_time(case) if t_end is None else float(t_end)
     if completion["kind"] == "time":
         arguments += ["--t-end", str(end)]
