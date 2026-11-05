@@ -34,11 +34,14 @@ if str(ROOT / "src") not in sys.path:
 
 from taylor_culick_fem.cases import (
     CASE_FIELDS_USED,
+    RELAXING_MEMBRANE,
     VISCOELASTIC,
     continuation_case_problems,
+    relaxing_endpoint_problem,
+    stop_time,
     validate_case,
 )
-from taylor_culick_fem.lineage import restart_evidence
+from taylor_culick_fem.lineage import restart_evidence, restart_origin
 from taylor_culick_fem.run_contract import (
     UNITS,
     append_progress,
@@ -110,6 +113,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.restart_from is not None:
         parent, restart = check_restart(args.restart_from, args.out, case_sha256, case=case,
                                         continuation_check=continuation_case_problems)
+    evidence = None
+    far_field = case["physics"].get("far_field")
+    if isinstance(far_field, dict) and far_field.get("mode") == RELAXING_MEMBRANE:
+        # The endpoint rule needs no solver, so --check applies it too: the same count the
+        # driver makes, from the restart row when this is a continuation.
+        try:
+            origin = None
+            if restart is not None:
+                evidence = restart_evidence(args.restart_from, parent)
+                origin = restart_origin(evidence, float(case["output"]["cadence"]))
+            end = stop_time(case) if args.t_end is None else float(args.t_end)
+            endpoint = relaxing_endpoint_problem(case, end, origin)
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(f"refused: {exc}") from exc
+        if endpoint is not None:
+            raise SystemExit(f"refused: {endpoint}")
     if args.check:
         print(json.dumps({"check": "passed", "case_id": case["case_id"], "case_sha256": case_sha256}))
         return 0
@@ -128,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Everything the driver would refuse is refused here, before the folder exists.
     try:
-        evidence = restart_evidence(args.restart_from, parent) if restart is not None else None
+        if evidence is None and restart is not None:
+            evidence = restart_evidence(args.restart_from, parent)
         driver_args = case_to_driver_args(case_path, args.out, restart_evidence=evidence,
                                           t_end=args.t_end, far_field_extension=args.far_field_extension,
                                           newton_tolerance_safety=args.newton_tolerance_safety,

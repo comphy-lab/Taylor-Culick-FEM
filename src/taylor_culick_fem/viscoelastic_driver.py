@@ -31,6 +31,7 @@ from taylor_culick_fem.axisymmetric_viscoelastic import (
     AxisymmetricViscoelasticProblem,
     evolves_conformation,
 )
+from taylor_culick_fem.cases import relaxing_endpoint_message, relaxing_last_sample
 
 # The pure schedule helpers live in ``lineage``, which the runner's restart checks share.
 from taylor_culick_fem.lineage import (  # noqa: F401 -- LANDING_* are re-exported for tests
@@ -1253,22 +1254,19 @@ def _check_relaxing_endpoint(args: argparse.Namespace, restart: dict | None) -> 
     """Refuse a relaxing-membrane run whose last sample is not on a field boundary.
 
     Its endpoint checkpoint and far-field sidecar are written only there, so that field
-    indices stay the deterministic stride sequence that restarts check. The case validator
-    refuses this for the declared stop; this also covers ``--t-end`` and a continuation
-    whose output grid restarts at a changed cadence.
+    indices stay the deterministic stride sequence that restarts check. The count is
+    ``cases.relaxing_last_sample``, the rule the runner's ``--check`` also applies; a
+    continuation counts on from its restart row, so it may change the cadence.
     """
     if _far_field_config(args)["mode"] != RELAXING_MEMBRANE:
         return
-    targets = _output_times(args)
-    last = len(targets)
-    if restart is not None:
-        targets, _ = _continuation_targets(args, restart, targets)
-        last = restart["control_index"] + len(targets)
-    if last % args.field_stride:
-        raise ValueError(
-            f"relaxing membrane run would end at sample {last}, not a multiple of the field "
-            f"stride {args.field_stride}, so without a field and a bound checkpoint"
-        )
+    if args.output_step is None:
+        last = len(_output_times(args))  # a fresh run on an output count
+    else:
+        last = relaxing_last_sample(args.t_end, args.output_step, restart)
+    problem = relaxing_endpoint_message(last, args.field_stride)
+    if problem is not None:
+        raise ValueError(problem)
 
 
 def _zero_crossing(previous: list[float], current: list[float]) -> dict[str, float]:

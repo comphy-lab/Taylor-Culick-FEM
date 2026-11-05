@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 
@@ -121,6 +122,32 @@ def schedule_rows(
             times[j - 1] = origin_time + step * (j - origin_index)
         row_steps[j - 1] = step
     return times, row_steps
+
+
+def restart_origin(evidence: dict, cadence: float) -> dict:
+    """The restart row a continuation counts on from, without the solver.
+
+    From ``restart_evidence``: the row's control index and landed time, its nominal time on
+    the parent's recorded schedule (``schedule_rows``, as ``viscoelastic_driver._read_restart``
+    builds that grid) and whether ``cadence`` differs from the parent's last one. These are
+    the fields ``cases.relaxing_last_sample`` takes.
+    """
+    metadata = json.loads(Path(evidence["metadata"]["path"]).read_text(encoding="utf-8"))
+    parent_step = metadata.get("output_step")
+    if parent_step is None:
+        raise ValueError("restart requires a fixed output cadence")
+    schedule = metadata.get("numerics_schedule") or [
+        {"time": 0.0, "control_index": 0, "output_step": float(parent_step)}
+    ]
+    index = int(evidence["control_index"])
+    grid, _ = schedule_rows(schedule, parent_step, index)
+    return {
+        "control_index": index,
+        "time": float(evidence["time"]),
+        "nominal_time": float(grid[-1]),
+        "cadence_changed": not math.isclose(float(cadence), float(parent_step),
+                                            rel_tol=1e-12, abs_tol=0.0),
+    }
 
 
 def control_time(control: Path, control_index: int, cadence: float,

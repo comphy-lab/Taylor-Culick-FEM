@@ -235,29 +235,62 @@ def output_sample_count(t_end: float, cadence: float) -> int:
     return count
 
 
-def relaxing_endpoint_problem(case: dict, t_end: float) -> str | None:
-    """Why a relaxing-membrane run to ``t_end`` would end without a bound checkpoint, if it would.
+def relaxing_last_sample(t_end: float, cadence: float, origin: dict | None = None) -> int:
+    """The cumulative control index of a run's last sample: the driver's output grid.
+
+    A fresh run (``origin`` None) samples every whole ``cadence`` up to ``t_end`` plus a
+    short final interval (``output_sample_count``). A continuation counts on from its
+    restart row; ``origin`` carries that row's ``control_index``, its landed ``time``, its
+    ``nominal_time`` on the parent's schedule and whether the cadence changed
+    (``cadence_changed``), as ``viscoelastic_driver._read_restart`` and
+    ``lineage.restart_origin`` derive them. Its targets are those of
+    ``viscoelastic_driver._continuation_targets``: the run's own zero-based grid when the
+    cadence is unchanged and the restart row sits on it, otherwise a grid from the nominal
+    restart time with ``t_end`` appended; only targets after the landed time count.
+    """
+    if origin is None:
+        return output_sample_count(t_end, cadence)
+    index, nominal, landed = int(origin["control_index"]), float(origin["nominal_time"]), float(origin["time"])
+    aligned = (not origin["cadence_changed"]
+               and math.isclose(nominal, cadence * index, rel_tol=0, abs_tol=1e-9))
+    if aligned:
+        count = math.floor(t_end / cadence)
+        times = [cadence * float(k) for k in range(1, count + 1)]
+        if not times or times[-1] < t_end * (1 - 1e-14):
+            times.append(t_end)
+    else:
+        count = math.floor((t_end - nominal) / cadence + 1e-9)
+        times = [nominal + cadence * float(k) for k in range(1, count + 1)]
+        if not times or times[-1] < t_end * (1 - 1e-14):
+            times.append(t_end)
+    return index + sum(1 for time in times if time > landed + 1e-6)
+
+
+def relaxing_endpoint_message(last_sample: int, field_stride: int) -> str | None:
+    """Why a relaxing-membrane run ending at ``last_sample`` cannot be launched, if it cannot.
 
     Its endpoint checkpoint and far-field sidecar are written on a field boundary only, so
-    that field indices stay the deterministic stride sequence restarts rely on; a run whose
-    last sample is not a multiple of ``output.field_stride`` would end with neither.
+    that field indices stay the deterministic stride sequence restarts rely on.
     """
-    physics, output = case.get("physics"), case.get("output")
-    far = physics.get("far_field") if isinstance(physics, dict) else None
-    if not (isinstance(far, dict) and far.get("mode") == RELAXING_MEMBRANE
-            and isinstance(output, dict)):
-        return None
-    cadence, stride = output.get("cadence"), output.get("field_stride", 1)
-    if not (_number(cadence) and cadence > 0 and type(stride) is int and stride >= 1
-            and _number(t_end) and t_end > 0):
-        return None
-    samples = output_sample_count(float(t_end), float(cadence))
-    if samples % stride:
-        return (f"physics.far_field relaxing_membrane: the run's last sample ({samples} at "
-                f"cadence {cadence} to t = {t_end:g}) is not a multiple of output.field_stride "
-                f"{stride}, so it would end without a field and a bound checkpoint; choose a "
-                "stop time or stride that puts the last sample on a field boundary")
+    if last_sample % field_stride:
+        return (f"relaxing membrane run would end at sample {last_sample}, not a multiple of "
+                f"the field stride {field_stride}, so without a field and a bound checkpoint")
     return None
+
+
+def relaxing_endpoint_problem(case: dict, t_end: float, origin: dict | None = None) -> str | None:
+    """``relaxing_endpoint_message`` for a valid case run to ``t_end`` from ``origin``.
+
+    None for any other far field. ``origin`` is the restart row of a continuation
+    (``relaxing_last_sample``); the declared horizon of a case is not checked on its own,
+    because a continuation counts its samples on from its restart.
+    """
+    far = case["physics"].get("far_field")
+    if not (isinstance(far, dict) and far.get("mode") == RELAXING_MEMBRANE):
+        return None
+    output = case["output"]
+    last = relaxing_last_sample(float(t_end), float(output["cadence"]), origin)
+    return relaxing_endpoint_message(last, output.get("field_stride", 1))
 
 
 def _far_edge_problems(far_field: dict, problems: list[str]) -> None:
@@ -511,10 +544,6 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
         _positive(arrest, key, "arrest", problems)
     _integer(arrest, "consecutive_samples", "arrest", 2, problems)
     _completion_problems(completion, physics, output, problems)
-    if not problems:
-        endpoint = relaxing_endpoint_problem(case, stop_time(case))
-        if endpoint is not None:
-            problems.append(endpoint)
     return problems
 
 

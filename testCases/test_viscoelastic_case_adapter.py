@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import itertools
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2511,16 +2512,14 @@ def _relaxing_stride_case(horizon: float) -> dict:
 def test_relaxing_endpoint_off_the_field_stride_is_refused_before_output(tmp_path):
     from taylor_culick_fem.cases import case_problems
 
-    # Three samples at stride 2: the last one would carry no field and no bound checkpoint.
+    # Three samples at stride 2: the last one would carry no field and no bound checkpoint. The
+    # case is valid on its own (a continuation counts on from its restart); the runner refuses
+    # the fresh run before the output folder exists.
     refused = _relaxing_stride_case(0.15)
-    assert any("field_stride" in p for p in case_problems(refused))
-    assert case_problems(_relaxing_stride_case(0.2)) == []
-    rest = copy.deepcopy(refused)
-    rest["physics"].pop("far_field")
-    assert case_problems(rest) == []  # other far fields keep their behaviour
+    assert case_problems(refused) == []
     path = _write_case(tmp_path, refused)
     out = tmp_path / "out"
-    with pytest.raises(SystemExit, match="field_stride"):
+    with pytest.raises(SystemExit, match="field stride"):
         runner.main([str(path), "--out", str(out)])
     assert not out.exists()
     # A stop-time override is checked by the runner's pre-flight, still before output exists.
@@ -2544,6 +2543,20 @@ def test_relaxing_continuation_coarsening_the_cadence_is_admitted(tmp_path):
     _check_relaxing_endpoint(args, restart)
 
 
+def test_relaxing_continuation_whose_declared_horizon_is_off_the_zero_origin_stride_is_admitted(tmp_path):
+    from taylor_culick_fem.cases import case_problems
+    from taylor_culick_fem.viscoelastic_driver import _check_relaxing_endpoint
+
+    # Declared horizon 0.6 at cadence 0.2 is 3 samples from zero, but after a parent that stopped
+    # at sample 4 (t = 0.2) on a 0.05 grid the child ends at cumulative sample 6, a field boundary.
+    case = _relaxing_stride_case(0.6)
+    case["output"]["cadence"] = 0.2
+    assert case_problems(case) == []
+    args = adapter.case_to_driver_args(_write_case(tmp_path, case), tmp_path / "attempt")
+    restart = {"control_index": 4, "nominal_time": 0.2, "time": 0.2, "cadence_changed": True}
+    _check_relaxing_endpoint(args, restart)
+
+
 def test_relaxing_continuation_at_a_changed_cadence_must_end_on_a_field_boundary(tmp_path):
     from taylor_culick_fem.viscoelastic_driver import _check_relaxing_endpoint
 
@@ -2556,3 +2569,101 @@ def test_relaxing_continuation_at_a_changed_cadence_must_end_on_a_field_boundary
     args.t_end = 0.5
     with pytest.raises(ValueError, match="sample 7"):
         _check_relaxing_endpoint(args, restart)
+
+
+def test_check_refuses_a_fresh_relaxing_endpoint_off_the_field_stride(tmp_path):
+    # Horizon 0.15 at cadence 0.05 and stride 2: sample 3 is no field boundary. --check needs
+    # no solver for this, so it refuses before anything is created.
+    path = _write_case(tmp_path, _relaxing_stride_case(0.15))
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit, match="end at sample 3, not a multiple of the field stride 2"):
+        runner.main([str(path), "--out", str(out), "--check"])
+    assert not out.exists()
+    assert runner.main([str(_write_case(tmp_path, _relaxing_stride_case(0.2))),
+                        "--out", str(out), "--check"]) == 0
+    assert not out.exists()
+
+
+def test_check_counts_a_changed_cadence_continuation_from_its_restart_row(tmp_path, capsys):
+    """A real relaxing parent stops at sample 4 (t = 0.2) on a 0.05 grid. A child at cadence
+    0.2 with declared horizon 0.6 ends at cumulative sample 6, a field boundary: --check and
+    the driver both admit it, and the run ends with a bound checkpoint there. A stop at 0.8
+    (sample 7) is refused by --check before output. Zero-based, horizon 0.6 at cadence 0.2 is
+    3 samples, which case validation used to refuse."""
+    from taylor_culick_fem.lineage import restart_evidence, restart_origin
+    from taylor_culick_fem.viscoelastic_driver import _read_restart
+
+    def write(case: dict, name: str) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(case))
+        return path
+
+    parent_case = _relaxing_stride_case(0.6)
+    parent_case["physics"]["far_field"]["extension"] = 20.0
+    parent_case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    parent = tmp_path / "parent"
+    assert runner.main([str(write(parent_case, "parent.json")), "--out", str(parent),
+                        "--t-end", "0.2"]) == 0
+    state = parent / "checkpoints" / "ckpt_00004.dump"
+    assert state.with_suffix(".farfield.npz").is_file()
+
+    child_case = copy.deepcopy(parent_case)
+    child_case["output"]["cadence"] = 0.2
+    assert child_case["completion"]["value"] == 0.6
+    child_path = write(child_case, "child.json")
+    child = tmp_path / "child"
+    capsys.readouterr()
+    assert runner.main([str(child_path), "--out", str(child), "--restart-from", str(state),
+                        "--check"]) == 0
+    assert json.loads(capsys.readouterr().out)["check"] == "passed"
+    assert not child.exists()
+
+    # The pre-solver origin is the one the driver derives from the same evidence.
+    evidence = restart_evidence(state, parent)
+    origin = restart_origin(evidence, 0.2)
+    driver_restart = _read_restart(case_adapter.case_to_driver_args(
+        child_path, child, restart_evidence=evidence, run_dir=child))
+    assert origin == {key: driver_restart[key]
+                      for key in ("control_index", "time", "nominal_time", "cadence_changed")}
+
+    assert runner.main([str(child_path), "--out", str(child), "--restart-from", str(state)]) == 0
+    rows = np.loadtxt(child / "run_viscoelastic_axi" / "control.txt", ndmin=2)
+    np.testing.assert_allclose(rows[:, 0], [0.05, 0.1, 0.15, 0.2, 0.4, 0.6], atol=2e-6)
+    assert (child / "checkpoints" / "ckpt_00006.farfield.npz").is_file()
+
+    refused = tmp_path / "refused"
+    with pytest.raises(SystemExit, match="end at sample 7"):
+        runner.main([str(child_path), "--out", str(refused), "--restart-from", str(state),
+                     "--t-end", "0.8", "--check"])
+    assert not refused.exists()
+
+
+def test_relaxing_last_sample_matches_the_driver_output_grid():
+    """The solver-free count equals the driver's own targets over a grid of cadences, restart
+    rows, stops and strides, for aligned and re-gridded continuations and fresh runs."""
+    from taylor_culick_fem.cases import relaxing_endpoint_message, relaxing_last_sample
+    from taylor_culick_fem.viscoelastic_driver import _continuation_targets, _output_times
+
+    checked = 0
+    for parent_step, child_step, index, t_end, stride in itertools.product(
+        (0.05, 0.1, 0.03), (0.05, 0.1, 0.2, 0.025, 0.03), (2, 3, 4),
+        (0.45, 0.6, 0.61, 0.7, 1.0, 1.333), (1, 2, 3),
+    ):
+        for nominal in (parent_step * index, parent_step * (index - 1) + 0.5 * parent_step):
+            landed = nominal + 1e-8  # the solver lands just past its nominal row time
+            if not t_end > landed + child_step:
+                continue
+            restart = {"control_index": index, "nominal_time": nominal, "time": landed,
+                       "cadence_changed": not math.isclose(child_step, parent_step,
+                                                           rel_tol=1e-12, abs_tol=0.0)}
+            for interval_start in ("legacy", "max_step"):
+                args = SimpleNamespace(t_end=t_end, output_step=child_step, n_outputs=1,
+                                       interval_start=interval_start)
+                targets, _ = _continuation_targets(args, restart, _output_times(args))
+                expected = index + len(targets)
+                assert relaxing_last_sample(t_end, child_step, restart) == expected
+                assert (relaxing_endpoint_message(expected, stride) is None) == (expected % stride == 0)
+                checked += 1
+        fresh = SimpleNamespace(t_end=t_end, output_step=child_step, n_outputs=1)
+        assert relaxing_last_sample(t_end, child_step) == len(_output_times(fresh))
+    assert checked > 1000
