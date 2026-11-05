@@ -80,7 +80,11 @@ LAGRANGIAN_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coord
                           + [f"{section}.{key}" for section, keys in LAGRANGIAN_SECTIONS.items()
                              for key, _ in keys]
                           + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend", "solver.linear_solver",
-                             "seed.state", "seed.grids", "seed.state_sha256", "seed.grids_sha256"])
+                             "solver.max_step_halvings", "seed.state", "seed.grids", "seed.state_sha256",
+                             "seed.grids_sha256"])
+#: Default of the Lagrangian ``solver.max_step_halvings``: a step whose Newton solve fails is
+#: retaken in halves, at most this many levels deep (0 makes a failure fatal, as before).
+MAX_STEP_HALVINGS = 3
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
 HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window_fraction",
@@ -473,6 +477,9 @@ def _lagrangian_problems(case: dict) -> list[str]:
     solver = case.get("solver") if isinstance(case.get("solver"), dict) else {}
     if solver.get("linear_solver", "default") not in ("default", "superlu", "umfpack", "pardiso", "mumps"):
         problems.append("solver.linear_solver must be default, superlu, umfpack, pardiso or mumps")
+    halvings = solver.get("max_step_halvings", MAX_STEP_HALVINGS)
+    if not isinstance(halvings, int) or isinstance(halvings, bool) or not 0 <= halvings <= 10:
+        problems.append("solver.max_step_halvings must be an integer from 0 to 10")
     completion = case.get("completion") if isinstance(case.get("completion"), dict) else {}
     if completion.get("kind") != "time":
         problems.append("completion.kind must be 'time'")

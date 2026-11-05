@@ -355,6 +355,48 @@ class LagrangianCaseTests(unittest.TestCase):
         problems = runner.seed_domain_problems(grids, nodes, 2.0, 300.0)
         self.assertTrue(any("seed.state starts" in p for p in problems), problems)
 
+    def test_step_halvings_are_validated(self) -> None:
+        self.assertNotIn("max_step_halvings", self.case["solver"])
+        for value in (0, 3, 10):
+            case = copy.deepcopy(self.case)
+            case["solver"]["max_step_halvings"] = value
+            with self.subTest(value=value):
+                self.assertEqual(case_problems(case), [])
+        for value in (-1, 11, 2.5, True, "3", None):
+            case = copy.deepcopy(self.case)
+            case["solver"]["max_step_halvings"] = value
+            with self.subTest(value=value):
+                problems = case_problems(case)
+                self.assertTrue(any("max_step_halvings must be an integer from 0 to 10" in p
+                                    for p in problems), problems)
+
+    def test_newton_safety_option_is_validated(self) -> None:
+        runner = load_runner()
+        parser = runner.build_parser()
+        for value, ok in (("100", True), ("1", True), ("0.5", False), ("nan", False)):
+            args = parser.parse_args([str(LAGRANGIAN_CASE), "--out", "/tmp/x",
+                                      "--newton-tolerance-safety", value])
+            with self.subTest(value=value):
+                self.assertEqual(runner.option_problems(args) == [], ok)
+
+    def test_a_continuation_may_change_only_the_end_time_and_newton_safety(self) -> None:
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "parent"
+            (parent / "checkpoints").mkdir(parents=True)
+            manifest = {"case_sha256": runner.sha256(LAGRANGIAN_CASE),
+                        "argv": [str(RUNNER), str(LAGRANGIAN_CASE), "--out", str(parent)]}
+            (parent / "run-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            state = parent / "checkpoints" / "ckpt_00600.npz"
+            np.savez(state, time=30.0)
+            out = Path(tmp) / "child"
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                self.assertEqual(runner.main([str(LAGRANGIAN_CASE), "--out", str(out), "--restart-from",
+                                              str(state), "--t-end", "40",
+                                              "--newton-tolerance-safety", "100", "--check"]), 0)
+            self.assertEqual(json.loads(printed.getvalue())["check"], "passed")
+            self.assertFalse(out.exists())
+
     def test_a_continuation_resumes_on_the_next_cadence_boundary(self) -> None:
         runner = load_runner()
         # A parent that ended on a shortened interval at t = 0.025 resumes with t = 0.05 next.
@@ -378,6 +420,18 @@ class LagrangianCaseTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec("pyoomph") is not None, "needs pyoomph to import")
 class LagrangianGeometryTests(unittest.TestCase):
+    def test_settings_take_the_halvings_and_the_newton_safety_option(self) -> None:
+        # settings_from_case imports the solver module, which needs pyoomph.
+        runner = load_runner()
+        case = json.loads(LAGRANGIAN_CASE.read_text(encoding="utf-8"))
+        self.assertEqual(runner.settings_from_case(case).max_step_halvings, 3)
+        changed = copy.deepcopy(case)
+        changed["solver"]["max_step_halvings"] = 0
+        self.assertEqual(runner.settings_from_case(changed).max_step_halvings, 0)
+        case_value = case["solver"]["newton_tolerance_safety"]
+        self.assertEqual(runner.settings_from_case(case).newton_tolerance_safety, case_value)
+        self.assertEqual(runner.settings_from_case(case, 100.0).newton_tolerance_safety, 100.0)
+
     def test_sweep_radii_hold_then_grow(self) -> None:
         from taylor_culick_fem.lagrangian_dynamic import sweep_radii
 
@@ -449,6 +503,123 @@ class LagrangianGeometryTests(unittest.TestCase):
         before = len(run.problem.calls)
         run.advance(0.05)
         self.assertEqual(len(run.problem.calls), before)
+
+    class FlakyClock:
+        """pyoomph's ``run`` at a fixed step whose listed steps fail.
+
+        A step is ``(start, size)`` rounded to 1e-9. Those in ``fail`` fail once; any step
+        starting at a time in ``always`` fails every time. A failed step has advanced the time
+        and shifted the step history, as ``unsteady_newton_solve`` leaves them.
+        """
+
+        def __init__(self, fail=(), always=()):
+            self.t, self.dts = 0.0, [0.01, 0.01]
+            self.keep_step_start, self.step_start = False, None
+            self.fail, self.always = list(fail), set(always)
+            self.steps, self.kept = [], []
+
+        def get_current_time(self, as_float=True):
+            return self.t
+
+        def time_pt(self):
+            return self
+
+        def dt(self, i):
+            return self.dts[i]
+
+        def get_last_residual_convergence(self):
+            return [3e-5, 1.2e-8, 1.1e-8]
+
+        def restore_step_state(self, state):
+            self.t, self.dts = state["time"], list(state["dts"])
+
+        def run(self, endtime, startstep, maxstep, outstep):
+            while self.t < endtime - 1e-12:
+                self.kept.append(self.keep_step_start)
+                if self.keep_step_start:
+                    self.step_start = {"time": self.t, "dts": list(self.dts)}
+                start, size = self.t, startstep
+                self.t, self.dts = start + size, [size, *self.dts[:-1]]
+                key = (round(start, 9), round(size, 9))
+                if key in self.fail or key[0] in self.always:
+                    if key in self.fail:
+                        self.fail.remove(key)
+                    raise RuntimeError("OomphException")
+                self.steps.append(key)
+
+    def flaky_run(self, clock, **changes):
+        from taylor_culick_fem.lagrangian_dynamic import LagrangianRun, LagrangianSettings
+
+        run = LagrangianRun(LagrangianSettings(oh=1.0, elastic_modulus=1.0, dt=0.01, **changes),
+                            "/tmp/unused")
+        run.problem = clock
+        return run
+
+    def test_a_failed_step_is_retaken_in_halves_and_the_cadence_kept(self) -> None:
+        clock = self.FlakyClock(fail=[(0.02, 0.01)])
+        run = self.flaky_run(clock)
+        run.advance(0.05)
+        self.assertAlmostEqual(run.time(), 0.05, delta=1e-12)
+        self.assertEqual(clock.steps, [(0.0, 0.01), (0.01, 0.01), (0.02, 0.005), (0.025, 0.005),
+                                       (0.03, 0.01), (0.04, 0.01)])
+        self.assertEqual(len(run.retries), 1)
+        self.assertEqual({k: run.retries[0][k] for k in ("t", "dt", "depth")},
+                         {"t": 0.02, "dt": 0.01, "depth": 1})
+        self.assertEqual(run.retries[0]["residuals"], [3e-5, 1.2e-8, 1.1e-8])
+        run.advance(0.1)
+        self.assertEqual(clock.steps[6:], [(round(0.05 + 0.01 * k, 9), 0.01) for k in range(5)])
+        self.assertAlmostEqual(run.time(), 0.1, delta=1e-12)
+        self.assertFalse(clock.keep_step_start)
+        self.assertIsNone(clock.step_start)
+
+    def test_a_failed_half_is_split_again(self) -> None:
+        clock = self.FlakyClock(fail=[(0.02, 0.01), (0.02, 0.005)])
+        run = self.flaky_run(clock)
+        run.advance(0.05)
+        self.assertEqual(clock.steps[2:5], [(0.02, 0.0025), (0.0225, 0.0025), (0.025, 0.005)])
+        self.assertEqual([(round(r["t"], 12), round(r["dt"], 12), r["depth"]) for r in run.retries],
+                         [(0.02, 0.01, 1), (0.02, 0.005, 2)])
+        self.assertAlmostEqual(run.time(), 0.05, delta=1e-12)
+
+    def test_a_step_that_keeps_failing_raises_after_the_last_halving(self) -> None:
+        clock = self.FlakyClock(always=[0.02])
+        run = self.flaky_run(clock, max_step_halvings=2)
+        with self.assertRaises(RuntimeError):
+            run.advance(0.05)
+        self.assertEqual([r["depth"] for r in run.retries], [1, 2])
+        self.assertFalse(clock.keep_step_start)
+
+    def test_without_halvings_a_failure_is_fatal_and_no_state_is_kept(self) -> None:
+        clock = self.FlakyClock(fail=[(0.02, 0.01)])
+        run = self.flaky_run(clock, max_step_halvings=0)
+        with self.assertRaises(RuntimeError):
+            run.advance(0.05)
+        self.assertEqual(run.retries, [])
+        self.assertFalse(any(clock.kept))
+
+    def test_the_runner_keeps_the_retry_history_of_a_failed_interval(self) -> None:
+        runner = load_runner()
+        # Exhausted at once, and exhausted after an earlier interval needed a retry.
+        for fail, always, written in (([], [0.02], 2), ([(0.01, 0.01)], [0.07], 3)):
+            with self.subTest(fail=fail, always=always):
+                run = self.flaky_run(self.FlakyClock(fail=fail, always=always), max_step_halvings=2)
+                stream = io.StringIO()
+                if fail:
+                    runner.advance_logging_retries(run, 0.05, stream)
+                with self.assertRaises(RuntimeError):
+                    runner.advance_logging_retries(run, 0.1 if fail else 0.05, stream)
+                lines = [json.loads(line) for line in stream.getvalue().splitlines()]
+                self.assertEqual(len(lines), written)
+                self.assertEqual(lines, run.retries)
+                self.assertEqual(lines[-1]["depth"], 2)
+
+    def test_converging_steps_are_taken_as_without_the_retry(self) -> None:
+        with_retry, without = self.FlakyClock(), self.FlakyClock()
+        self.flaky_run(with_retry).advance(0.047)
+        self.flaky_run(without, max_step_halvings=0).advance(0.047)
+        self.assertEqual(with_retry.steps, without.steps)
+        self.assertEqual(with_retry.steps[-1], (0.04, 0.007))
+        self.assertTrue(all(with_retry.kept))
 
     def test_design_grids_default_is_unchanged_by_the_new_option(self) -> None:
         grids = reference_grids(1.0, 300.0, 2, 1.2, None, 30.0, quadratic=True)
@@ -539,6 +710,76 @@ class LagrangianSolverTests(unittest.TestCase):
             run.advance(0.5)
             self.assertLess(abs(run.tip()["R"] / radius - 1), 1e-8)
             self.assertLess(abs(run.tip()["U"]), 1e-7)
+            run.release()
+
+    def test_a_failed_step_is_undone_exactly(self) -> None:
+        from taylor_culick_fem.lagrangian_dynamic import LagrangianRun
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run = LagrangianRun(self.settings(elastic_modulus=0.1), tmp)
+            run.start_flat()
+            run.advance(0.05)
+            problem = run.problem
+            start = problem.step_state()
+            problem.solve(timestep=0.01)
+            clean = np.array(problem.get_history_dofs(0))
+            problem.restore_step_state(start)
+            problem.max_newton_iterations, problem.newton_tolerance_at_unit_radius = 1, 1e-14
+            with self.assertRaises(RuntimeError):
+                problem.solve(timestep=0.01)
+            self.assertAlmostEqual(run.time(), 0.06, delta=1e-12)  # the failure moved the clock
+            problem.max_newton_iterations, problem.newton_tolerance_at_unit_radius = 10, 1e-8
+            problem.restore_step_state(start)
+            self.assertEqual(run.time(), start["time"])
+            self.assertEqual(run.dts(), start["dts"])
+            problem.solve(timestep=0.01)
+            # Equal to round-off: a few dofs of order 1e-18 differ in their last bit.
+            redone = np.array(problem.get_history_dofs(0))
+            self.assertLessEqual(float(np.max(np.abs(redone - clean))), 1e-14 * float(np.max(np.abs(clean))))
+            run.release()
+
+    def test_a_failed_step_is_retaken_as_two_halves(self) -> None:
+        from taylor_culick_fem.lagrangian_dynamic import LagrangianRun
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Reference: the step [0.07, 0.08] taken by hand as two halves.
+            ref = LagrangianRun(self.settings(elastic_modulus=0.1), Path(tmp) / "ref")
+            ref.start_flat()
+            ref.advance(0.07)
+            for end in (0.075, 0.08):
+                step = end - ref.time()
+                ref.problem.run(end, startstep=step, maxstep=step, outstep=False)
+            ref.advance(0.1)
+            expected = ref.tip()
+            ref.release()
+            run = LagrangianRun(self.settings(elastic_modulus=0.1), Path(tmp) / "run")
+            run.start_flat()
+            run.advance(0.07)
+            problem = run.problem
+            solve = problem.unsteady_newton_solve
+            calls = []
+
+            def fail_once(*args):
+                # The first step after t = 0.07 genuinely fails: one Newton iteration at an
+                # unreachable tolerance, leaving the clock and history as a failed step does.
+                calls.append(run.time())
+                if len(calls) > 1:
+                    return solve(*args)
+                kept = problem.max_newton_iterations, problem.newton_tolerance_at_unit_radius
+                problem.max_newton_iterations, problem.newton_tolerance_at_unit_radius = 1, 1e-14
+                try:
+                    return solve(*args)
+                finally:
+                    problem.max_newton_iterations, problem.newton_tolerance_at_unit_radius = kept
+
+            problem.unsteady_newton_solve = fail_once
+            run.advance(0.1)
+            self.assertEqual([(r["t"], r["dt"], r["depth"]) for r in run.retries],
+                             [(calls[0], run.retries[0]["dt"], 1)])
+            self.assertAlmostEqual(run.retries[0]["dt"], 0.01, delta=1e-12)
+            self.assertAlmostEqual(run.time(), 0.1, delta=1e-12)
+            self.assertLess(abs(run.tip()["R"] / expected["R"] - 1), 1e-12)
+            self.assertLess(abs(run.tip()["U"] - expected["U"]), 1e-10)
             run.release()
 
     def test_restart_after_remesh_reproduces_the_run(self) -> None:

@@ -12,11 +12,14 @@ pulled back to the reference body as the hole opens; every remap is recorded.
 
 Output: ``run-manifest.json`` first, ``progress.jsonl``, the live metadata ``case.json``,
 ``control.txt`` (t, R, U, u* = U / V_TC, full rim height H), ``diagnostics.jsonl`` (volume
-error, energies, hoop force near the tip), ``remaps.jsonl`` and ``checkpoints/``. A
-continuation (``--restart-from <run>/checkpoints/ckpt_NNNNN.npz``) uses the same case, writes
-to its own new folder and may change only ``--t-end``. A case may seed the run at rest from a
-static equilibrium on its own grids (``seed``). ``--check`` stops after the checks that need
-neither pyoomph nor the solver.
+error, energies, hoop force near the tip), ``remaps.jsonl``, ``retries.jsonl`` (every step whose
+Newton solve failed and was retaken in halves, ``solver.max_step_halvings``) and
+``checkpoints/``. A continuation (``--restart-from <run>/checkpoints/ckpt_NNNNN.npz``) uses the
+same case, writes to its own new folder and may change only ``--t-end`` and
+``--newton-tolerance-safety`` (the Newton acceptance as a multiple of the ``eps r^2/dt``
+round-off floor, in place of ``solver.newton_tolerance_safety``). A case may seed the run at
+rest from a static equilibrium on its own grids (``seed``). ``--check`` stops after the checks
+that need neither pyoomph nor the solver.
 """
 
 from __future__ import annotations
@@ -33,7 +36,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from taylor_culick_fem.cases import LAGRANGIAN, LAGRANGIAN_FIELDS_USED, validate_case
+from taylor_culick_fem.cases import (
+    LAGRANGIAN,
+    LAGRANGIAN_FIELDS_USED,
+    MAX_STEP_HALVINGS,
+    validate_case,
+)
 from taylor_culick_fem.run_contract import (
     add_contract_options,
     append_progress,
@@ -56,16 +64,45 @@ V_TC = math.sqrt(2.0)
 def build_parser() -> argparse.ArgumentParser:
     parser = add_contract_options(argparse.ArgumentParser(description=__doc__.splitlines()[0]))
     parser.add_argument("--t-end", type=float, default=None, help="replace completion.value")
+    parser.add_argument("--newton-tolerance-safety", type=float, default=None,
+                        help="accept a Newton solve below this multiple of the eps*r^2/dt "
+                             "round-off floor, in place of solver.newton_tolerance_safety "
+                             "(at least 1)")
     return parser
 
 
+#: Options a continuation may change from its parent run's.
+CONTINUATION_OPTIONS = ("t_end", "newton_tolerance_safety")
+
+
 def option_problems(args: argparse.Namespace) -> list[str]:
+    problems = []
     if args.t_end is not None and (not math.isfinite(args.t_end) or args.t_end <= 0):
-        return ["--t-end must be finite and positive"]
-    return []
+        problems.append("--t-end must be finite and positive")
+    safety = args.newton_tolerance_safety
+    if safety is not None and (not math.isfinite(safety) or safety < 1):
+        problems.append("--newton-tolerance-safety must be finite and at least 1")
+    return problems
 
 
-def settings_from_case(case: dict):
+def advance_logging_retries(run, target: float, stream) -> None:
+    """``run.advance(target)``, writing every retry it records to ``stream`` (JSON Lines).
+
+    The records are written even when the interval fails, so a step that fails after its last
+    halving leaves its retry history; the failure is then re-raised unchanged.
+    """
+    logged = len(run.retries)
+    try:
+        run.advance(target)
+    finally:
+        for record in run.retries[logged:]:
+            stream.write(json.dumps(record) + "\n")
+        if len(run.retries) > logged:
+            stream.flush()
+
+
+def settings_from_case(case: dict, newton_tolerance_safety: float | None = None):
+    """The solver settings of ``case``; a given ``newton_tolerance_safety`` replaces the case's."""
     from taylor_culick_fem.lagrangian_dynamic import LagrangianSettings
 
     physics, mesh, remesh, solver = case["physics"], case["mesh"], case["remesh"], case["solver"]
@@ -84,8 +121,10 @@ def settings_from_case(case: dict):
         remesh_front_margin=float(remesh["front_margin"]),
         dt=float(solver["dt"]), max_newton=int(solver["max_newton"]),
         newton_tolerance=float(solver["newton_tolerance"]),
-        newton_tolerance_safety=float(solver["newton_tolerance_safety"]),
+        newton_tolerance_safety=float(solver["newton_tolerance_safety"]
+                                      if newton_tolerance_safety is None else newton_tolerance_safety),
         linear_solver=None if linear == "default" else linear,
+        max_step_halvings=int(solver.get("max_step_halvings", MAX_STEP_HALVINGS)),
     )
 
 
@@ -157,9 +196,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("refused: --restart-from must name <run>/checkpoints/ckpt_NNNNN.npz")
         parent, restart = check_restart(args.restart_from, args.out, case_sha256)
         args.parent_run = parent
-        changed = continuation_problems(parser, args, parent, ("t_end",))
+        changed = continuation_problems(parser, args, parent, CONTINUATION_OPTIONS)
         if changed:
-            raise SystemExit("refused: a continuation may change only --t-end: " + "; ".join(changed))
+            raise SystemExit("refused: a continuation may change only --t-end and "
+                             "--newton-tolerance-safety: " + "; ".join(changed))
         import numpy as np
 
         with np.load(args.restart_from) as saved:
@@ -185,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     affinity = enforce_launcher_affinity(launch_cpus)
 
-    settings = settings_from_case(case)
+    settings = settings_from_case(case, args.newton_tolerance_safety)
     t_end = args.t_end if args.t_end is not None else float(case["completion"]["value"])
     out = args.out.resolve()
     commit = start_run(out, root=ROOT, runner=Path(__file__), argv=raw, case_path=case_path,
@@ -200,7 +240,9 @@ def main(argv: list[str] | None = None) -> int:
     diagnostics_every = int(case["output"]["diagnostics_every"])
     status = "running"
     meta = {"case_id": case["case_id"], "status": status, "t_end": t_end, "V_TC": V_TC,
-            "viscosity": math.sqrt(2.0) * settings.oh, "component_commit": commit}
+            "viscosity": math.sqrt(2.0) * settings.oh, "component_commit": commit,
+            "newton_tolerance_safety": settings.newton_tolerance_safety,
+            "max_step_halvings": settings.max_step_halvings}
     started = time.time()
     try:
         if restart is not None:
@@ -225,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         control.write("# t R U ustar H wall_seconds\n")
         diagnostics = (out / "diagnostics.jsonl").open("a", encoding="utf-8")
         remaps = (out / "remaps.jsonl").open("a", encoding="utf-8")
+        retries = (out / "retries.jsonl").open("a", encoding="utf-8")
 
         def record_diagnostics(now: float, tip: dict) -> None:
             state = StateMap.from_problem(run.problem)
@@ -248,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         while now < t_end - 1e-9 * max(1.0, t_end):
             index += 1
             target = min(round(index * cadence, 12), t_end)
-            run.advance(target)
+            advance_logging_retries(run, target, retries)
             now = run.time()
             tip = run.tip()
             height = run.problem.rim_height()
@@ -278,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
         append_progress(out, "failed", error_type=type(exc).__name__, error=str(exc)[:500])
         raise
     meta.update(status=status, t=now, R=tip["R"], U=tip["U"], remaps=len(run.remaps),
-                wall_seconds=time.time() - started)
+                retries=len(run.retries), wall_seconds=time.time() - started)
     write_json_atomic(out / "case.json", meta)
     append_progress(out, "completed", status=status, physical_time=now, primary_observable=tip["R"])
     print(json.dumps(meta, indent=2, sort_keys=True))

@@ -53,6 +53,7 @@ from pyoomph.expressions import (
     var,
 )
 
+from taylor_culick_fem.cases import MAX_STEP_HALVINGS
 from taylor_culick_fem.elastocapillary_equilibrium import (
     DeformedSurfaceEnergy,
     ElastocapillaryEquilibriumProblem,
@@ -175,6 +176,10 @@ class LagrangianRetractionProblem(ElastocapillaryEquilibriumProblem):
         # Radius of the moving part of the sheet, used in the round-off floor of Newton's
         # residual; the run sets it to the end of the finely held region after every output.
         self.newton_scale_radius = 1.0
+        # When set, every transient step first keeps its start state (``step_start``), so a
+        # step whose Newton solve fails can be restored and retried.
+        self.keep_step_start = False
+        self.step_start: dict | None = None
 
     @property
     def viscosity(self) -> float:
@@ -230,6 +235,35 @@ class LagrangianRetractionProblem(ElastocapillaryEquilibriumProblem):
             return
         floor = 2.2e-16 * self.newton_scale_radius ** 2 / dt
         self.newton_solver_tolerance = max(base, self.newton_tolerance_safety * floor)
+
+    # ------------------------------------------------------------------ step start state
+
+    def actions_before_transient_solve(self, *args, **kwargs):
+        result = super().actions_before_transient_solve(*args, **kwargs)
+        # After the parent, so the dof numbering it may set up is the one kept.
+        self.step_start = self.step_state() if self.keep_step_start else None
+        return result
+
+    def step_state(self) -> dict:
+        """Everything a transient step reads: every unknown at every stored time level, the
+        time, the step history and the step count. Pinned values are constant here."""
+        time_pt = self.time_pt()
+        levels = self.time_stepper_pt().ntstorage()
+        return {"dofs": [np.array(self.get_history_dofs(i), dtype=float) for i in range(levels)],
+                "time": float(self.get_current_time(as_float=True, dimensional=False)),
+                "dts": [float(time_pt.dt(i)) for i in range(time_pt.ndt())],
+                "steps_done": int(self.timestepper.get_num_unsteady_steps_done())}
+
+    def restore_step_state(self, state: dict) -> None:
+        """Undo a step that failed part-way: its time shift, step history and Newton iterates."""
+        for level, dofs in enumerate(state["dofs"]):
+            self.set_history_dofs(level, dofs)
+        self.set_current_time(state["time"], dimensional=False)
+        time_pt = self.time_pt()
+        for i, dt in enumerate(state["dts"]):
+            time_pt.set_dt(i, dt)
+        self.time_stepper_pt().set_weights()
+        self.timestepper.set_num_unsteady_steps_done(state["steps_done"])
 
     # ------------------------------------------------------------------ readers
 
@@ -476,6 +510,7 @@ class LagrangianSettings:
     newton_tolerance: float = 1e-8
     newton_tolerance_safety: float = 10.0
     linear_solver: str | None = None
+    max_step_halvings: int = MAX_STEP_HALVINGS
 
     def sweep_end(self, radius: float, extent: float) -> float:
         return extent + max(self.sweep_ahead, self.sweep_ahead_fraction * radius)
@@ -501,6 +536,7 @@ class LagrangianRun:
         self.mesh_radius = None
         self.sweep_end_radius = None
         self.remaps: list[dict] = []
+        self.retries: list[dict] = []
 
     # -- problem construction
     def build(self, grids: dict) -> LagrangianRetractionProblem:
@@ -585,23 +621,80 @@ class LagrangianRun:
         """Step to ``target`` with steps of ``dt``, ending on a shorter step if needed.
 
         pyoomph's ``run`` takes its first step at ``startstep`` and does not shorten a step
-        to land on ``endtime``, so whole steps and any remainder are run separately.
+        to land on ``endtime``, so whole steps and any remainder are run separately. A step
+        whose Newton solve fails is retried in halves (:meth:`_retry`); stepping then resumes
+        at ``dt`` from the end of that step, so the output times are unchanged. Steps that
+        converge are taken exactly as without the retry.
         """
         dt = self.settings.dt
         target = float(target)
         tolerance = 1e-9 * max(1.0, abs(target))
-        remaining = target - self.time()
-        if remaining <= tolerance:
+        while True:
+            remaining = target - self.time()
+            if remaining <= tolerance:
+                return
+            whole = math.floor(remaining / dt + 1e-9)
+            if whole >= 1:
+                end, step = self.time() + whole * dt, dt
+                if abs(end - target) <= tolerance:
+                    end = target
+            else:
+                end, step = target, remaining
+            before = self.time()
+            self._run_to(end, step)
+            if not self.time() > before:
+                raise RuntimeError(f"no progress from t = {before!r} towards {target!r}")
+
+    def _run_to(self, end: float, step: float) -> None:
+        """``problem.run`` to ``end`` at a fixed ``step``; recover a step that fails."""
+        problem = self.problem
+        if self.settings.max_step_halvings <= 0:
+            problem.run(end, startstep=step, maxstep=step, outstep=False)
             return
-        whole = math.floor(remaining / dt + 1e-9)
-        if whole >= 1:
-            end = self.time() + whole * dt
-            if abs(end - target) <= tolerance:
-                end = target
-            self.problem.run(end, startstep=dt, maxstep=dt, outstep=False)
-        rest = target - self.time()
-        if rest > tolerance:
-            self.problem.run(target, startstep=rest, maxstep=rest, outstep=False)
+        problem.keep_step_start = True
+        try:
+            problem.run(end, startstep=step, maxstep=step, outstep=False)
+        except RuntimeError as exc:  # pyoomph's OomphException: Newton did not converge
+            start = problem.step_start
+            if start is None:
+                raise
+            size = float(problem.time_pt().dt(0))
+            self._retry(start, start["time"] + size, size, 1, exc)
+        finally:
+            problem.keep_step_start = False
+            problem.step_start = None
+
+    def _retry(self, start: dict, step_end: float, size: float, depth: int,
+               failure: BaseException) -> None:
+        """Retake the failed step ``[start, step_end]`` of length ``size`` as two halves.
+
+        The problem is first restored to the step's start state. A half that fails in turn is
+        split again, down to ``max_step_halvings`` levels; a failure below that is raised. The
+        second half ends exactly on ``step_end``. Every retry is recorded in ``self.retries``
+        with the residuals of the failed attempt.
+
+        When Newton stalls on its round-off floor rather than diverging, a shorter step helps
+        only through the acceptance: its ``newton_tolerance_safety * eps r^2 / dt`` term rises
+        as ``dt`` falls, once it exceeds ``newton_tolerance``, while the floor itself does not
+        fall. Accepting near the floor is the job of ``newton_tolerance_safety``; the retry is
+        the safety net.
+        """
+        if depth > self.settings.max_step_halvings:
+            raise failure
+        problem = self.problem
+        residuals = [float(r) for r in problem.get_last_residual_convergence()]
+        problem.restore_step_state(start)
+        self.retries.append({"t": start["time"], "dt": size, "depth": depth,
+                             "residuals": residuals})
+        for sub_end in (start["time"] + 0.5 * size, step_end):
+            step = sub_end - self.time()
+            try:
+                problem.run(sub_end, startstep=step, maxstep=step, outstep=False)
+            except RuntimeError as exc:
+                sub_start = problem.step_start
+                if sub_start is None:
+                    raise
+                self._retry(sub_start, sub_end, step, depth + 1, exc)
 
     def remesh_reason(self) -> str | None:
         s = self.settings
