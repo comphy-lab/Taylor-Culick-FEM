@@ -156,6 +156,12 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         self += eqs @ "liquid"
 
         if self.tip_hoop_bands:
+            # Only an evolving conformation carries the hoop component: positive relaxation
+            # time and a positive modulus or passive transport.
+            if not (self.relaxation_time > 0
+                    and (self.elastic_modulus > 0 or self.passive_conformation)):
+                raise ValueError("tip diagnostics need the conformation field: relaxation_time > 0 "
+                                 "and elastic_modulus > 0 or passive_conformation")
             # Observables only: they add no residual, so the solution is unchanged.
             radius = var("coordinate_x")
             tip = var("X", domain="globals")

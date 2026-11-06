@@ -56,6 +56,8 @@ from taylor_culick_fem.run_contract import (
 )
 
 CASE_FIELDS_USED = LAGRANGIAN_FIELDS_USED
+#: The grid blocks of a reference mesh, in the order ReferenceSheetMesh builds its elements.
+MESH_BLOCKS = ("core", "lower", "upper", "sheet")
 UNITS = ("lengths on the full sheet thickness h0, time on sqrt(rho h0^3/sigma), velocity on "
          "sqrt(sigma/(rho h0)); Ec = G h0/sigma; coded viscosity sqrt(2) Oh")
 V_TC = math.sqrt(2.0)
@@ -158,10 +160,12 @@ def seed_domain_problems(grids: dict, state_nodes, r0: float, length: float,
     """The seed's reference body must be the case's: tip at ``r0``, far end at ``length``.
 
     Both the grids and the state's element nodes are checked against the body, and the
-    state's elements against the grids, so a state from another mesh of the same body is
-    caught as well.
+    state's elements node by node against the grids, so a state from another mesh of the
+    same body is caught as well.
     """
     import numpy as np
+
+    from taylor_culick_fem.equilibrium_geometry import HALF_THICKNESS
 
     problems = []
     for name, points in (("seed.grids", np.concatenate([np.reshape(g, (-1, 2)) for g in grids.values()])),
@@ -171,24 +175,53 @@ def seed_domain_problems(grids: dict, state_nodes, r0: float, length: float,
             problems.append(f"{name} starts at reference radius {low!r}, not physics.r0 = {r0!r}")
         if not math.isclose(high, length, rel_tol=1e-12):
             problems.append(f"{name} ends at reference radius {high!r}, not mesh.length = {length!r}")
-    # Same bounds are not the same mesh: the state's elements must be exactly the grids'
-    # (two grid intervals per element side). Element corners are grid points; edge nodes on
-    # the curved cap are moved onto the arc, so only the corners are compared. Shared block
-    # nodes are merged on coordinates rounded to 11 decimals, as ReferenceSheetMesh merges
-    # them, so both sets are keyed the same way.
-    blocks = [np.asarray(g, float) for g in grids.values()]
-    expected = sum(((g.shape[0] - 1) // 2) * ((g.shape[1] - 1) // 2) for g in blocks)
+    # Same bounds are not the same mesh: rebuild each 9-node element from the grids as
+    # ReferenceSheetMesh builds it (blocks core, lower, upper, sheet; two grid intervals per
+    # element side; shared nodes merged on coordinates rounded to 11 decimals) and require
+    # every state node to be that grid point. Only edge and centre nodes of elements with a
+    # facet on the reference cap arc may differ: the curved geometry moves them, by less than
+    # the arc's sagitta over one element. Element vertices always match exactly.
+    if set(grids) != set(MESH_BLOCKS):
+        return problems + [f"seed.grids must hold exactly the blocks {', '.join(MESH_BLOCKS)}"]
+    local = [(i, j) for j in range(3) for i in range(3)]
     elements = np.reshape(np.asarray(state_nodes, float), (-1, 9, 2))
-    local = np.reshape(np.asarray(state_ij), (-1, 9, 2)) if state_ij is not None \
-        else np.tile([(i, j) for j in range(3) for i in range(3)], (len(elements), 1, 1))
-    corner = np.isin(local[..., 0], (0, 2)) & np.isin(local[..., 1], (0, 2))
-    grid_corners = np.unique(np.round(np.concatenate([g[::2, ::2].reshape(-1, 2) for g in blocks]), 11),
-                             axis=0)
-    state_corners = np.unique(np.round(elements[corner], 11), axis=0)
-    if len(elements) != expected or not np.array_equal(grid_corners, state_corners):
-        problems.append(f"seed.state has {len(elements)} elements on {len(state_corners)} corner nodes, "
-                        f"but seed.grids define {expected} on {len(grid_corners)}: a state from "
-                        "another mesh")
+    if state_ij is not None and not np.array_equal(np.reshape(np.asarray(state_ij), (-1, 9, 2)),
+                                                  np.tile(local, (len(elements), 1, 1))):
+        return problems + ["seed.state node order is not the 9-node element order of the grids"]
+    registry: dict = {}
+    centre, radius = r0 + HALF_THICKNESS, HALF_THICKNESS
+
+    def node(point):
+        key = (round(float(point[0]), 11), round(float(point[1]), 11))
+        return registry.setdefault(key, (float(point[0]), float(point[1])))
+
+    def on_arc(point) -> bool:
+        return point[0] <= centre + 1e-12 and abs(math.hypot(point[0] - centre, point[1]) - radius) < 1e-9
+
+    expected, curved = [], []
+    for name in MESH_BLOCKS:
+        grid = np.asarray(grids[name], float)
+        for p in range(0, grid.shape[0] - 1, 2):
+            for q in range(0, grid.shape[1] - 1, 2):
+                points = [node(grid[p + i, q + j]) for i, j in local]
+                expected.append(points)
+                curved.append(sum(on_arc(x) for x in points) >= 3)
+    if len(elements) != len(expected):
+        return problems + [(f"seed.state has {len(elements)} elements, but seed.grids define "
+                            f"{len(expected)}: a state from another mesh")]
+    expected = np.asarray(expected)
+    corners = {0, 2, 6, 8}  # local (i, j) in {0, 2}^2: element vertices, never moved by curving
+    moved = {(round(x[0], 11), round(x[1], 11))
+             for e, c in zip(expected, curved) if c for k, x in enumerate(e) if k not in corners}
+    shift = np.abs(np.round(elements, 11) - np.round(expected, 11)).max(axis=2)
+    bad = [(e, k) for e, k in zip(*np.nonzero(shift > 0))
+           if k in corners
+           or (round(expected[e, k, 0], 11), round(expected[e, k, 1], 11)) not in moved
+           or shift[e, k] > 0.1 * radius]
+    if bad:
+        e, k = bad[0]
+        problems.append(f"seed.state differs from seed.grids at {len(bad)} element nodes (first: element "
+                        f"{e} node {k}, {shift[e, k]:.3g} off): a state from another mesh")
     return problems
 
 

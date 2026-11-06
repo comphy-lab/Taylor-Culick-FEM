@@ -121,6 +121,18 @@ class FaceLayerCaseTests(unittest.TestCase):
         self.case["output"]["tip_diagnostics"] = "yes"
         self.assertIn("output.tip_diagnostics must be a boolean", case_problems(self.case))
 
+    def test_tip_diagnostics_need_the_conformation_field(self) -> None:
+        # The Newtonian endpoints carry no conformation unknowns for the diagnostics to read.
+        message = "output.tip_diagnostics needs the conformation field"
+        self.case["output"]["tip_diagnostics"] = True
+        self.assertFalse(any(message in p for p in case_problems(self.case)))
+        for key, value in (("elastic_modulus", 0), ("relaxation_time", 0)):
+            case = json.loads(json.dumps(self.case))
+            case["physics"].pop("far_field")
+            case["physics"][key] = value
+            with self.subTest(**{key: value}):
+                self.assertTrue(any(message in p for p in case_problems(case)), case_problems(case))
+
     def test_each_layer_defect_is_named(self) -> None:
         cases = {
             "exactly spacing": {"spacing": 1e-3, "growth": 1.2},
@@ -372,6 +384,22 @@ class LagrangianCaseTests(unittest.TestCase):
         problems = runner.seed_domain_problems(grids, other.Xe, 1.0, 300.0, other.ij)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("another mesh", problems[0])
+
+    def test_a_seed_with_other_interior_nodes_is_refused(self) -> None:
+        """Same corners, element count and bounds; one interior grid node elsewhere."""
+        runner = load_runner()
+        grids = reference_grids(1.0, 300.0, 2, 1.2, None, 30.0, quadratic=True)
+        state = _field_map(grids, lambda X: np.zeros(2))
+        self.assertEqual(runner.seed_domain_problems(grids, state.Xe, 1.0, 300.0, state.ij), [])
+        # An interior node away from the cap, and a vertex of an element on the cap arc
+        # (vertices are never moved by the curved geometry, so no exemption applies).
+        for block, index in (("sheet", (3, 3)), ("lower", (2, 2))):
+            moved = {name: grid.copy() for name, grid in grids.items()}
+            moved[block][index[0], index[1], 0] += 0.01
+            with self.subTest(block=block, index=index):
+                problems = runner.seed_domain_problems(moved, state.Xe, 1.0, 300.0, state.ij)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("another mesh", problems[0])
 
     def test_a_seed_with_merged_block_nodes_is_accepted(self) -> None:
         """ReferenceSheetMesh merges shared block nodes on coordinates rounded to 11 decimals,

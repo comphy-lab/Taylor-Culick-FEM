@@ -566,6 +566,16 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
     _integer(output, "checkpoint_every", "output", 0, problems)
     if type(output.get("tip_diagnostics", False)) is not bool:
         problems.append("output.tip_diagnostics must be a boolean")
+    elif output.get("tip_diagnostics", False):
+        # The diagnostics read the hoop conformation, which only an evolving conformation has
+        # (axisymmetric_viscoelastic.evolves_conformation): positive relaxation time and a
+        # positive modulus or passive transport.
+        modulus, relaxation = physics.get("elastic_modulus"), physics.get("relaxation_time")
+        relaxes = relaxation == "inf" or (_number(relaxation) and relaxation > 0)
+        if not (relaxes and ((_number(modulus) and modulus > 0)
+                             or physics.get("passive_conformation", False) is True)):
+            problems.append("output.tip_diagnostics needs the conformation field: relaxation_time > 0 "
+                            "and elastic_modulus > 0 or passive_conformation")
     if "field_stride" in output:
         _integer(output, "field_stride", "output", 1, problems)
     stride, every = output.get("field_stride", 1), output.get("checkpoint_every")
