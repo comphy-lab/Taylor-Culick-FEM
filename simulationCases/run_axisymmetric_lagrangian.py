@@ -147,17 +147,19 @@ def _seed(case: dict) -> tuple[dict, object]:
         raise SystemExit("refused: the seed carries cap stiffening the transient solver omits")
     grids = dict(np.load(seed["grids"]))
     problems = seed_domain_problems(grids, saved["Xe"], float(case["physics"]["r0"]),
-                                    float(case["mesh"]["length"]))
+                                    float(case["mesh"]["length"]), saved["ij"])
     if problems:
         raise SystemExit("refused: " + "; ".join(problems))
     return grids, FieldMap(saved["Xe"], saved["ue"], saved["ij"])
 
 
-def seed_domain_problems(grids: dict, state_nodes, r0: float, length: float) -> list[str]:
+def seed_domain_problems(grids: dict, state_nodes, r0: float, length: float,
+                         state_ij=None) -> list[str]:
     """The seed's reference body must be the case's: tip at ``r0``, far end at ``length``.
 
-    Both the grids and the state's element nodes are checked, so a state from another mesh
-    of the same body is caught as well.
+    Both the grids and the state's element nodes are checked against the body, and the
+    state's elements against the grids, so a state from another mesh of the same body is
+    caught as well.
     """
     import numpy as np
 
@@ -169,6 +171,24 @@ def seed_domain_problems(grids: dict, state_nodes, r0: float, length: float) -> 
             problems.append(f"{name} starts at reference radius {low!r}, not physics.r0 = {r0!r}")
         if not math.isclose(high, length, rel_tol=1e-12):
             problems.append(f"{name} ends at reference radius {high!r}, not mesh.length = {length!r}")
+    # Same bounds are not the same mesh: the state's elements must be exactly the grids'
+    # (two grid intervals per element side). Element corners are grid points; edge nodes on
+    # the curved cap are moved onto the arc, so only the corners are compared. Shared block
+    # nodes are merged on coordinates rounded to 11 decimals, as ReferenceSheetMesh merges
+    # them, so both sets are keyed the same way.
+    blocks = [np.asarray(g, float) for g in grids.values()]
+    expected = sum(((g.shape[0] - 1) // 2) * ((g.shape[1] - 1) // 2) for g in blocks)
+    elements = np.reshape(np.asarray(state_nodes, float), (-1, 9, 2))
+    local = np.reshape(np.asarray(state_ij), (-1, 9, 2)) if state_ij is not None \
+        else np.tile([(i, j) for j in range(3) for i in range(3)], (len(elements), 1, 1))
+    corner = np.isin(local[..., 0], (0, 2)) & np.isin(local[..., 1], (0, 2))
+    grid_corners = np.unique(np.round(np.concatenate([g[::2, ::2].reshape(-1, 2) for g in blocks]), 11),
+                             axis=0)
+    state_corners = np.unique(np.round(elements[corner], 11), axis=0)
+    if len(elements) != expected or not np.array_equal(grid_corners, state_corners):
+        problems.append(f"seed.state has {len(elements)} elements on {len(state_corners)} corner nodes, "
+                        f"but seed.grids define {expected} on {len(grid_corners)}: a state from "
+                        "another mesh")
     return problems
 
 

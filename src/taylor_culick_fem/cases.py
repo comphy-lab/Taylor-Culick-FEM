@@ -472,8 +472,11 @@ def _lagrangian_problems(case: dict) -> list[str]:
     if _number(mesh.get("sweep_spacing")) and _number(mesh.get("max_spacing")) \
             and mesh["max_spacing"] < mesh["sweep_spacing"]:
         problems.append("mesh.max_spacing must be at least mesh.sweep_spacing")
-    if _number(mesh.get("length")) and _number(physics.get("r0")) and mesh["length"] <= physics["r0"] + 1:
-        problems.append("mesh.length must exceed physics.r0 + 1")
+    # The remesh (equilibrium_geometry.design_grids) samples the midplane through
+    # r0 + 4 HALF_THICKNESS = r0 + 2 whatever the length, so a shorter body cannot remesh.
+    if _number(mesh.get("length")) and _number(physics.get("r0")) and mesh["length"] <= physics["r0"] + 2:
+        problems.append("mesh.length must exceed physics.r0 + 2 (the remesh samples the midplane "
+                        "through r0 + 2)")
     solver = case.get("solver") if isinstance(case.get("solver"), dict) else {}
     if solver.get("linear_solver", "default") not in ("default", "superlu", "umfpack", "pardiso", "mumps"):
         problems.append("solver.linear_solver must be default, superlu, umfpack, pardiso or mumps")

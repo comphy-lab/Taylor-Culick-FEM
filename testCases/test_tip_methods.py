@@ -285,6 +285,16 @@ class LagrangianCaseTests(unittest.TestCase):
         self.assertEqual(self.case["physics"]["problem"], LAGRANGIAN)
         self.assertEqual(case_problems(self.case), [])
 
+    def test_a_body_too_short_to_remesh_is_refused(self) -> None:
+        # The remesh samples the midplane through r0 + 2 whatever the length.
+        r0 = self.case["physics"]["r0"]
+        for length, ok in ((r0 + 1.5, False), (r0 + 2.0, False), (r0 + 2.5, True)):
+            case = json.loads(json.dumps(self.case))
+            case["mesh"]["length"] = length
+            problems = case_problems(case)
+            with self.subTest(length=length):
+                self.assertEqual(any("r0 + 2" in p for p in problems), not ok, problems)
+
     def test_each_defect_is_named(self) -> None:
         edits = {
             'relaxation_time must be "inf"': ("physics", "relaxation_time", 10.0),
@@ -351,9 +361,38 @@ class LagrangianCaseTests(unittest.TestCase):
         short = reference_grids(1.0, 10.0, 2, 1.2, None, 30.0, quadratic=True)
         problems = runner.seed_domain_problems(short, nodes, 1.0, 300.0)
         self.assertTrue(any("seed.grids ends" in p for p in problems), problems)
-        self.assertFalse(any("seed.state" in p for p in problems), problems)
+        self.assertFalse(any("seed.state ends" in p for p in problems), problems)
+        self.assertTrue(any("another mesh" in p for p in problems), problems)
         problems = runner.seed_domain_problems(grids, nodes, 2.0, 300.0)
         self.assertTrue(any("seed.state starts" in p for p in problems), problems)
+        # Same body, other mesh: identical bounds, so only the element check can catch it.
+        finer = reference_grids(1.0, 300.0, 3, 1.2, None, 30.0, quadratic=True)
+        other = _field_map(finer, lambda X: np.zeros(2))
+        self.assertEqual(runner.seed_domain_problems(finer, other.Xe, 1.0, 300.0, other.ij), [])
+        problems = runner.seed_domain_problems(grids, other.Xe, 1.0, 300.0, other.ij)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("another mesh", problems[0])
+
+    def test_a_seed_with_merged_block_nodes_is_accepted(self) -> None:
+        """ReferenceSheetMesh merges shared block nodes on coordinates rounded to 11 decimals,
+        keeping the first; at 8 elements per quarter two block corners differ by round-off."""
+        runner = load_runner()
+        grids = reference_grids(1.0, 300.0, 8, 1.2, None, 30.0, quadratic=True)
+        registry: dict = {}
+
+        def merged(point):
+            key = (round(float(point[0]), 11), round(float(point[1]), 11))
+            return registry.setdefault(key, (float(point[0]), float(point[1])))
+
+        local = [(i, j) for j in range(3) for i in range(3)]
+        Xe = [[merged(grid[p + i, q + j]) for i, j in local]
+              for grid in grids.values()
+              for p in range(0, grid.shape[0] - 1, 2) for q in range(0, grid.shape[1] - 1, 2)]
+        Xe = np.asarray(Xe, float)
+        ij = np.tile(local, (len(Xe), 1, 1))
+        corners = np.concatenate([g[::2, ::2].reshape(-1, 2) for g in grids.values()])
+        self.assertGreater(len(np.unique(corners, axis=0)), len(np.unique(np.round(corners, 11), axis=0)))
+        self.assertEqual(runner.seed_domain_problems(grids, Xe, 1.0, 300.0, ij), [])
 
     def test_step_halvings_are_validated(self) -> None:
         self.assertNotIn("max_step_halvings", self.case["solver"])
@@ -497,12 +536,42 @@ class LagrangianGeometryTests(unittest.TestCase):
         self.assertEqual(run.problem.calls, [(0.005, 0.005, 0.005)])
         run.advance(0.05)
         self.assertAlmostEqual(run.time(), 0.05, delta=1e-12)
-        self.assertEqual(len(run.problem.calls), 3)
-        self.assertAlmostEqual(run.problem.calls[1][1], 0.01)
-        self.assertAlmostEqual(run.problem.calls[2][1], 0.005, delta=1e-12)
+        # One run per step: four whole steps, then the short remainder.
+        self.assertEqual(len(run.problem.calls), 6)
+        self.assertTrue(all(abs(c[1] - 0.01) < 1e-12 for c in run.problem.calls[1:5]))
+        self.assertAlmostEqual(run.problem.calls[5][1], 0.005, delta=1e-12)
         before = len(run.problem.calls)
         run.advance(0.05)
         self.assertEqual(len(run.problem.calls), before)
+
+    def test_successive_cadence_boundaries_are_not_overshot(self) -> None:
+        """pyoomph's ``run`` stretches a final step that falls a round-off short of the step
+        to 1.00001 times the remainder; grouped runs then landed ~1e-7 past each boundary."""
+        from taylor_culick_fem.lagrangian_dynamic import LagrangianRun, LagrangianSettings
+
+        class PyoomphClock:
+            def __init__(self):
+                self.t = 0.0
+
+            def get_current_time(self, as_float=True):
+                return self.t
+
+            def run(self, endtime, startstep, maxstep, outstep):
+                dt = min(startstep, maxstep)
+                while self.t < endtime:
+                    self.t += dt
+                    remaining = endtime - self.t
+                    if remaining < 1e-8 * dt:
+                        break
+                    if remaining < dt:
+                        dt = 1.00001 * remaining
+
+        run = LagrangianRun(LagrangianSettings(oh=1.0, elastic_modulus=1.0, dt=0.01), "/tmp/unused")
+        run.problem = PyoomphClock()
+        for k in range(1, 41):
+            run.advance(0.05 * k)
+            self.assertLessEqual(run.time() - 0.05 * k, 1e-12, k)
+            self.assertAlmostEqual(run.time(), 0.05 * k, delta=1e-12)
 
     class FlakyClock:
         """pyoomph's ``run`` at a fixed step whose listed steps fail.

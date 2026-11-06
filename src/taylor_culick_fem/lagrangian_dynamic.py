@@ -646,7 +646,26 @@ class LagrangianRun:
                 raise RuntimeError(f"no progress from t = {before!r} towards {target!r}")
 
     def _run_to(self, end: float, step: float) -> None:
-        """``problem.run`` to ``end`` at a fixed ``step``; recover a step that fails."""
+        """Fixed steps of ``step`` to ``end``, the last one the exact remainder.
+
+        One ``problem.run`` per step: over several steps pyoomph's ``run`` stretches a final
+        step that falls a round-off short of ``step`` to 1.00001 times the remainder, which
+        put grouped runs up to ~1e-7 past successive cadence boundaries. A one-step ``run``
+        ends on its own end time (pyoomph drops a remaining sliver below 1e-8 of the step).
+        """
+        tolerance = 1e-9 * max(1.0, abs(end))
+        while end - self.time() > tolerance:
+            remaining = end - self.time()
+            size = remaining if remaining - step <= tolerance else step
+            before = self.time()
+            self._run_step(before + size, size)
+            if not self.time() > before:
+                raise RuntimeError(f"no progress from t = {before!r} towards {end!r}")
+        if self.time() > end + tolerance:
+            raise RuntimeError(f"stepping overshot t = {end!r}: reached {self.time()!r}")
+
+    def _run_step(self, end: float, step: float) -> None:
+        """One ``problem.run`` step to ``end``; recover a step that fails."""
         problem = self.problem
         if self.settings.max_step_halvings <= 0:
             problem.run(end, startstep=step, maxstep=step, outstep=False)
