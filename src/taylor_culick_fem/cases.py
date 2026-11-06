@@ -59,6 +59,32 @@ EQUILIBRIUM_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coor
                               for key, _ in keys]
                            + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend", "mesh.template",
                               "regularisation.cap_beta", "regularisation.volume_penalty"])
+LAGRANGIAN = "axisymmetric_lagrangian_retraction"
+LAGRANGIAN_GEOMETRY = {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "lagrangian"}
+LAGRANGIAN_SECTIONS = {
+    "physics": (("Oh", "nonnegative"), ("elastic_modulus", "positive"), ("r0", "positive"),
+                ("surface_tension", "positive")),
+    "mesh": (("elements_per_quarter", "integer"), ("length", "positive"), ("growth", "growth"),
+             ("max_spacing", "positive"), ("sweep_spacing", "positive"),
+             ("sweep_ahead", "positive"), ("sweep_ahead_fraction", "nonnegative")),
+    "remesh": (("log_radius_growth", "positive"), ("front_margin", "nonnegative")),
+    "solver": (("dt", "positive"), ("max_newton", "integer"), ("newton_tolerance", "positive"),
+               ("newton_tolerance_safety", "positive")),
+    "output": (("cadence", "positive"), ("checkpoint_every", "integer"),
+               ("diagnostics_every", "integer")),
+    "completion": (("value", "positive"),),
+}
+LAGRANGIAN_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coordinates",
+                           "geometry.frame", "nondimensionalization", "physics.problem",
+                           "physics.relaxation_time", "physics.far_edge", "completion.kind"]
+                          + [f"{section}.{key}" for section, keys in LAGRANGIAN_SECTIONS.items()
+                             for key, _ in keys]
+                          + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend", "solver.linear_solver",
+                             "solver.max_step_halvings", "seed.state", "seed.grids", "seed.state_sha256",
+                             "seed.grids_sha256"])
+#: Default of the Lagrangian ``solver.max_step_halvings``: a step whose Newton solve fails is
+#: retaken in halves, at most this many levels deep (0 makes a failure fatal, as before).
+MAX_STEP_HALVINGS = 3
 ARREST_EVENT = "first_post_startup_turning_point"
 HEIGHT_EVENT = "height_plateau"
 HEIGHT_FIELDS = ("hold", "minimum_window", "window_time_fraction", "slope_window_fraction",
@@ -89,8 +115,9 @@ CASE_FIELDS_USED = [
     "physics.Oh", "physics.elastic_modulus", "physics.relaxation_time",
     "physics.stabilization", "physics.supg_factor", "physics.passive_conformation",
     "physics.sponge", "physics.far_field",
-    "mesh.length", "mesh.r0", "mesh.resolution", "mesh.far_resolution",
+    "mesh.length", "mesh.r0", "mesh.resolution", "mesh.far_resolution", "mesh.face_layer",
     "output.cadence", "output.write_states", "output.field_stride", "output.checkpoint_every",
+    "output.tip_diagnostics",
     "solver.max_step", "solver.max_newton", "solver.interval_start", "solver.initial_guess",
     "solver.temporal_error_fields", "solver.newton_floor_max_dt",
     "solver.relaxation_start_fraction",
@@ -293,6 +320,30 @@ def relaxing_endpoint_problem(case: dict, t_end: float, origin: dict | None = No
     return relaxing_endpoint_message(last, output.get("field_stride", 1))
 
 
+def face_layer_problems(layer: object, resolution: object = None) -> list[str]:
+    """Problems with an opt-in ``mesh.face_layer``: graded layers normal to the hole face.
+
+    ``spacing`` is the first layer height, ``growth`` the geometric ratio (at most 1.2) and
+    ``thickness`` the total layer depth. The first layer must be finer than the tip
+    resolution and thinner than the layer itself.
+    """
+    if not isinstance(layer, dict) or set(layer) != {"spacing", "growth", "thickness"}:
+        return ["mesh.face_layer must be an object with exactly spacing, growth and thickness"]
+    problems: list[str] = []
+    for key in ("spacing", "thickness"):
+        _positive(layer, key, "mesh.face_layer", problems)
+    growth = layer.get("growth")
+    if not _number(growth) or not 1 < growth <= 1.2:
+        problems.append("mesh.face_layer.growth must lie in (1, 1.2]")
+    if problems:
+        return problems
+    if layer["spacing"] >= layer["thickness"]:
+        problems.append("mesh.face_layer.spacing must be smaller than its thickness")
+    if _number(resolution) and resolution > 0 and layer["spacing"] >= resolution:
+        problems.append("mesh.face_layer.spacing must be finer than mesh.resolution")
+    return problems
+
+
 def _far_edge_problems(far_field: dict, problems: list[str]) -> None:
     """The optional far-edge numerics of a membrane far field."""
     if far_field.get("interpolation", "hold") not in ("hold", "linear"):
@@ -472,6 +523,89 @@ def _equilibrium_problems(case: dict) -> list[str]:
     return problems
 
 
+def _lagrangian_problems(case: dict) -> list[str]:
+    """The transient Lagrangian solver's case: a Kelvin--Voigt sheet (``lambda = inf``)."""
+    problems: list[str] = []
+    if case.get("schema") != SCHEMA:
+        problems.append(f"case.schema must be {SCHEMA!r}")
+    if not isinstance(case.get("case_id"), str) or not CASE_ID.fullmatch(case["case_id"]):
+        problems.append("case.case_id must match " + CASE_ID.pattern)
+    if "restart" in case:
+        problems.append("case.restart is not accepted: a continuation uses the same case with "
+                        "--restart-from <checkpoint>")
+    geometry = case.get("geometry")
+    if not isinstance(geometry, dict) or any(geometry.get(k) != v for k, v in LAGRANGIAN_GEOMETRY.items()):
+        problems.append(f"case.geometry must be {LAGRANGIAN_GEOMETRY}")
+    nondim = case.get("nondimensionalization")
+    if not isinstance(nondim, dict) or not nondim:
+        problems.append("case.nondimensionalization must be a non-empty object")
+    for name, keys in LAGRANGIAN_SECTIONS.items():
+        section = _section(case, name, problems)
+        for key, kind in keys:
+            value = section.get(key)
+            if kind == "integer":
+                _integer(section, key, name, 1 if key != "checkpoint_every" else 0, problems)
+            elif kind == "positive":
+                _positive(section, key, name, problems)
+            elif kind == "nonnegative":
+                if not _number(value) or value < 0:
+                    problems.append(f"{name}.{key} must be a finite non-negative number")
+            elif kind == "growth" and (not _number(value) or value <= 1):
+                problems.append(f"{name}.{key} must be a number above 1")
+    physics = case.get("physics") if isinstance(case.get("physics"), dict) else {}
+    if physics.get("problem") != LAGRANGIAN:
+        problems.append(f"physics.problem must be {LAGRANGIAN!r}")
+    if physics.get("relaxation_time") != "inf":
+        problems.append('physics.relaxation_time must be "inf": the Lagrangian solver is the '
+                        "Kelvin--Voigt (infinite relaxation time) sheet")
+    if physics.get("far_edge", "robin") not in ("robin", "clamped"):
+        problems.append("physics.far_edge must be 'robin' or 'clamped'")
+    if _number(physics.get("surface_tension")) and physics["surface_tension"] != 1:
+        problems.append("physics.surface_tension must be 1: lengths, times and V_TC = sqrt(2) "
+                        "are scaled on sigma")
+    mesh = case.get("mesh") if isinstance(case.get("mesh"), dict) else {}
+    if mesh.get("columns", "fan") not in ("vertical", "fan"):
+        problems.append("mesh.columns must be 'vertical' or 'fan'")
+    if "shoulder_angle" in mesh and (not _number(mesh["shoulder_angle"])
+                                     or not 0 < mesh["shoulder_angle"] < 90):
+        problems.append("mesh.shoulder_angle must be a number of degrees between 0 and 90")
+    if "blend" in mesh and (not _number(mesh["blend"]) or mesh["blend"] <= 0):
+        problems.append("mesh.blend must be a positive number")
+    if _number(mesh.get("sweep_spacing")) and _number(mesh.get("max_spacing")) \
+            and mesh["max_spacing"] < mesh["sweep_spacing"]:
+        problems.append("mesh.max_spacing must be at least mesh.sweep_spacing")
+    # The remesh (equilibrium_geometry.design_grids) samples the midplane through
+    # r0 + 4 HALF_THICKNESS = r0 + 2 whatever the length, so a shorter body cannot remesh.
+    if _number(mesh.get("length")) and _number(physics.get("r0")) and mesh["length"] <= physics["r0"] + 2:
+        problems.append("mesh.length must exceed physics.r0 + 2 (the remesh samples the midplane "
+                        "through r0 + 2)")
+    solver = case.get("solver") if isinstance(case.get("solver"), dict) else {}
+    if solver.get("linear_solver", "default") not in ("default", "superlu", "umfpack", "pardiso", "mumps"):
+        problems.append("solver.linear_solver must be default, superlu, umfpack, pardiso or mumps")
+    halvings = solver.get("max_step_halvings", MAX_STEP_HALVINGS)
+    if not isinstance(halvings, int) or isinstance(halvings, bool) or not 0 <= halvings <= 10:
+        problems.append("solver.max_step_halvings must be an integer from 0 to 10")
+    completion = case.get("completion") if isinstance(case.get("completion"), dict) else {}
+    if completion.get("kind") != "time":
+        problems.append("completion.kind must be 'time'")
+    output = case.get("output") if isinstance(case.get("output"), dict) else {}
+    if _number(output.get("cadence")) and _number(solver.get("dt")) and solver["dt"] > 0 \
+            and abs(output["cadence"] / solver["dt"] - round(output["cadence"] / solver["dt"])) > 1e-9:
+        problems.append("output.cadence must be a whole number of solver.dt steps")
+    seed = case.get("seed")
+    if seed is not None:
+        if not isinstance(seed, dict) or set(seed) != {"state", "grids", "state_sha256", "grids_sha256"}:
+            problems.append("seed must have exactly state, grids, state_sha256 and grids_sha256")
+        else:
+            for key in ("state", "grids"):
+                if not isinstance(seed[key], str) or not seed[key].endswith(".npz"):
+                    problems.append(f"seed.{key} must name an .npz file")
+            for key in ("state_sha256", "grids_sha256"):
+                if not isinstance(seed[key], str) or not re.fullmatch(r"[0-9a-f]{64}", seed[key]):
+                    problems.append(f"seed.{key} must be a SHA-256 hex digest")
+    return problems
+
+
 def case_problems(case: object, problem: str | None = None) -> list[str]:
     """Every problem with ``case``; an empty list means the runner accepts it.
 
@@ -485,6 +619,8 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
         return _newtonian_problems(case, wanted)
     if wanted == EQUILIBRIUM:
         return _equilibrium_problems(case)
+    if wanted == LAGRANGIAN:
+        return _lagrangian_problems(case)
     if wanted != VISCOELASTIC:
         return [f"unknown problem {wanted!r}"]
     problems: list[str] = []
@@ -524,10 +660,24 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
     if _number(mesh.get("length")) and _number(mesh.get("resolution")) \
             and mesh["length"] <= mesh["resolution"]:
         problems.append("mesh.length must exceed mesh.resolution")
+    if "face_layer" in mesh:
+        problems.extend(face_layer_problems(mesh["face_layer"], mesh.get("resolution")))
     _positive(output, "cadence", "output", problems)
     if output.get("write_states") is not False:
         problems.append("output.write_states must be false (the driver writes its own checkpoints)")
     _integer(output, "checkpoint_every", "output", 0, problems)
+    if type(output.get("tip_diagnostics", False)) is not bool:
+        problems.append("output.tip_diagnostics must be a boolean")
+    elif output.get("tip_diagnostics", False):
+        # The diagnostics read the hoop conformation, which only an evolving conformation has
+        # (axisymmetric_viscoelastic.evolves_conformation): positive relaxation time and a
+        # positive modulus or passive transport.
+        modulus, relaxation = physics.get("elastic_modulus"), physics.get("relaxation_time")
+        relaxes = relaxation == "inf" or (_number(relaxation) and relaxation > 0)
+        if not (relaxes and ((_number(modulus) and modulus > 0)
+                             or physics.get("passive_conformation", False) is True)):
+            problems.append("output.tip_diagnostics needs the conformation field: relaxation_time > 0 "
+                            "and elastic_modulus > 0 or passive_conformation")
     if "field_stride" in output:
         _integer(output, "field_stride", "output", 1, problems)
     stride, every = output.get("field_stride", 1), output.get("checkpoint_every")
@@ -674,6 +824,10 @@ def driver_arguments(case: dict, out: Path, *, t_end: float | None = None,
         arguments += ["--relaxation-start-fraction", str(solver["relaxation_start_fraction"])]
     if physics.get("passive_conformation", False):
         arguments.append("--passive-conformation")
+    if "face_layer" in mesh:
+        arguments += ["--face-layer", json.dumps(mesh["face_layer"], sort_keys=True)]
+    if output.get("tip_diagnostics", False):
+        arguments.append("--tip-diagnostics")
     sponge = physics.get("sponge")
     if sponge is not None:
         arguments += ["--sponge-start", str(sponge["start"]), "--sponge-width", str(sponge["width"]),

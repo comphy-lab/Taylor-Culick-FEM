@@ -183,6 +183,7 @@ import os
 os.environ.setdefault("HWLOC_COMPONENTS", "-gl")
 os.environ.setdefault("MPLBACKEND", "Agg")
 
+import itertools
 import math
 
 import numpy as np
@@ -246,13 +247,28 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
         self.default_resolution = pr.resolution
 
         cap_r = planar_comoving.HALF_THICKNESS
+        # Opt-in graded layer normal to the hole-facing surface; None keeps the mesh unchanged.
+        layer = getattr(pr, "face_layer", None)
 
         if self.is_remeshing():
             segments = self.get_boundary_coordinates(
                 "liquid/interface", sort_along_axis="x+"
             )
             pts = [self.point(x, y) for x, y in segments[0]]
-            self.spline(pts, name="interface")
+            if layer is None:
+                self.spline(pts, name="interface")
+            else:
+                # The hole-facing part of the free surface, from the tip to the rim top,
+                # carries the face layer. gmsh closes a boundary layer cleanly only against
+                # straight curves (see _face_layer_regions), so the first surface segment
+                # beyond the face end is a line: there the slope is below
+                # FACE_END_SLOPE_DEGREES, and the chord stays within ~2e-4 of the spline.
+                end = face_end_index(segments[0])
+                face = self.spline(pts[: end + 1], name="interface")
+                film = [self.line(pts[end], pts[end + 1], name="interface"),
+                        self.spline(pts[end + 1 :], name="interface")]
+                p_end = pts[end]
+                face_xy = [(float(x), float(y)) for x, y in segments[0][: end + 1]]
             p_tip, p_far_top = pts[0], pts[-1]
             tip_x = float(segments[0][0][0])
             # The live outer radius: X(t) + L, read off the geometry rather
@@ -264,10 +280,13 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
             p_far_top = self.point(
                 pr.R_out, planar_comoving.HALF_THICKNESS, size=pr.far_resolution
             )
-            self.circle_arc(
+            face = self.circle_arc(
                 p_tip, p_shoulder, center=(pr.X0 + cap_r, 0.0), name="interface"
             )
-            self.line(p_shoulder, p_far_top, name="interface")
+            film = [self.line(p_shoulder, p_far_top, name="interface")]
+            p_end = p_shoulder
+            face_xy = [(pr.X0 + cap_r - cap_r * math.cos(a), cap_r * math.sin(a))
+                       for a in np.linspace(0.0, 0.5 * math.pi, 65)]
             tip_x = pr.X0
             far_x = pr.R_out
 
@@ -277,9 +296,124 @@ class ComovingAnnularSheetMesh(AnnularSheetMesh):
         self._mesh_size_callback = self._graded_size
 
         p_far_bot = self.point(far_x, 0.0, size=pr.far_resolution)
-        self.line(p_far_top, p_far_bot, name="far")
-        self.line(p_far_bot, p_tip, name="symmetry")
-        self.plane_surface("interface", "far", "symmetry", name="liquid")
+        far = self.line(p_far_top, p_far_bot, name="far")
+        if layer is None:
+            self.line(p_far_bot, p_tip, name="symmetry")
+            self.plane_surface("interface", "far", "symmetry", name="liquid")
+        else:
+            self._face_layer_regions(layer, face, film, far, p_tip, p_end, face_xy, p_far_bot)
+
+    def _face_layer_regions(self, layer, face, film, far, p_tip, p_end, face_xy, p_far_bot):
+        """Two regions split at the face end, and wall-normal layers grown from the face.
+
+        The layers have first height ``spacing``, geometric ratio ``growth`` and total
+        ``thickness``; their tangential size is the face's 1D mesh. gmsh (4.15) closes a 2D
+        boundary layer cleanly only at an end listed in its ``PointsList`` whose other curves
+        are straight: the end column is then laid along that line and its graded nodes are
+        shared with the mesh beyond it. A layer end without that
+        leaves the unstructured mesher to join a column of first height ``spacing`` to a
+        neighbourhood sized ``resolution``, and it produces flat triangles (interior angles to
+        179.9 degrees at spacing 2.5e-4). Both ends are therefore made straight-line ends:
+
+        - at the tip the face meets the symmetry axis at a right angle, and the end column
+          lies on the axis;
+        - at the face end a straight, unnamed internal line runs down to the axis and splits
+          the window into the rim region and the film region; the end column lies on it.
+
+        The size callback then grades four things (_face_layer_size), each at the layer's own
+        rate ``growth - 1`` per unit distance, never above the tip rule:
+
+        - the film region and its curves, from ``spacing`` at the face end. Otherwise the
+          film side of the internal line joins its graded layer nodes to a neighbourhood sized
+          by the tip rule (flat triangles to 156 degrees on a formed rim at spacing 2.5e-4);
+        - the face, whose tangential spacing is capped at ``sqrt(4 rho spacing)`` with rho the
+          face height (the cap radius 1/2 initially, the rim radius later). The sagitta of a
+          boundary segment of length l on a radius rho is l^2 / (8 rho), so the cap keeps it
+          below half the first layer. Under the tip rule a rim of radius 4 has face segments
+          of ~0.15, whose sagitta exceeds a 2.5e-4 layer and distorts the curved elements
+          (minimum scaled Jacobian 0.07);
+        - the rim region, from that cap at the face, so the layer top meets a matching size;
+        - the face and the rim region near the face end, from the tip ``resolution``: the
+          last layer columns are then as wide as those at the tip, and the rim side of the
+          internal line meets sizes that match its graded nodes (else 148 degrees on a rim
+          of radius 4 at spacing 1e-3).
+
+        (A gmsh Threshold field would not do this: gmsh passes its size to the callback,
+        which ignores it.)
+        """
+        end_xy = face_xy[-1]
+        p_foot = self.point(end_xy[0], 0.0)
+        cut = self.line(p_end, p_foot)
+        axis_rim = self.line(p_foot, p_tip, name="symmetry")
+        axis_film = self.line(p_far_bot, p_foot, name="symmetry")
+        rim_regions = self.plane_surface(face, cut, axis_rim, name="liquid")
+        film_regions = self.plane_surface(*film, far, axis_film, cut, name="liquid")
+        spacing, growth = float(layer["spacing"]), float(layer["growth"])
+        self._face_grading = {
+            "end": end_xy, "spacing": spacing, "rate": growth - 1.0,
+            "resolution": float(self.get_problem().resolution),
+            "face": face_polyline(face_xy, 0.01),
+            "face_cap": math.sqrt(4.0 * max(end_xy[1], planar_comoving.HALF_THICKNESS) * spacing),
+            "film": {(1, c._id) for c in (*film, cut)} | {(2, s._id) for s in film_regions},
+            "rim": {(1, face._id)} | {(2, s._id) for s in rim_regions},
+        }
+        self._mesh_size_callback = self._face_layer_size
+        field = self.add_mesh_size_field(
+            "BoundaryLayer", CurvesList=[face], PointsList=[p_tip, p_end],
+            Size=float(layer["spacing"]), Ratio=float(layer["growth"]),
+            Thickness=float(layer["thickness"]), Quads=0,
+        )
+        self.set_mesh_size_boundary_layer_field(field)
+
+    def _face_layer_size(self, dim, tag, x, y, z, *_ignored_lc):
+        """The tip rule, graded down towards the face (see _face_layer_regions)."""
+        size = self._graded_size(dim, tag, x, y, z)
+        g = self._face_grading
+        end_x, end_y = g["end"]
+        to_end = math.hypot(x - end_x, y - end_y)
+        if (dim, tag) in g["film"]:
+            size = min(size, g["spacing"] + g["rate"] * to_end)
+        elif (dim, tag) in g["rim"]:
+            face = g["face"]
+            to_face = float(np.min(np.hypot(face[:, 0] - x, face[:, 1] - y)))
+            size = min(size, g["face_cap"] + g["rate"] * to_face,
+                       g["resolution"] + g["rate"] * to_end)
+        return size
+
+
+def face_polyline(points, max_gap: float) -> np.ndarray:
+    """The polyline through ``points``, with segments longer than ``max_gap`` subdivided."""
+    pts = np.asarray(points, dtype=float)
+    out = [pts[:1]]
+    for a, b in itertools.pairwise(pts):
+        n = max(1, math.ceil(float(np.hypot(*(b - a))) / max_gap))
+        out.append(a + (b - a) * (np.arange(1, n + 1)[:, None] / n))
+    return np.concatenate(out)
+
+
+# Largest chord slope, in degrees from horizontal, at which the hole-facing surface ends.
+FACE_END_SLOPE_DEGREES = 1.0
+
+
+def face_end_index(points, max_slope_degrees: float = FACE_END_SLOPE_DEGREES) -> int:
+    """Index where the hole-facing surface ends, on a free surface ordered from the tip.
+
+    From the tip on the midplane the face rises until the surface turns horizontal. Its end is
+    the first point whose outgoing chord is within ``max_slope_degrees`` of horizontal, or
+    descends: the rim top once a rim has formed, and the end of the cap before. A height rule
+    ("the highest point") is ill-posed before a rim forms: the flat film then carries bumps of
+    order 1e-6 whose maximum can lie anywhere along it. The index is kept between 2 and
+    ``len(points) - 3``, so the face has two segments and the film beyond its straight first
+    segment keeps a spline of at least two points.
+    """
+    pts = np.asarray([(float(p[0]), float(p[1])) for p in points])
+    if len(pts) < 5:
+        raise ValueError("the free surface needs at least five points to split")
+    chords = np.diff(pts, axis=0)
+    slopes = np.degrees(np.arctan2(chords[:, 1], chords[:, 0]))
+    flat = np.flatnonzero(slopes[2:] < max_slope_degrees)
+    index = int(flat[0]) + 2 if flat.size else len(pts) - 3
+    return min(index, len(pts) - 3)
 
 
 class AxisymmetricComovingProblem(Problem):
@@ -299,6 +433,9 @@ class AxisymmetricComovingProblem(Problem):
         self.resolution = 0.06  # near-tip element size, ~8 across HALF_THICKNESS
         self.far_resolution = 0.25  # far-film element size, ~2 across HALF_THICKNESS
         self.mesh_grading_length = 6.0  # inherited grading rule; see AnnularSheetMesh
+        # Opt-in graded mesh layer normal to the hole-facing surface: a mapping with
+        # ``spacing`` (first layer), ``growth`` (ratio) and ``thickness``. None: no layer.
+        self.face_layer: dict | None = None
         self.newton_tolerance_at_unit_radius = 1e-8
         self.newton_tolerance_safety = 10.0
         # Largest dt used in the round-off floor below. The eps*R^2/dt law was tuned at

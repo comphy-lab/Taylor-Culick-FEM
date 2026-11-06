@@ -31,7 +31,7 @@ import math
 
 import numpy as np
 from pyoomph import DirichletBC, IntegralObservables, TemporalErrorEstimator, WeakContribution
-from pyoomph.expressions import dot, piecewise_geq0, var, var_and_test
+from pyoomph.expressions import dot, exp, piecewise_geq0, var, var_and_test
 
 from taylor_culick_fem.absorbing_layer import (
     RayleighSpongeParameters,
@@ -87,6 +87,9 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         # ``X`` and ``U`` are the global rim position and speed; the rest live on the
         # liquid.
         self.temporal_error_factors: dict[str, float] = {}
+        # Opt-in near-tip diagnostics: band widths d of the hoop-force integrals
+        # Ec int (C_thth - 1) dA over r - X <= d (meridional area, no 2 pi r). None: absent.
+        self.tip_hoop_bands: tuple[float, ...] | None = None
 
     def define_problem(self):
         if not math.isfinite(self.solvent_oh) or self.solvent_oh < 0:
@@ -198,6 +201,24 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             eqs += DirichletBC(log_conformation_xy=0) @ "symmetry"
             self += eqs @ "liquid"
 
+        if self.tip_hoop_bands:
+            # Only an evolving conformation carries the hoop component: positive relaxation
+            # time and a positive modulus or passive transport.
+            if not (self.relaxation_time > 0
+                    and (self.elastic_modulus > 0 or self.passive_conformation)):
+                raise ValueError("tip diagnostics need the conformation field: relaxation_time > 0 "
+                                 "and elastic_modulus > 0 or passive_conformation")
+            # Observables only: they add no residual, so the solution is unchanged.
+            radius = var("coordinate_x")
+            tip = var("X", domain="globals")
+            hoop = self.elastic_modulus * (exp(var("log_conformation_aa")) - 1)
+            observables = {}
+            for k, width in enumerate(self.tip_hoop_bands):
+                inside = piecewise_geq0(float(width) - (radius - tip), 1, 0)
+                observables[f"tip_hoop_{k}"] = inside * hoop / (2 * math.pi * radius)
+                observables[f"tip_area_{k}"] = inside / (2 * math.pi * radius)
+            self += IntegralObservables(**observables) @ "liquid"
+
         factors = dict(self.temporal_error_factors)
         if not all(math.isfinite(v) and v > 0 for v in factors.values()):
             raise ValueError("temporal error factors must be finite and positive")
@@ -250,6 +271,28 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             interval[0], interval[1],
             {name: (a, b) for name, a, b in zip(names, start_values, end_values, strict=True)},
         )
+
+    def tip_diagnostics(self) -> dict[str, object]:
+        """Near-tip hoop force per band and the effective tip reference radius.
+
+        With ``lambda = inf``, ``C_thth = (r / R0)^2`` exactly, so the material at the tip
+        keeps ``R0 = 1`` and ``R / sqrt(max C_thth)`` measures how well the discretisation
+        carries the original edge material. ``max C_thth`` is the largest nodal value.
+        """
+        if not self.tip_hoop_bands:
+            return {}
+        mesh = self.get_mesh("liquid")
+        index = mesh.get_nodal_field_indices()["log_conformation_aa"]
+        largest = max(node.value(index) for node in mesh.nodes())
+        radius = self.window_position()
+        bands = [
+            {"d": float(width),
+             "hoop": float(mesh.evaluate_observable(f"tip_hoop_{k}")),
+             "area": float(mesh.evaluate_observable(f"tip_area_{k}"))}
+            for k, width in enumerate(self.tip_hoop_bands)
+        ]
+        return {"R": radius, "tip_R0_effective": radius / math.exp(0.5 * largest),
+                "hoop_bands": bands}
 
     def sponge_diagnostics(self) -> dict[str, float]:
         """Return instantaneous damping power and undamped-core velocity RMS."""
