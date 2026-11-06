@@ -122,6 +122,38 @@ def _lagrange(x):
             np.array([x - 0.5, -2 * x, x + 0.5]))
 
 
+def mesh_mismatch(built: np.ndarray, built_ij: np.ndarray, seed: np.ndarray,
+                  seed_ij: np.ndarray) -> str | None:
+    """Why two sets of 9-node elements are not the same mesh, or None.
+
+    ``built`` and ``seed`` are ``(elements, 9, 2)`` reference coordinates and ``*_ij`` the
+    parametric index ``(i, j)`` of each node. Each element's nodes are put in parametric
+    order first, so a node at another parametric position (another element mapping) is a
+    mismatch; element order may differ. Nodes must agree to 1e-10 relative, which round-off
+    between two builds of the same grids meets.
+    """
+    built, seed = np.asarray(built, float), np.asarray(seed, float)
+    if built.shape != seed.shape:
+        return f"{len(built)} built elements against {len(seed)} in the seed"
+
+    def canonical(elements: np.ndarray, ij: np.ndarray) -> np.ndarray:
+        ij = np.reshape(np.asarray(ij, int), (len(elements), 9, 2))
+        position = ij[..., 0] + 3 * ij[..., 1]
+        if not all(sorted(row) == list(range(9)) for row in position.tolist()):
+            raise ValueError("each element needs the nine parametric positions (i, j) in {0, 1, 2}^2")
+        ordered = np.take_along_axis(elements, np.argsort(position, axis=1)[..., None], axis=1)
+        keys = np.round(ordered.reshape(len(ordered), -1), 9)
+        return ordered[np.lexsort(keys.T[::-1])]
+
+    a, b = canonical(built, built_ij), canonical(seed, seed_ij)
+    gap = np.abs(a - b) / np.maximum(1.0, np.abs(a))
+    if gap.max() > 1e-10:
+        worst = np.unravel_index(int(np.argmax(gap)), gap.shape)
+        return (f"node {tuple(float(v) for v in a[worst[0], worst[1]])} of a built element is "
+                f"{float(np.abs(a - b)[worst]):.3g} from the seed's")
+    return None
+
+
 class FieldMap:
     """Q2 element data of a solved state: reference nodes, displacement, local node indices."""
 

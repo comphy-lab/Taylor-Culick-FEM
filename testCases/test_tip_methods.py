@@ -401,6 +401,25 @@ class LagrangianCaseTests(unittest.TestCase):
                 self.assertEqual(len(problems), 1, problems)
                 self.assertIn("another mesh", problems[0])
 
+    def test_mesh_mismatch_ignores_element_order_only(self) -> None:
+        from taylor_culick_fem.equilibrium_geometry import mesh_mismatch
+
+        grids = reference_grids(1.0, 300.0, 2, 1.2, None, 30.0, quadratic=True)
+        fmap = _field_map(grids, lambda X: np.zeros(2))
+        Xe, ij = fmap.Xe, fmap.ij
+        self.assertIsNone(mesh_mismatch(Xe, ij, Xe[::-1], ij[::-1]))
+        # The same nodes listed in another order with their own (i, j) are the same element.
+        order = [8, 7, 6, 5, 4, 3, 2, 1, 0]
+        self.assertIsNone(mesh_mismatch(Xe, ij, Xe[:, order], ij[:, order]))
+        moved = Xe.copy()
+        moved[3, 4, 0] += 0.01
+        self.assertIn("from the seed's", mesh_mismatch(moved, ij, Xe, ij))
+        self.assertIn("built elements", mesh_mismatch(Xe[1:], ij[1:], Xe, ij))
+        # Two nodes swapped but (i, j) kept: another element mapping, not the same mesh.
+        swapped = Xe.copy()
+        swapped[3, [1, 4]] = swapped[3, [4, 1]]
+        self.assertIn("from the seed's", mesh_mismatch(swapped, ij, Xe, ij))
+
     def test_a_seed_with_merged_block_nodes_is_accepted(self) -> None:
         """ReferenceSheetMesh merges shared block nodes on coordinates rounded to 11 decimals,
         keeping the first; at 8 elements per quarter two block corners differ by round-off."""
@@ -808,6 +827,17 @@ class LagrangianSolverTests(unittest.TestCase):
             self.assertLess(abs(run.tip()["R"] / radius - 1), 1e-8)
             self.assertLess(abs(run.tip()["U"]), 1e-7)
             run.release()
+            # A centre node of an element on the curved cap, moved: the pre-launch seed check
+            # cannot reproduce the curved nodes, so the built mesh is compared node for node.
+            centre, half = 1.5, 0.5
+            on_arc = np.abs(np.hypot(fmap.Xe[..., 0] - centre, fmap.Xe[..., 1]) - half) < 1e-9
+            cap = int(np.nonzero(on_arc.sum(axis=1) >= 3)[0][0])
+            moved = FieldMap(fmap.Xe.copy(), fmap.ue, fmap.ij)
+            moved.Xe[cap, 4, 0] += 0.01
+            other = LagrangianRun(self.settings(elastic_modulus=2.0, length=2000.0), Path(tmp) / "moved")
+            with self.assertRaisesRegex(ValueError, "not on the mesh its grids build"):
+                other.start_static_seed(grids, moved)
+            other.release()
 
     def test_a_failed_step_is_undone_exactly(self) -> None:
         from taylor_culick_fem.lagrangian_dynamic import LagrangianRun

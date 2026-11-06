@@ -66,6 +66,7 @@ from taylor_culick_fem.equilibrium_geometry import (
     HALF_THICKNESS,
     FieldMap,
     design_grids,
+    mesh_mismatch,
     radial_nodes,
     reference_grids,
 )
@@ -582,9 +583,18 @@ class LagrangianRun:
 
     def start_from(self, grids: dict, state: StateMap, time: float, dts: list[float],
                    steps_done: int = 2, mesh_radius: float | None = None,
-                   sweep_end_radius: float | None = None) -> dict:
-        """Build on ``grids`` and install ``state`` (exact when the grids are the state's own)."""
+                   sweep_end_radius: float | None = None, exact: bool = False) -> dict:
+        """Build on ``grids`` and install ``state`` (exact when the grids are the state's own).
+
+        With ``exact``, the built mesh must be the state's own node for node (curved cap
+        included), or nothing is installed: an exact transfer, never an interpolation.
+        """
         self.problem = self.build(grids)
+        if exact:
+            built = StateMap.from_problem(self.problem, time_levels=1)
+            mismatch = mesh_mismatch(built.Xe, built.ij, state.Xe, state.ij)
+            if mismatch:
+                raise ValueError(f"the seed state is not on the mesh its grids build: {mismatch}")
         info = install_state(self.problem, state, time, dts, steps_done)
         radius = self.tip()["R"]
         self.mesh_radius = radius if mesh_radius is None else mesh_radius
@@ -798,7 +808,7 @@ class LagrangianRun:
         levels = np.stack([np.stack([u, np.zeros_like(u)])] * 3)
         state = StateMap(static.Xe, static.ij, levels)
         dt = self.settings.dt
-        return self.start_from(grids, state, 0.0, [dt, dt], steps_done=2)
+        return self.start_from(grids, state, 0.0, [dt, dt], steps_done=2, exact=True)
 
 
 HOOP_BANDS = (1e-3, 3e-3, 0.015, 0.06, 0.5)
