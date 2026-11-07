@@ -620,6 +620,39 @@ class LagrangianGeometryTests(unittest.TestCase):
             self.assertLessEqual(run.time() - 0.05 * k, 1e-12, k)
             self.assertAlmostEqual(run.time(), 0.05 * k, delta=1e-12)
 
+    def test_accumulated_round_off_never_becomes_a_sliver_step(self) -> None:
+        """A long run's clock drifts below the cadence grid; pyoomph's ``run`` drops a remainder
+        only below 1e-8 of the step, so a drift just over that became a 1e-10 step, which BDF2
+        cannot take after 0.01 steps (G3 route B, t = 238.05). This clock loses 1e-10 of every
+        step (1e-12 per 0.01 step, where the real one lost ~4e-15), so the drift crosses that
+        threshold within 25 intervals."""
+        from taylor_culick_fem.lagrangian_dynamic import LagrangianRun, LagrangianSettings
+
+        class DriftingClock:
+            def __init__(self):
+                self.t, self.steps = 0.0, []
+
+            def get_current_time(self, as_float=True):
+                return self.t
+
+            def run(self, endtime, startstep, maxstep, outstep):
+                dt = min(startstep, maxstep)
+                while self.t < endtime:
+                    self.steps.append(dt)
+                    self.t += dt * (1 - 1e-10)
+                    remaining = endtime - self.t
+                    if remaining < 1e-8 * dt:
+                        break
+                    if remaining < dt:
+                        dt = 1.00001 * remaining
+
+        run = LagrangianRun(LagrangianSettings(oh=1.0, elastic_modulus=1.0, dt=0.01), "/tmp/unused")
+        run.problem = DriftingClock()
+        for k in range(1, 61):
+            run.advance(0.05 * k)
+        self.assertGreater(min(run.problem.steps), 0.5 * 0.01, "a sliver step was taken")
+        self.assertAlmostEqual(run.time(), 3.0, delta=1e-9)
+
     class FlakyClock:
         """pyoomph's ``run`` at a fixed step whose listed steps fail.
 
