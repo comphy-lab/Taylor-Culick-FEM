@@ -56,8 +56,19 @@ def test_invalid_or_occupied_run_is_refused(tmp_path, case):
     assert (out / "existing").read_text() == "untouched"
 
 
-@pytest.mark.parametrize("status,time,expected", [("passed", 200, 0), ("passed", 199, 1), ("failed", 200, 1), ("raised", 0, None)])
-def test_manifest_precedes_output_and_only_endpoint_passes(tmp_path, case, monkeypatch, status, time, expected):
+def test_endpoint_landing_uses_the_effective_step_bound(case):
+    case["completion"]["value"] = 1
+    assert runner.endpoint_reached(1.000000095, case)
+    assert not runner.endpoint_reached(1.00000012, case)
+    assert not runner.endpoint_reached(0.99999999, case)
+    case["solver"]["max_step"] = 0.05
+    assert runner.endpoint_reached(1.0000004, case)
+    assert not runner.endpoint_reached(1.0000006, case)
+
+
+@pytest.mark.parametrize("status,target,time,expected", [("passed", 200, 200, 0), ("passed", 200, 199, 1), ("failed", 200, 200, 1), ("raised", 200, 0, None), ("passed", 1, 1.000000095, 0), ("passed", 1, 0.99999, 1)])
+def test_manifest_precedes_output_and_only_endpoint_passes(tmp_path, case, monkeypatch, status, target, time, expected):
+    case["completion"]["value"] = target
     case_path = tmp_path / "case.json"
     case_path.write_text(json.dumps(case))
     out = tmp_path / "out"

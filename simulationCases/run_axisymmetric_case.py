@@ -48,6 +48,18 @@ def sha256(path: Path) -> str:
         return hashlib.sha256(stream.read()).hexdigest()
 
 
+def endpoint_reached(reached: object, case: dict) -> bool:
+    """Check pyoomph's bounded final-step landing against the requested horizon."""
+    if isinstance(reached, bool) or not isinstance(reached, (int, float)) or not math.isfinite(reached):
+        return False
+    target = case["completion"]["value"]
+    step = min(case["solver"]["max_step"], case["output"]["cadence"])
+    # Problem.run clamps its final step to 1.00001 times the remaining
+    # interval and skips an undershoot smaller than 1e-8 of the current step.
+    rounding = 8 * max(math.ulp(target), math.ulp(reached))
+    return target - 1e-8 * step - rounding <= reached <= target + 1.1e-5 * step + rounding
+
+
 def append_progress(out: Path, event: str, **values) -> None:
     path = out / "progress.jsonl"
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
@@ -138,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         raise
     reached = summary.get("t_reached")
     passed = (summary.get("status") == "passed" and summary.get("completion_reason") == "fixed_horizon"
-              and isinstance(reached, (int, float)) and math.isclose(reached, case["completion"]["value"], rel_tol=1e-9, abs_tol=1e-8))
+              and endpoint_reached(reached, case))
     append_progress(args.out, "completed" if passed else "failed", status=summary.get("status"), physical_time=reached)
     print(json.dumps(summary, indent=2, sort_keys=True, allow_nan=False))
     return 0 if passed else 1
