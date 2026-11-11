@@ -504,6 +504,9 @@ class LagrangianSettings:
     columns: str = "fan"
     shoulder_angle: float = 10.0
     blend: float = 4.0
+    # Remesh surface sampling: the chord sag allowed between surface samples, in h0. The column
+    # nodes nearest the surface lie 1 / (4 elements_per_quarter) of the local height below it.
+    surface_sag_tolerance: float = 5e-4
     remesh_log_radius_growth: float = 0.1
     remesh_front_margin: float = 5.0
     dt: float = 0.01
@@ -749,6 +752,7 @@ class LagrangianRun:
         grids = design_grids(old, s.elements_per_quarter, s.length, growth=s.growth,
                              max_spacing=s.max_spacing, r0=s.r0, columns=s.columns,
                              shoulder_angle=s.shoulder_angle, blend=s.blend,
+                             surface_sag_tolerance=s.surface_sag_tolerance,
                              column_radii=lambda start, first, far: sweep_radii(
                                  start, first, far, sweep_end=sweep_end,
                                  sweep_spacing=s.sweep_spacing, growth=s.growth,

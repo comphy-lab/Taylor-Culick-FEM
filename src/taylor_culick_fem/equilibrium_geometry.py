@@ -277,15 +277,71 @@ def reference_surface(s0, r0=1.0):
     return out
 
 
-def deformed_surface(fmap: FieldMap, length: float, r0=1.0, n_arc=400, n_line=1500):
-    """Dense samples (s0, y_r, y_z, deformed arclength) of the deformed free surface."""
+def deformed_surface(fmap: FieldMap, length: float, r0=1.0, n_arc=400, n_line=1500,
+                     sag_tolerance: float | None = None, max_bisections: int = 16):
+    """Dense samples (s0, y_r, y_z, deformed arclength) of the deformed free surface.
+
+    The straight part is sampled geometrically in reference arclength, so its spacing grows in
+    proportion to the distance from the tip. Linear interpolation of the samples places the
+    designed surface and the column nodes just below it, and where the surface bends between two
+    far-apart samples (the foot of a large rim) the chord leaves the solid. With
+    ``sag_tolerance`` the vertices of the solid's free-surface edges on the straight part are
+    added to the samples, so that no interval spans more than one element edge, and every
+    interval whose chord lies farther than that from the surface at a quarter, the half or three
+    quarters of its reference length is bisected, again and again, until none does. A deviation
+    confined to one quadratic edge cannot hide between those three points as it can across
+    several edges. More than ``max_bisections`` levels raise a ``RuntimeError``. ``None`` keeps
+    the plain sampling.
+    """
     arc_len = 0.5 * math.pi * HALF_THICKNESS
     s_line_end = arc_len + (length - (r0 + HALF_THICKNESS))
     s_arc = np.linspace(0.0, arc_len, n_arc)
     s_line = arc_len + (s_line_end - arc_len) * (np.geomspace(1e-6, 1.0, n_line) - 1e-6) / (1 - 1e-6)
     s0 = np.unique(np.concatenate([s_arc, s_line]))
-    X = reference_surface(s0, r0)
-    y = np.array([x + fmap.forward(x) for x in X])
+
+    def image(s):
+        return np.array([x + fmap.forward(x) for x in reference_surface(s, r0)])
+
+    if sag_tolerance is not None:
+        if not sag_tolerance > 0:
+            raise ValueError("sag_tolerance must be positive")
+        corner = np.isin(fmap.ij[..., 0], (0, 2)) & np.isin(fmap.ij[..., 1], (0, 2))
+        nodes = fmap.Xe[corner]
+        on_top = (np.abs(nodes[:, 1] - HALF_THICKNESS) < 1e-9) & (nodes[:, 0] > r0 + HALF_THICKNESS)
+        s_edges = np.unique(arc_len + (nodes[on_top, 0] - (r0 + HALF_THICKNESS)))
+        s_edges = s_edges[s_edges < s_line_end]
+        if len(s_edges):
+            # A plain sample that coincides with an edge vertex up to round-off would leave a
+            # zero-length interval, and the deformed radii must increase strictly: keep the vertex.
+            position = np.searchsorted(s_edges, s0)
+            left = s_edges[np.clip(position - 1, 0, len(s_edges) - 1)]
+            right = s_edges[np.clip(position, 0, len(s_edges) - 1)]
+            gap = np.minimum(np.abs(s0 - left), np.abs(s0 - right))
+            s0 = np.unique(np.concatenate([s0[gap > 1e-9 * (1.0 + np.abs(s0))], s_edges]))
+    y = image(s0)
+    if sag_tolerance is not None:
+        check = np.ones(len(s0) - 1, dtype=bool)
+        for level in range(max_bisections + 1):
+            index = np.flatnonzero(check)
+            sag = np.zeros(len(index))
+            for fraction in (0.25, 0.75, 0.5):  # the midpoint last: it is kept as the new sample
+                points = s0[index] + fraction * (s0[index + 1] - s0[index])
+                y_mid = image(points)
+                chord = y[index] + fraction * (y[index + 1] - y[index])
+                sag = np.maximum(sag, np.hypot(*(y_mid - chord).T))
+            mid = points
+            bad = sag > sag_tolerance
+            if not bad.any():
+                break
+            if level == max_bisections:
+                raise RuntimeError(f"deformed free surface not within sag {sag_tolerance} after "
+                                   f"{max_bisections} bisections (worst {sag.max():.3g})")
+            s0 = np.concatenate([s0, mid[bad]])
+            y = np.concatenate([y, y_mid[bad]])
+            new = np.concatenate([np.zeros(len(s0) - bad.sum(), dtype=bool), np.ones(bad.sum(), dtype=bool)])
+            order = np.argsort(s0, kind="stable")
+            s0, y, new = s0[order], y[order], new[order]
+            check = new[:-1] | new[1:]
     ell = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(y, axis=0).T))])
     return s0, y, ell
 
@@ -294,7 +350,8 @@ def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
                  max_spacing: float = 300.0, core_fraction: float = 0.5, r0: float = 1.0,
                  first_aspect: float = 1.0, columns: str = "vertical",
                  shoulder_angle: float = 10.0, blend: float = 4.0,
-                 column_radii=None) -> dict[str, np.ndarray]:
+                 column_radii=None,
+                 surface_sag_tolerance: float | None = None) -> dict[str, np.ndarray]:
     """Nine-node reference grids whose deformed images are a well-shaped mesh of the current
     state: every node, mid-side and centre nodes included, is pulled back from its designed
     deformed position, so the deformed elements are the designed ones.
@@ -314,12 +371,15 @@ def design_grids(fmap: FieldMap, n: int, length: float, growth: float = 1.08,
     ``column_radii(start, first, far_r)`` with the deformed radius of the cap end, the first
     spacing and the deformed far radius, and returns the increasing deformed midplane radii of
     the column vertices from ``start`` to ``far_r``.
+
+    ``surface_sag_tolerance`` is passed to :func:`deformed_surface` as ``sag_tolerance``;
+    ``None`` keeps its plain sampling.
     """
     if columns not in ("vertical", "fan"):
         raise ValueError("columns must be 'vertical' or 'fan'")
     f = core_fraction
     m = 2 * n
-    s0, ysurf, ell = deformed_surface(fmap, length, r0)
+    s0, ysurf, ell = deformed_surface(fmap, length, r0, sag_tolerance=surface_sag_tolerance)
     arc_len = 0.5 * math.pi * HALF_THICKNESS
 
     def surf_at_ell(target):

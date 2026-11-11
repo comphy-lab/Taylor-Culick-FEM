@@ -778,6 +778,110 @@ class LagrangianGeometryTests(unittest.TestCase):
         for name in default:
             np.testing.assert_array_equal(default[name], explicit[name])
 
+    @staticmethod
+    def _bumped_surface_map():
+        """A sheet whose free surface carries a narrow bump far from the tip, narrower than the
+        geometric surface sampling there (about 1.4 reference units at X = 150)."""
+        grids = reference_grids(1.0, 300.0, 2, 1.2, None, 1.0, quadratic=True)
+        return _field_map(grids, lambda X: np.array(
+            [0.0, X[1] * 0.8 * math.exp(-((X[0] - 150.0) / 1.5) ** 2)]))
+
+    @staticmethod
+    def _hidden_bump_map(length=160.0):
+        """A bump spanning one plain sampling interval [a, b] near X = 151: a tent through its
+        ends, quarters and middle plus a sine that vanishes at all five, so a test of the chord
+        at interval midpoints alone accepts chords that cut through the bump's flanks."""
+        from taylor_culick_fem.equilibrium_geometry import deformed_surface
+
+        flat = _field_map(reference_grids(1.0, length, 2, 1.2, None, 5.0, quadratic=True),
+                          lambda X: np.zeros(2))
+        X = deformed_surface(flat, length)[0] - 0.25 * math.pi + 1.5
+        k = int(np.searchsorted(X, 151.0))
+        a, b = X[k - 1], X[k]
+
+        def bump(x):
+            t = (x - a) / (b - a)
+            return 0.5 * (1 - abs(2 * t - 1)) + 0.15 * math.sin(4 * math.pi * t) if 0 < t < 1 else 0.0
+
+        grids = reference_grids(1.0, length, 4, 1.2, None, (b - a) / 16, quadratic=True)
+        return _field_map(grids, lambda P: np.array([0.0, P[1] / 0.5 * bump(P[0])]))
+
+    @staticmethod
+    def _chord_deviation(fmap, s0, y, window=(0.0, np.inf), points=16):
+        """Largest distance between each sample chord and the surface, at ``points`` interior
+        points of every interval that overlaps ``window`` in reference arclength."""
+        from taylor_culick_fem.equilibrium_geometry import reference_surface
+
+        worst = 0.0
+        t = np.linspace(0.0, 1.0, points + 2)[1:-1]
+        for i in np.flatnonzero((s0[1:] > window[0]) & (s0[:-1] < window[1])):
+            s = s0[i] + t * (s0[i + 1] - s0[i])
+            exact = np.array([x + fmap.forward(x) for x in reference_surface(s, 1.0)])
+            chord = y[i] + t[:, None] * (y[i + 1] - y[i])
+            worst = max(worst, float(np.hypot(*(exact - chord).T).max()))
+        return worst
+
+    def test_surface_refinement_bounds_the_chord_sag(self) -> None:
+        from taylor_culick_fem.equilibrium_geometry import deformed_surface
+
+        fmap = self._bumped_surface_map()
+        window = (140.0, 160.0)
+        s_plain, y_plain, _ = deformed_surface(fmap, 300.0)
+        s_fine, y_fine, ell = deformed_surface(fmap, 300.0, sag_tolerance=1e-3)
+        self.assertGreater(self._chord_deviation(fmap, s_plain, y_plain, window), 1e-2)
+        self.assertLessEqual(self._chord_deviation(fmap, s_fine, y_fine, window), 1e-3)
+        self.assertTrue(np.all(np.diff(s_fine) > 0))
+        self.assertTrue(set(s_plain) <= set(s_fine))
+        np.testing.assert_allclose(ell[-1], np.hypot(*np.diff(y_fine, axis=0).T).sum())
+
+    def test_a_bump_hidden_from_interval_midpoints_is_refined_and_meshed(self) -> None:
+        from taylor_culick_fem.equilibrium_geometry import deformed_surface
+        from taylor_culick_fem.lagrangian_dynamic import sweep_radii
+
+        fmap, length, tolerance = self._hidden_bump_map(), 160.0, 5e-4
+        s0, y, _ = deformed_surface(fmap, length, sag_tolerance=tolerance)
+        self.assertLessEqual(self._chord_deviation(fmap, s0, y, (145.0, 156.0)), tolerance)
+        grids = design_grids(fmap, 4, length, growth=1.2, max_spacing=5.0, columns="fan",
+                             surface_sag_tolerance=tolerance,
+                             column_radii=lambda start, first, far: sweep_radii(
+                                 start, first, far, sweep_end=0.99 * far, sweep_spacing=0.25,
+                                 growth=1.2, max_spacing=5.0))
+        self.assertTrue(all(np.all(np.isfinite(grid)) for grid in grids.values()))
+
+    def test_an_edge_vertex_on_a_plain_sample_leaves_no_zero_interval(self) -> None:
+        from taylor_culick_fem.equilibrium_geometry import deformed_surface
+        from taylor_culick_fem.lagrangian_dynamic import sweep_radii
+
+        # This first sheet spacing puts an edge vertex within round-off of a plain sample
+        # (reference arclengths 0.8357323639292691 and ...692, the same deformed point).
+        grids = reference_grids(1.0, 300.0, 2, 1.2, 0.050334200531820805, 5.0, quadratic=True)
+        fmap = _field_map(grids, lambda X: np.array([0.0, 0.0]))
+        s0, y, _ = deformed_surface(fmap, 300.0, sag_tolerance=5e-4)
+        beyond = s0 >= 0.25 * math.pi
+        self.assertTrue(np.all(np.diff(y[beyond, 0]) > 0))
+        design_grids(fmap, 2, 300.0, growth=1.2, max_spacing=5.0, columns="fan",
+                     surface_sag_tolerance=5e-4,
+                     column_radii=lambda start, first, far: sweep_radii(
+                         start, first, far, sweep_end=40.0, sweep_spacing=0.25, growth=1.2,
+                         max_spacing=5.0))
+
+    def test_surface_sampling_without_a_tolerance_is_unchanged(self) -> None:
+        from taylor_culick_fem.equilibrium_geometry import deformed_surface
+
+        fmap = self._bumped_surface_map()
+        for default, explicit in zip(deformed_surface(fmap, 300.0),
+                                     deformed_surface(fmap, 300.0, sag_tolerance=None), strict=True):
+            np.testing.assert_array_equal(default, explicit)
+        with self.assertRaises(ValueError):
+            deformed_surface(fmap, 300.0, sag_tolerance=0.0)
+        with self.assertRaisesRegex(RuntimeError, "bisections"):
+            deformed_surface(fmap, 300.0, sag_tolerance=1e-6, max_bisections=1)
+
+    def test_lagrangian_remesh_refines_the_surface_by_default(self) -> None:
+        from taylor_culick_fem.lagrangian_dynamic import LagrangianSettings
+
+        self.assertEqual(LagrangianSettings(oh=1.0, elastic_modulus=0.1).surface_sag_tolerance, 5e-4)
+
     def test_state_map_interpolates_every_level(self) -> None:
         from taylor_culick_fem.lagrangian_dynamic import StateMap
 
