@@ -366,7 +366,9 @@ def _read_restart(args: argparse.Namespace) -> dict | None:
     case = json.loads(
         serialized_case if serialized_case is not None else args.restart_case.read_bytes()
     )
-    restart = case.get("restart")
+    # The generic runner keeps the same case bytes across bounded segments;
+    # its separately verified checkpoint lineage is carried in memory.
+    restart = getattr(args, "restart_evidence", case.get("restart"))
     legacy_required = {
         "checkpoint", "input_case", "metadata", "control", "pvd", "time", "output_index"
     }
@@ -1257,7 +1259,9 @@ def run_case(args: argparse.Namespace) -> dict:
                     minimum_relative_edge_inflow = float(np.min(restart["far_rows"][:, 12]))
                 control_offset = restart["control_index"]
                 field_index = restart["field_index"]
-                previous_target = restart["time"]
+                # Match the uninterrupted run's scheduled output grid; the
+                # saved solver time can overshoot that grid by a small amount.
+                previous_target = args.output_step * restart["control_index"]
                 out_times = out_times[out_times > restart["time"] + 1e-6]
                 worst_volume_error = float(np.max(restart["rows"][:, 6]))
                 worst_tip_pin = float(np.max(restart["rows"][:, 7]))

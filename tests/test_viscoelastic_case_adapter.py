@@ -461,6 +461,27 @@ def test_restart_selector_maps_to_driver_and_validates_prefix(tmp_path, restart_
     np.testing.assert_allclose(restart["rows"][:, 0], [0.05, 0.1])
 
 
+def test_external_restart_evidence_keeps_the_case_bytes_unchanged(tmp_path, restart_case):
+    from run_viscoelastic_axi import _read_restart
+
+    case = copy.deepcopy(restart_case)
+    evidence = case.pop("restart")
+    parent = Path(evidence["metadata"]["path"]).parent
+    parent_input = parent / "input-case.json"
+    case_bytes = json.dumps(case).encode()
+    parent_input.write_bytes(case_bytes)
+    evidence["input_case"] = _reference(parent_input)
+    case_path = tmp_path / "stable-case.json"
+    case_path.write_bytes(case_bytes)
+    args = adapter.case_to_driver_args(case_path, tmp_path / "next")
+    args.restart_case = case_path
+    args.restart_evidence = evidence
+    restart = _read_restart(args)
+    assert args.serialized_case == case_bytes
+    assert restart["paths"]["checkpoint"] == Path(evidence["checkpoint"]["path"])
+    np.testing.assert_allclose(restart["rows"][:, 0], [0.05, 0.1])
+
+
 @pytest.fixture
 def membrane_restart_case(restart_case):
     from run_viscoelastic_axi import FAR_FIELD_HEADER
