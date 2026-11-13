@@ -19,6 +19,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# This compatibility edge covers the original fresh-run entry point only.
+# Later restarts must use the normal same-case, same-runner contract.
+MIGRATION_PARENT_COMMIT = "d3d3a48514e976faf19dbd3468fdc21f0a939218"
+MIGRATION_PARENT_RUNNER = "c83d60ab7a19c886a9b68dfbfaddb0859021f3a3a0ace9d23073d8bdde2fb41d"
+MIGRATION_PYOOMPH_COMMIT = "a186e07e1a7ea6b74ecc4f3a3fc39cc763d41618"
+# SHA-256 over sorted path NUL + binary SHA-256 for top-level Python files in
+# the four source directories (excluding this runner), plus .python-version,
+# pyproject.toml and uv.lock, at commit 57a7297. Extra matching files change
+# the digest; these are filesystem files, not a query for tracked Git files.
+# The driver changes since the pinned parent concern restart evidence and its
+# first post-restart interval; the constitutive implementation is unchanged.
+MIGRATION_SOURCE_DIGEST = "cb89d54e716421c5b1bdea2e5baeb29e7f1a3035984c69e235e95ae88900d745"
+
 
 def _load_helper(name: str):
     # The package __init__ imports pyoomph; --check must remain solver-free.
@@ -48,6 +61,20 @@ CASE_FIELDS_USED = [
 def sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.sha256(stream.read()).hexdigest()
+
+
+def migration_source_digest(root: Path) -> str:
+    """Bind the non-runner Python source and environment inputs to the baseline."""
+    paths = [p for pattern in ("campaign/*.py", "simulationCases/*.py",
+                                   "src/taylor_culick_fem/*.py", "validation/*.py")
+                   for p in root.glob(pattern)
+                   if p.relative_to(root).as_posix() != "simulationCases/run_axisymmetric_case.py"]
+    paths = sorted(paths + [root / name for name in (".python-version", "pyproject.toml", "uv.lock")])
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
 
 
 def endpoint_reached(reached: object, case: dict, target: float | None = None) -> bool:
@@ -140,7 +167,8 @@ def endpoint_checkpoint(parent_case: Path, case: dict, case_hash: str, parent_en
             "control_index": control_index, "field_index": field_index}
 
 
-def restart_lineage(state: Path, out: Path, case: dict, case_hash: str, end: float) -> dict:
+def restart_lineage(state: Path, out: Path, case: dict, case_hash: str, end: float,
+                    migrate_horizon: bool = False) -> dict:
     """Bind a completed parent checkpoint and its histories to the same case."""
     state = state.resolve(strict=True)
     if not state.is_file() or state.parent.name != "checkpoints":
@@ -154,7 +182,7 @@ def restart_lineage(state: Path, out: Path, case: dict, case_hash: str, end: flo
     if not isinstance(manifest, dict):
         raise ValueError("restart parent manifest must be an object")
     if (manifest.get("schema") != "pyoomph-runner-manifest-v1"
-            or manifest.get("case_sha256") != case_hash or manifest.get("case_id") != case["case_id"]):
+            or manifest.get("case_id") != case["case_id"]):
         raise ValueError("restart parent manifest does not bind the same case")
     runner_info, pyoomph_info = manifest.get("runner"), manifest.get("pyoomph")
     argv, fields = manifest.get("argv"), manifest.get("case_fields_used")
@@ -166,12 +194,42 @@ def restart_lineage(state: Path, out: Path, case: dict, case_hash: str, end: flo
             or not isinstance(fields, list) or not fields or not all(isinstance(x, str) and x for x in fields)
             or len(set(fields)) != len(fields)):
         raise ValueError("restart parent manifest is incomplete")
-    parent_end = manifest.get("segment_end", case["completion"]["value"])
+    parent_hash = manifest.get("case_sha256")
+    migration = None
+    if migrate_horizon:
+        parent_path = parent_case / "input-case.json"
+        parent_bytes = parent_path.read_bytes()
+        parent_case_data = json.loads(parent_bytes)
+        validate_case(parent_case_data)
+        if (hashlib.sha256(parent_bytes).hexdigest() != parent_hash
+                or manifest.get("component_commit") != MIGRATION_PARENT_COMMIT
+                or runner_info.get("sha256") != MIGRATION_PARENT_RUNNER
+                or pyoomph_info.get("commit") != MIGRATION_PYOOMPH_COMMIT
+                or "segment_end" in manifest):
+            raise ValueError("migration requires the pinned completed fresh-run parent")
+        parent_completion = parent_case_data.get("completion")
+        new_completion = case.get("completion")
+        if (not isinstance(parent_completion, dict) or not isinstance(new_completion, dict)
+                or {**parent_case_data, "completion": new_completion} != case
+                or {**parent_completion, "value": new_completion.get("value")} != new_completion
+                or not parent_completion["value"] < new_completion["value"]):
+            raise ValueError("migration may increase only the original case horizon")
+        parent_end = parent_completion["value"]
+        migration = {"kind": "fresh-run-horizon-extension-v1",
+                     "parent_case_sha256": parent_hash,
+                     "parent_horizon": parent_end,
+                     "parent_component_commit": manifest["component_commit"],
+                     "parent_runner_sha256": runner_info["sha256"],
+                     "continuation_source_digest": MIGRATION_SOURCE_DIGEST}
+    else:
+        if parent_hash != case_hash:
+            raise ValueError("restart parent manifest does not bind the same case")
+        parent_end = manifest.get("segment_end", case["completion"]["value"])
     if isinstance(parent_end, bool) or not isinstance(parent_end, (int, float)) or not math.isfinite(parent_end):
         raise ValueError("invalid parent segment endpoint")
     if not 0 < parent_end < end:
         raise ValueError("parent segment endpoint must precede this segment")
-    evidence = endpoint_checkpoint(parent_case, case, case_hash, parent_end)
+    evidence = endpoint_checkpoint(parent_case, case, parent_hash, parent_end)
     if Path(evidence["checkpoint"]["path"]) != state:
         raise ValueError("restart checkpoint does not match the parent receipt")
     progress = [json.loads(line) for line in (parent_run / "progress.jsonl").read_text().splitlines()]
@@ -186,7 +244,7 @@ def restart_lineage(state: Path, out: Path, case: dict, case_hash: str, end: flo
             "parent_commit": manifest.get("component_commit"),
             "parent_pyoomph": (manifest.get("pyoomph") or {}).get("commit"),
             "parent_runner_sha256": (manifest.get("runner") or {}).get("sha256"),
-            "parent_linear_solver": manifest.get("linear_solver")}
+            "parent_linear_solver": manifest.get("linear_solver"), "migration": migration}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -196,6 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--linear-solver", choices=("pardiso", "superlu"))
     parser.add_argument("--segment-end", type=float, help="bounded endpoint no later than the case horizon")
     parser.add_argument("--restart-from", type=Path, help="completed parent checkpoint")
+    parser.add_argument("--migrate-horizon", action="store_true",
+                        help="migrate a pinned completed fresh-run parent to a longer case horizon")
     parser.add_argument("--check", action="store_true")
     return parser
 
@@ -210,7 +270,12 @@ def main(argv: list[str] | None = None) -> int:
         validate_case(case)
         end = segment_target(case, args.segment_end)
         case_hash = hashlib.sha256(case_bytes).hexdigest()
-        lineage = restart_lineage(args.restart_from, args.out, case, case_hash, end) if args.restart_from else None
+        if args.migrate_horizon and not args.restart_from:
+            raise ValueError("horizon migration requires a parent checkpoint")
+        lineage = restart_lineage(args.restart_from, args.out, case, case_hash, end,
+                                  migrate_horizon=args.migrate_horizon) if args.restart_from else None
+        if lineage is not None and lineage["migration"] is not None and migration_source_digest(ROOT) != MIGRATION_SOURCE_DIGEST:
+            raise ValueError("migration continuation source differs from reviewed baseline")
     except (OSError, ValueError, TypeError, ArithmeticError, KeyError) as exc:
         raise SystemExit(f"refused: invalid case: {exc}") from exc
     if args.out.is_symlink() or (args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir()))):
@@ -239,8 +304,14 @@ def main(argv: list[str] | None = None) -> int:
     driver_args.t_end = end
     if lineage is not None:
         from run_viscoelastic_axi import _read_restart
-        if (lineage["parent_commit"] != commit or lineage["parent_pyoomph"] != revision["commit"]
-                or lineage["parent_runner_sha256"] != sha256(Path(__file__).resolve())):
+        # Recheck after imports so a changed source cannot pass the earlier
+        # solver-free validation and then be used for the actual launch.
+        if lineage["migration"] is not None and migration_source_digest(ROOT) != MIGRATION_SOURCE_DIGEST:
+            raise SystemExit("refused: migration continuation source differs from reviewed baseline")
+        if (lineage["parent_pyoomph"] != revision["commit"]
+                or (lineage["migration"] is None and
+                    (lineage["parent_commit"] != commit or
+                     lineage["parent_runner_sha256"] != sha256(Path(__file__).resolve())))):
             raise SystemExit("refused: restart parent code, runner or pyoomph differs")
         driver_args.restart_case = case_path
         driver_args.restart_evidence = lineage["evidence"]
@@ -272,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest["restart_from"] = {**lineage["evidence"]["checkpoint"],
                                     "parent_manifest": lineage["parent_manifest"],
                                     "evidence": lineage["evidence"]}
+        if lineage["migration"] is not None:
+            manifest["restart_from"]["migration"] = lineage["migration"]
     try:
         provenance.create_run_manifest(args.out, manifest)
     except FileExistsError as exc:

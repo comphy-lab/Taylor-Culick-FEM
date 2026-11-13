@@ -132,6 +132,184 @@ def write_segment_output(out, case_path, end):
     return summary, state
 
 
+@pytest.fixture(params=["Oldroyd-B", "Newtonian"])
+def old_fresh_parent(request, completed_parent, case):
+    case_path, runtime, root, state = completed_parent
+    if request.param == "Newtonian":
+        case["physics"].update(constitutive_model="Newtonian", elastic_modulus=0.0,
+                               relaxation_time=0.0, Oh=71.71067811865476)
+        case_path.write_text(json.dumps(case))
+    parent = copy.deepcopy(case)
+    parent["completion"]["value"] = 10
+    raw = json.dumps(parent).encode()
+    (root / "input-case.json").write_bytes(raw)
+    manifest_path = runtime / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("segment_end")
+    manifest["case_sha256"] = runner.sha256(root / "input-case.json")
+    manifest["component_commit"] = runner.MIGRATION_PARENT_COMMIT
+    manifest["runner"]["sha256"] = runner.MIGRATION_PARENT_RUNNER
+    manifest["pyoomph"]["commit"] = runner.MIGRATION_PYOOMPH_COMMIT
+    manifest_path.write_text(json.dumps(manifest))
+    (runtime / "progress.jsonl").write_text(
+        json.dumps({"event": "started", "case_id": case["case_id"]}) + "\n"
+        + json.dumps({"event": "completed", "status": "passed", "physical_time": 10}) + "\n")
+    return case_path, runtime, root, state
+
+
+def test_horizon_migration_requires_explicit_pin_and_preserves_parent(tmp_path, old_fresh_parent):
+    case_path, runtime, root, state = old_fresh_parent
+    case = json.loads(case_path.read_bytes())
+    old_bytes = (root / "input-case.json").read_bytes()
+    with pytest.raises(ValueError, match="same case"):
+        runner.restart_lineage(state, tmp_path / "out", case, runner.sha256(case_path), 20)
+    line = runner.restart_lineage(state, tmp_path / "out", case, runner.sha256(case_path), 20,
+                                  migrate_horizon=True)
+    assert line["migration"]["parent_horizon"] == 10
+    assert line["migration"]["parent_case_sha256"] == runner.sha256(root / "input-case.json")
+    assert line["evidence"]["checkpoint"]["sha256"] == runner.sha256(state)
+    assert (root / "input-case.json").read_bytes() == old_bytes
+
+
+@pytest.mark.parametrize("mutation", ["parent_commit", "parent_runner", "parent_pyoomph", "parent_hash",
+                                      "parent_segment", "physics", "case_id", "completion_flag",
+                                      "smaller_horizon", "failed_parent", "failed_checkpoint", "missing_completion_event"])
+def test_horizon_migration_rejects_unproven_or_changed_parent(tmp_path, old_fresh_parent, mutation):
+    case_path, runtime, root, state = old_fresh_parent
+    case = json.loads(case_path.read_bytes())
+    manifest_path = runtime / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    if mutation == "parent_commit": manifest["component_commit"] = "c" * 40
+    if mutation == "parent_runner": manifest["runner"]["sha256"] = "c" * 64
+    if mutation == "parent_pyoomph": manifest["pyoomph"]["commit"] = "c" * 40
+    if mutation == "parent_hash": manifest["case_sha256"] = "c" * 64
+    if mutation == "parent_segment": manifest["segment_end"] = 10
+    manifest_path.write_text(json.dumps(manifest))
+    if mutation == "physics": case["physics"]["Oh"] = 2
+    if mutation == "case_id": case["case_id"] = "other"
+    if mutation == "completion_flag": case["completion"]["allow_recoil"] = False
+    if mutation == "smaller_horizon": case["completion"]["value"] = 5
+    if mutation == "missing_completion_event":
+        (runtime / "progress.jsonl").write_text(json.dumps({"event": "started", "case_id": case["case_id"]}) + "\n")
+    if mutation in ("failed_parent", "failed_checkpoint"):
+        meta_path = root / "case.json"
+        meta = json.loads(meta_path.read_text())
+        if mutation == "failed_parent": meta["status"] = "failed"
+        else: meta["latest_checkpoint"]["boundary_gate_passed"] = False
+        meta_path.write_text(json.dumps(meta))
+    expected = {
+        "parent_commit": "pinned completed fresh-run parent", "parent_runner": "pinned completed fresh-run parent",
+        "parent_pyoomph": "pinned completed fresh-run parent", "parent_hash": "pinned completed fresh-run parent",
+        "parent_segment": "pinned completed fresh-run parent", "physics": "increase only the original case horizon",
+        "case_id": "does not bind the same case", "completion_flag": "increase only the original case horizon",
+        "smaller_horizon": "increase only the original case horizon", "failed_parent": "did not complete successfully",
+        "failed_checkpoint": "no passing endpoint checkpoint", "missing_completion_event": "no matching completion event",
+    }
+    with pytest.raises(ValueError, match=expected[mutation]):
+        runner.restart_lineage(state, tmp_path / "out", case, runner.sha256(case_path), 20,
+                               migrate_horizon=True)
+
+
+@pytest.mark.parametrize("source_changed", [False, True])
+@pytest.mark.parametrize("check_only", [False, True])
+def test_migrated_runner_binds_old_case_and_new_case_in_manifest(tmp_path, old_fresh_parent, monkeypatch, source_changed, check_only):
+    case_path, runtime, root, state = old_fresh_parent
+    out = tmp_path / "migrated"
+    pyoomph = types.ModuleType("pyoomph")
+    solvers = types.ModuleType("pyoomph.solvers")
+    generic = types.ModuleType("pyoomph.solvers.generic")
+    generic.get_default_linear_solver = lambda: "test"
+    generic.set_default_linear_solver = lambda name: None
+    adapter = types.ModuleType("run_viscoelastic_case")
+    adapter.case_to_driver_args = lambda path, dest: types.SimpleNamespace(serialized_case=path.read_bytes())
+    driver = types.ModuleType("run_viscoelastic_axi")
+    driver._case_name = lambda *args: "axi_case"
+    driver._read_restart = lambda args: None
+    def solve(args):
+        saved = json.loads((out / "run-manifest.json").read_text())
+        assert saved["case_sha256"] == runner.sha256(case_path)
+        assert saved["restart_from"]["migration"]["parent_case_sha256"] == runner.sha256(root / "input-case.json")
+        assert saved["restart_from"]["migration"]["parent_horizon"] == 10
+        assert saved["restart_from"]["parent_manifest"]["sha256"] == runner.sha256(runtime / "run-manifest.json")
+        return write_segment_output(out, case_path, 20)[0]
+    driver.run_case = solve
+    for name, module in (("pyoomph", pyoomph), ("pyoomph.solvers", solvers),
+                         ("pyoomph.solvers.generic", generic), ("run_viscoelastic_case", adapter),
+                         ("run_viscoelastic_axi", driver)):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(runner.provenance, "component_commit", lambda root: "a" * 40)
+    monkeypatch.setattr(runner.provenance, "pyoomph_revision", lambda: {"commit": runner.MIGRATION_PYOOMPH_COMMIT})
+    monkeypatch.setattr(runner, "migration_source_digest", lambda root: "c" * 64 if source_changed else runner.MIGRATION_SOURCE_DIGEST)
+    argv = [str(case_path), "--out", str(out), "--segment-end", "20",
+            "--restart-from", str(state), "--migrate-horizon"]
+    if check_only:
+        argv.append("--check")
+    if source_changed:
+        with pytest.raises(SystemExit, match="source differs"):
+            runner.main(argv)
+        assert not out.exists()
+        return
+    assert runner.main(argv) == 0
+    if check_only:
+        assert not out.exists()
+        return
+    assert [json.loads(line)["event"] for line in (out / "progress.jsonl").read_text().splitlines()] == ["started", "segment_completed"]
+
+
+def test_real_migration_source_digest_pins_baseline_and_detects_input_changes(tmp_path):
+    assert runner.migration_source_digest(ROOT) == runner.MIGRATION_SOURCE_DIGEST
+    root = tmp_path / "source"
+    for name in ("campaign/run.py", "simulationCases/run_axisymmetric_case.py", "simulationCases/a.py",
+                 "src/taylor_culick_fem/module.py", "validation/driver.py", ".python-version", "pyproject.toml", "uv.lock"):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+    baseline = runner.migration_source_digest(root)
+    (root / "simulationCases/run_axisymmetric_case.py").write_text("new runner deliberately excluded")
+    assert runner.migration_source_digest(root) == baseline
+    for name in ("campaign/run.py", "simulationCases/a.py", "src/taylor_culick_fem/module.py", "validation/driver.py",
+                 ".python-version", "pyproject.toml", "uv.lock"):
+        path = root / name
+        original = path.read_bytes()
+        path.write_bytes(original + b"changed")
+        assert runner.migration_source_digest(root) != baseline, name
+        path.write_bytes(original)
+    extra = root / "validation/extra.py"
+    extra.write_text("unexpected")
+    assert runner.migration_source_digest(root) != baseline
+    extra.unlink()
+    (root / "uv.lock").unlink()
+    with pytest.raises(FileNotFoundError):
+        runner.migration_source_digest(root)
+
+
+def test_horizon_migration_rechecks_source_after_imports(tmp_path, old_fresh_parent, monkeypatch):
+    case_path, _, _, state = old_fresh_parent
+    out = tmp_path / "migrated"
+    pyoomph = types.ModuleType("pyoomph")
+    solvers = types.ModuleType("pyoomph.solvers")
+    generic = types.ModuleType("pyoomph.solvers.generic")
+    generic.get_default_linear_solver = lambda: "test"
+    generic.set_default_linear_solver = lambda name: None
+    adapter = types.ModuleType("run_viscoelastic_case")
+    adapter.case_to_driver_args = lambda path, dest: types.SimpleNamespace(serialized_case=path.read_bytes())
+    driver = types.ModuleType("run_viscoelastic_axi")
+    driver._read_restart = lambda args: pytest.fail("changed source must be refused before restart")
+    driver.run_case = lambda args: pytest.fail("changed source must be refused before the solve")
+    for name, module in (("pyoomph", pyoomph), ("pyoomph.solvers", solvers),
+                         ("pyoomph.solvers.generic", generic), ("run_viscoelastic_case", adapter),
+                         ("run_viscoelastic_axi", driver)):
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(runner.provenance, "component_commit", lambda root: "a" * 40)
+    monkeypatch.setattr(runner.provenance, "pyoomph_revision", lambda: {"commit": runner.MIGRATION_PYOOMPH_COMMIT})
+    digests = iter([runner.MIGRATION_SOURCE_DIGEST, "c" * 64])
+    monkeypatch.setattr(runner, "migration_source_digest", lambda root: next(digests))
+    with pytest.raises(SystemExit, match="source differs"):
+        runner.main([str(case_path), "--out", str(out), "--segment-end", "20",
+                     "--restart-from", str(state), "--migrate-horizon"])
+    assert not out.exists()
+
+
 @pytest.mark.parametrize("mutation", ["missing_manifest", "foreign_case", "changed_state", "changed_input", "failed_parent", "failed_boundary", "outflow", "wrong_index", "missing_event", "nested_output"])
 def test_restart_refuses_unproven_parent_before_output(tmp_path, completed_parent, mutation):
     case_path, runtime, root, state = completed_parent
@@ -395,4 +573,54 @@ def test_real_segment_restart_matches_continuous(tmp_path, case, material):
     def field_count(root):
         history = root / "liquid-history.pvd"
         return len(ET.parse(history if history.exists() else root / "liquid.pvd").findall("./Collection/DataSet"))
+    assert field_count(child_root) == field_count(ref_root) == 4
+
+
+@pytest.mark.skipif(os.environ.get("TAYLOR_CULICK_REAL_FEM") != "1" or
+                    not os.environ.get("TAYLOR_CULICK_MIGRATION_OLD_RUNNER"),
+                    reason="migration smoke requires an admitted allocation and pinned old source")
+@pytest.mark.parametrize("material", ["Oldroyd-B", "Newtonian"])
+def test_real_horizon_migration_matches_continuous(tmp_path, case, material):
+    """Exercise actual old-runner final checkpoints and new-runner migration."""
+    import numpy as np
+    import subprocess
+    import xml.etree.ElementTree as ET
+
+    old_runner = Path(os.environ["TAYLOR_CULICK_MIGRATION_OLD_RUNNER"]).resolve(strict=True)
+    assert runner.sha256(old_runner) == runner.MIGRATION_PARENT_RUNNER
+    case["mesh"].update(length=3.0, resolution=0.5, far_resolution=0.5)
+    case["physics"]["relaxation_time"] = 10.0
+    if material == "Newtonian":
+        case["physics"].update(constitutive_model="Newtonian", elastic_modulus=0.0,
+                               relaxation_time=0.0, Oh=8.071067811865476)
+    case["output"].update(cadence=0.02, checkpoint_every=2, field_stride=1)
+    case["completion"]["value"] = 0.08
+    new_case = tmp_path / "new-case.json"
+    new_case.write_text(json.dumps(case))
+    old_case = copy.deepcopy(case)
+    old_case["completion"]["value"] = 0.04
+    old_case_path = tmp_path / "old-case.json"
+    old_case_path.write_text(json.dumps(old_case))
+    reference, parent, child = (tmp_path / name for name in ("reference", "parent", "child"))
+    current_runner = ROOT / "simulationCases/run_axisymmetric_case.py"
+    def invoke(script, source_case, output, *args):
+        subprocess.run([sys.executable, str(script), str(source_case), "--out", str(output), *args],
+                       check=True, timeout=600)
+    invoke(current_runner, new_case, reference)
+    invoke(old_runner, old_case_path, parent)
+    states = list(parent.glob("*/checkpoints/ckpt_00002.dump"))
+    assert len(states) == 1
+    invoke(current_runner, new_case, child, "--restart-from", str(states[0]), "--migrate-horizon")
+    manifest = json.loads((child / "run-manifest.json").read_text())
+    assert manifest["restart_from"]["migration"]["parent_case_sha256"] == runner.sha256(old_case_path)
+    assert manifest["restart_from"]["migration"]["parent_horizon"] == 0.04
+    assert [json.loads(line)["event"] for line in (parent / "progress.jsonl").read_text().splitlines()] == ["started", "completed"]
+    assert [json.loads(line)["event"] for line in (child / "progress.jsonl").read_text().splitlines()] == ["started", "completed"]
+    ref_root, child_root = (next(path.glob("*/run_viscoelastic_axi")) for path in (reference, child))
+    for filename in ("control.txt", "rim-height.txt"):
+        np.testing.assert_allclose(np.loadtxt(child_root / filename), np.loadtxt(ref_root / filename),
+                                   rtol=1e-8, atol=1e-9)
+    def field_count(path):
+        history = path / "liquid-history.pvd"
+        return len(ET.parse(history if history.exists() else path / "liquid.pvd").findall("./Collection/DataSet"))
     assert field_count(child_root) == field_count(ref_root) == 4
