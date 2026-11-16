@@ -32,6 +32,7 @@ sys.path.insert(0, str(_ROOT / "simulationCases"))
 from axisymmetric_viscoelastic import (
     AxisymmetricViscoelasticProblem,
     evolves_conformation,
+    membrane_exterior_supported,
 )
 from planar_comoving import V_TAYLOR_CULICK
 
@@ -179,10 +180,13 @@ def _far_field_config(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("far-field inner fraction must lie strictly inside the window")
     if config["extension"] <= 0 or config["node_spacing"] <= 0:
         raise ValueError("far-field extension and node spacing must be positive")
-    if _passive_conformation(args) or not evolves_conformation(
-        args.elastic_modulus, args.relaxation_time, False
+    if not membrane_exterior_supported(
+        args.elastic_modulus, args.relaxation_time, _passive_conformation(args)
     ):
-        raise ValueError("membrane far field requires active Oldroyd-B elasticity")
+        raise ValueError(
+            "membrane far field requires active Oldroyd-B elasticity "
+            "or the exact zero-relaxation Newtonian endpoint"
+        )
     sponge = _sponge_parameters(args)
     if sponge is not None and sponge.gamma_max > 0:
         raise ValueError("a membrane far field cannot be combined with a sponge")

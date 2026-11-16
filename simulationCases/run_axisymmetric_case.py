@@ -2,7 +2,9 @@
 
 This entry point supports neither non-relaxing nor nonzero-modulus De=0
 sweep endpoints; it is scoped to the two indicated constitutive branches.
-Bounded segments retain the same case and require a completed parent checkpoint.
+Either branch may use the rest far edge or the thin-film membrane exterior.
+Bounded segments retain the same case and require a completed parent checkpoint;
+a membrane parent must also supply its hash-bound exterior state and history.
 """
 from __future__ import annotations
 
@@ -157,6 +159,18 @@ def endpoint_checkpoint(parent_case: Path, case: dict, case_hash: str, parent_en
         "rim_height": parent_case / "run_viscoelastic_axi/rim-height.txt",
         "pvd": parent_case / "run_viscoelastic_axi/liquid-history.pvd",
     }
+    if case["physics"].get("far_field", {"mode": "rest"}).get("mode") == "membrane":
+        # The exterior is part of the state: restart needs the sidecar saved
+        # with this exact checkpoint and the far-field history it continues.
+        far = checkpoint.get("far_field_state")
+        if not isinstance(far, dict) or not isinstance(far.get("path"), str):
+            raise ValueError("restart parent membrane checkpoint has no far-field state")
+        far_state = (parent_case / far["path"]).resolve(strict=True)
+        if (far_state != state.with_suffix(".farfield.npz") or not far_state.is_file()
+                or far.get("sha256") != sha256(far_state)):
+            raise ValueError("restart membrane state does not match the parent receipt")
+        paths["far_field_state"] = far_state
+        paths["far_field_history"] = parent_case / "run_viscoelastic_axi/far-field.txt"
     if sha256(paths["input_case"]) != case_hash:
         raise ValueError("restart parent input case differs from its manifest")
     if not paths["pvd"].is_file():

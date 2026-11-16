@@ -1,8 +1,32 @@
-"""Validate the fresh axisymmetric free-surface case contract."""
+"""Validate the axisymmetric free-surface case contract.
+
+The far edge is either the resolved rest film (zero laboratory velocity and
+unit thickness at ``R+L``) or the explicitly configured thin-film membrane
+exterior, which continues the sheet beyond the window to a fixed outer radius.
+"""
 from __future__ import annotations
 
 import math
 import re
+
+
+MEMBRANE_KEYS = {"mode", "inner_fraction", "extension", "node_spacing"}
+
+
+def _membrane_problems(far_field: object) -> list[str]:
+    """Check an explicit thin-film exterior; no coupling setting is invented."""
+    if not isinstance(far_field, dict) or far_field.get("mode") != "membrane" or set(far_field) != MEMBRANE_KEYS:
+        return ["physics.far_field must be the fully resolved rest edge or a membrane exterior "
+                "with exactly mode, inner_fraction, extension and node_spacing"]
+    values = {key: far_field[key] for key in MEMBRANE_KEYS - {"mode"}}
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values.values()):
+        return ["physics.far_field membrane settings must be finite numbers"]
+    problems = []
+    if not 0 < values["inner_fraction"] < 1:
+        problems.append("physics.far_field.inner_fraction must lie strictly inside the window")
+    if values["extension"] <= 0 or values["node_spacing"] <= 0:
+        problems.append("physics.far_field extension and node_spacing must be positive")
+    return problems
 
 
 def case_problems(case: object) -> list[str]:
@@ -47,8 +71,11 @@ def case_problems(case: object) -> list[str]:
         problems.append("physics.stabilization must be none or supg")
     if p.get("passive_conformation", False) is not False:
         problems.append("physics.passive_conformation must be false")
-    if p.get("far_field", {"mode": "rest"}) != {"mode": "rest"} or "sponge" in p:
-        problems.append("only the fully resolved rest far-field is supported")
+    far_field = p.get("far_field", {"mode": "rest"})
+    if "sponge" in p:
+        problems.append("a sponge is not supported by this entry point")
+    if far_field != {"mode": "rest"}:
+        problems.extend(_membrane_problems(far_field))
     if modulus is not None and relaxation is not None:
         active = modulus > 0 and relaxation > 0
         if p.get("constitutive_model") != ("Oldroyd-B" if active else "Newtonian"):

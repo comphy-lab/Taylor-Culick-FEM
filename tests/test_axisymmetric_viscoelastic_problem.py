@@ -185,9 +185,9 @@ def test_membrane_incoming_conformation_accepts_finite_and_infinite_relaxation(
 
 
 @pytest.mark.parametrize("elastic_modulus,relaxation_time,passive", [
-    (0.0, 1.0, False), (1.0, 0.0, False), (1.0, 1.0, True),
+    (0.0, 1.0, False), (1.0, 1.0, True), (0.0, 0.0, True),
 ])
-def test_membrane_requires_active_positive_time_elasticity(
+def test_membrane_requires_active_elasticity_or_exact_newtonian_endpoint(
     monkeypatch, elastic_modulus, relaxation_time, passive
 ):
     with pytest.raises(ValueError, match="requires active Oldroyd-B elasticity"):
@@ -195,6 +195,26 @@ def test_membrane_requires_active_positive_time_elasticity(
             monkeypatch, elastic_modulus=elastic_modulus, passive=passive,
             relaxation_time=relaxation_time, far_field="membrane",
         )
+
+
+@pytest.mark.parametrize("elastic_modulus", [0.0, 1.0])
+def test_zero_relaxation_newtonian_accepts_membrane_without_conformation(
+    monkeypatch, elastic_modulus
+):
+    problem, equations, _ = _define_problem(
+        monkeypatch, elastic_modulus=elastic_modulus, passive=False,
+        relaxation_time=0.0, far_field="membrane",
+    )
+    assert equations is None
+    assert problem.viscoelastic_parameters is None
+    problem.define_global_parameter(far_field_velocity=0.0)
+    problem.define_global_parameter(far_field_half_thickness=0.5)
+    problem.set_far_field(0.01, 1.02, (0.0, 0.0, 0.0))
+    assert problem.get_global_parameter("far_field_velocity").value == pytest.approx(0.01)
+    assert problem.get_global_parameter("far_field_half_thickness").value == pytest.approx(0.51)
+    # No conformation globals exist, and a nonzero tensor would be a coupling error.
+    with pytest.raises(ValueError, match="zero log conformation"):
+        problem.set_far_field(0.01, 1.02, (0.0, 1e-3, 0.0))
 
 
 def test_set_far_field_maps_full_thickness_and_diagonal_log_tensor(monkeypatch):

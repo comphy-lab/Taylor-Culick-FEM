@@ -46,7 +46,7 @@ def test_invalid_or_occupied_run_is_refused(tmp_path, case):
     bad = copy.deepcopy(case)
     bad["physics"]["far_field"] = {"mode": "membrane", "extension": 4000}
     case_path.write_text(json.dumps(bad))
-    with pytest.raises(SystemExit, match="fully resolved"):
+    with pytest.raises(SystemExit, match="rest edge or a membrane exterior"):
         runner.main([str(case_path), "--out", str(out), "--check"])
     assert not out.exists()
     case_path.write_text(json.dumps(case))
@@ -76,6 +76,51 @@ def test_segment_end_requires_a_checkpoint_and_never_exceeds_horizon(case):
     case["output"]["checkpoint_every"] = 0
     with pytest.raises(ValueError, match="requires scheduled checkpoints"):
         runner.segment_target(case, 10)
+
+
+MEMBRANE = {"mode": "membrane", "inner_fraction": 0.5, "extension": 4000.0, "node_spacing": 0.5}
+
+
+@pytest.mark.parametrize("material", ["Oldroyd-B", "Newtonian"])
+def test_membrane_exterior_is_a_valid_case_for_both_branches(case, material):
+    case["physics"]["far_field"] = dict(MEMBRANE)
+    if material == "Newtonian":
+        case["physics"].update(constitutive_model="Newtonian", elastic_modulus=0.0,
+                               relaxation_time=0.0, Oh=8.071067811865476)
+    assert runner._load_helper("cases").case_problems(case) == []
+
+
+@pytest.mark.parametrize("change,message", [
+    ({"inner_fraction": 1.0}, "strictly inside"), ({"extension": 0.0}, "must be positive"),
+    ({"node_spacing": float("nan")}, "finite numbers"), ({"extra": 1}, "exactly mode"),
+])
+def test_membrane_exterior_settings_are_checked_not_invented(case, change, message):
+    case["physics"]["far_field"] = {**MEMBRANE, **change}
+    assert any(message in problem for problem in runner._load_helper("cases").case_problems(case))
+
+
+def test_membrane_restart_evidence_binds_exterior_state_and_history(tmp_path, case):
+    case["physics"]["far_field"] = dict(MEMBRANE)
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps(case))
+    summary, state = write_segment_output(tmp_path / "out", case_path, 10)
+    root = state.parent.parent
+    sidecar = state.with_suffix(".farfield.npz")
+    sidecar.write_bytes(b"exterior state")
+    (root / "run_viscoelastic_axi/far-field.txt").write_text("exterior history")
+    summary["latest_checkpoint"]["far_field_state"] = {
+        "path": str(sidecar.relative_to(root)), "sha256": runner.sha256(sidecar)}
+    (root / "case.json").write_text(json.dumps(summary))
+    evidence = runner.endpoint_checkpoint(root, case, runner.sha256(case_path), 10)
+    assert evidence["far_field_state"]["sha256"] == runner.sha256(sidecar)
+    assert evidence["far_field_history"]["path"] == str((root / "run_viscoelastic_axi/far-field.txt").resolve())
+    sidecar.write_bytes(b"changed exterior")
+    with pytest.raises(ValueError, match="membrane state does not match"):
+        runner.endpoint_checkpoint(root, case, runner.sha256(case_path), 10)
+    del summary["latest_checkpoint"]["far_field_state"]
+    (root / "case.json").write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="no far-field state"):
+        runner.endpoint_checkpoint(root, case, runner.sha256(case_path), 10)
 
 
 @pytest.fixture
@@ -257,7 +302,17 @@ def test_migrated_runner_binds_old_case_and_new_case_in_manifest(tmp_path, old_f
 
 
 def test_real_migration_source_digest_pins_baseline_and_detects_input_changes(tmp_path):
-    assert runner.migration_source_digest(ROOT) == runner.MIGRATION_SOURCE_DIGEST
+    # The pin is the 57a7297 source tree; later solver changes must not
+    # silently inherit horizon migration, so the working tree may differ.
+    import subprocess
+    import tarfile
+    baseline_root = tmp_path / "baseline"
+    archive = tmp_path / "baseline.tar"
+    subprocess.run(["git", "-C", str(ROOT), "archive", "--format=tar", "-o", str(archive), "57a7297"],
+                   check=True)
+    with tarfile.open(archive) as stream:
+        stream.extractall(baseline_root, filter="data")
+    assert runner.migration_source_digest(baseline_root) == runner.MIGRATION_SOURCE_DIGEST
     root = tmp_path / "source"
     for name in ("campaign/run.py", "simulationCases/run_axisymmetric_case.py", "simulationCases/a.py",
                  "src/taylor_culick_fem/module.py", "validation/driver.py", ".python-version", "pyproject.toml", "uv.lock"):
@@ -543,9 +598,10 @@ def test_explicit_linear_solver_is_applied_and_recorded(tmp_path, case, monkeypa
 
 @pytest.mark.skipif(os.environ.get("TAYLOR_CULICK_REAL_FEM") != "1",
                     reason="real FEM smoke requires an admitted compute allocation")
+@pytest.mark.parametrize("far_field", ["rest", "membrane"])
 @pytest.mark.parametrize("material", ["Oldroyd-B", "Newtonian"])
-def test_real_segment_restart_matches_continuous(tmp_path, case, material):
-    """Check the actual runner, binary checkpoint and both constitutive paths."""
+def test_real_segment_restart_matches_continuous(tmp_path, case, material, far_field):
+    """Check the actual runner, binary checkpoint, both constitutive paths and exteriors."""
     import numpy as np
     import xml.etree.ElementTree as ET
 
@@ -554,6 +610,8 @@ def test_real_segment_restart_matches_continuous(tmp_path, case, material):
     if material == "Newtonian":
         case["physics"].update(constitutive_model="Newtonian", elastic_modulus=0.0,
                                relaxation_time=0.0, Oh=8.071067811865476)
+    if far_field == "membrane":
+        case["physics"]["far_field"] = {**MEMBRANE, "extension": 20.0}
     case["output"].update(cadence=0.02, checkpoint_every=2, field_stride=1)
     case["completion"]["value"] = 0.08
     case_path = tmp_path / "case.json"
@@ -564,10 +622,17 @@ def test_real_segment_restart_matches_continuous(tmp_path, case, material):
     states = list(parent.glob("*/checkpoints/ckpt_00002.dump"))
     assert len(states) == 1
     assert runner.main([str(case_path), "--out", str(child), "--restart-from", str(states[0])]) == 0
-    assert [json.loads(line)["event"] for line in (parent / "progress.jsonl").read_text().splitlines()] == ["started", "segment_completed"]
-    assert [json.loads(line)["event"] for line in (child / "progress.jsonl").read_text().splitlines()] == ["started", "completed"]
+    def events(path):
+        return [json.loads(line)["event"] for line in (path / "progress.jsonl").read_text().splitlines()]
+    # A membrane exterior also reports one far_field_sample per output interval.
+    samples = {"rest": 0, "membrane": 2}[far_field]
+    for path, last in ((parent, "segment_completed"), (child, "completed")):
+        observed = events(path)
+        assert [e for e in observed if e != "far_field_sample"] == ["started", last]
+        assert observed.count("far_field_sample") == samples
     ref_root, child_root = (next(path.glob("*/run_viscoelastic_axi")) for path in (reference, child))
-    for filename in ("control.txt", "rim-height.txt"):
+    files = ("control.txt", "rim-height.txt") + (("far-field.txt",) if far_field == "membrane" else ())
+    for filename in files:
         np.testing.assert_allclose(np.loadtxt(child_root / filename), np.loadtxt(ref_root / filename),
                                    rtol=1e-8, atol=1e-9)
     def field_count(root):
@@ -610,6 +675,16 @@ def test_real_horizon_migration_matches_continuous(tmp_path, case, material):
     invoke(old_runner, old_case_path, parent)
     states = list(parent.glob("*/checkpoints/ckpt_00002.dump"))
     assert len(states) == 1
+    if runner.migration_source_digest(ROOT) != runner.MIGRATION_SOURCE_DIGEST:
+        # Later solver changes must not inherit migration: the current runner
+        # refuses, before creating output, and the comparison is not possible.
+        refused = subprocess.run([sys.executable, str(current_runner), str(new_case), "--out", str(child),
+                                  "--restart-from", str(states[0]), "--migrate-horizon"],
+                                 capture_output=True, text=True, timeout=600)
+        assert refused.returncode != 0
+        assert "migration continuation source differs from reviewed baseline" in refused.stderr
+        assert not child.exists()
+        pytest.skip("current sources differ from the pinned migration baseline")
     invoke(current_runner, new_case, child, "--restart-from", str(states[0]), "--migrate-horizon")
     manifest = json.loads((child / "run-manifest.json").read_text())
     assert manifest["restart_from"]["migration"]["parent_case_sha256"] == runner.sha256(old_case_path)

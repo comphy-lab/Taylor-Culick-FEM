@@ -16,7 +16,8 @@ unknowns.
 ``relaxation_time=math.inf`` is an exact non-relaxing limit: no large finite
 surrogate is used. At the default rest boundary, the incoming film is
 unstretched (``log(C)=0``). An opt-in membrane boundary supplies independently
-evolved diagonal log-conformation, including finite relaxation. The midplane
+evolved diagonal log-conformation, including finite relaxation; at the exact
+Newtonian endpoint it supplies only the edge velocity and thickness. The midplane
 imposes only the tensor symmetry condition. The free surface has no
 conformation boundary condition because it is a material boundary.
 """
@@ -59,6 +60,25 @@ def evolves_conformation(
     return relaxation_time > 0 and (elastic_modulus > 0 or passive_conformation)
 
 
+def membrane_exterior_supported(
+    elastic_modulus: float, relaxation_time: float, passive_conformation: bool
+) -> bool:
+    """Return whether the thin-film membrane may replace the rest far edge.
+
+    The membrane evolves the same constitutive branch as the sheet. Active
+    Oldroyd-B elasticity (finite or infinite relaxation) and the exact
+    zero-relaxation Newtonian endpoint, where the membrane carries solvent
+    viscosity only and ``C=I``, are supported. Passive diagnostic transport
+    and a zero-modulus sheet with a finite relaxation time are not.
+    """
+
+    if passive_conformation:
+        return False
+    return relaxation_time == 0 or evolves_conformation(
+        elastic_modulus, relaxation_time, False
+    )
+
+
 class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
     """Co-moving axisymmetric sheet with solvent viscosity and polymer elasticity.
 
@@ -91,10 +111,13 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
         if type(self.passive_conformation) is not bool:
             raise TypeError("passive_conformation must be a boolean")
         if self.far_field == "membrane":
-            if self.passive_conformation or not evolves_conformation(
-                self.elastic_modulus, self.relaxation_time, False
+            if not membrane_exterior_supported(
+                self.elastic_modulus, self.relaxation_time, self.passive_conformation
             ):
-                raise ValueError("far_field='membrane' requires active Oldroyd-B elasticity")
+                raise ValueError(
+                    "far_field='membrane' requires active Oldroyd-B elasticity "
+                    "or the exact zero-relaxation Newtonian endpoint"
+                )
             if self.sponge is not None and self.sponge.gamma_max > 0:
                 raise ValueError("a membrane far field cannot be combined with a sponge")
 
@@ -190,8 +213,14 @@ class AxisymmetricViscoelasticProblem(AxisymmetricComovingProblem):
             raise ValueError("far-field state must be finite with three log C components")
         if thickness <= 0:
             raise ValueError("far-field thickness must be positive")
+        if self.viscoelastic_parameters is None and any(v != 0 for v in log_conformation):
+            # The Newtonian endpoint has no conformation unknowns; its membrane
+            # supplies C=I exactly, so any other value is a coupling error.
+            raise ValueError("a Newtonian far field must have zero log conformation")
         self.get_global_parameter("far_field_velocity").value = velocity
         self.get_global_parameter("far_field_half_thickness").value = 0.5 * thickness
+        if self.viscoelastic_parameters is None:
+            return
         for name, value in zip(("xx", "yy", "aa"), log_conformation, strict=True):
             self.get_global_parameter(f"far_field_log_c_{name}").value = value
 
