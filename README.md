@@ -69,8 +69,11 @@ that pins the rim in the computational window, so the mesh covers a window of
 length `L` around the rim rather than the whole retraction path. The window is
 implemented as ALE mesh motion with the physical radius retained in the
 axisymmetric metric, because a radial translation is not a Galilean
-transformation. Time integration is BDF2 with adaptive steps controlled by a
-temporal error tolerance; the mesh is rebuilt with Gmsh when its quality
+transformation. Time integration is BDF2. The elastic runs use a fixed step
+schedule: each output interval restarts at a small step that grows to
+`solver.max_step`. Error-controlled steps are opt-in through
+`solver.temporal_error_fields`; without them `tolerances.temporal_error` has no
+effect. The mesh is rebuilt with Gmsh when its quality
 degrades, and linear systems are solved with PARDISO.
 
 The elastic case solves the conformation in log form with streamline-upwind
