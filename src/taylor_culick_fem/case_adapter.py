@@ -18,6 +18,7 @@ from taylor_culick_fem.viscoelastic_driver import build_parser, validate_args
 def case_to_driver_args(case_path: Path, out: Path, *, restart_evidence: dict | None = None,
                         t_end: float | None = None, far_field_extension: float | None = None,
                         newton_tolerance_safety: float | None = None,
+                        newton_observer: bool = False,
                         run_dir: Path | None = None) -> argparse.Namespace:
     """Driver arguments for ``case_path`` writing to ``out``.
 
@@ -33,6 +34,7 @@ def case_to_driver_args(case_path: Path, out: Path, *, restart_evidence: dict | 
                                  newton_tolerance_safety=newton_tolerance_safety)
     parser = build_parser()
     parsed = parser.parse_args(arguments)
+    parsed.newton_observer = newton_observer
     validate_args(parser, parsed)
     parsed.serialized_case = serialized_case
     # The runner's command line is not pyoomph's: keep pyoomph from reading it.

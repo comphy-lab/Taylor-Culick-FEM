@@ -2084,6 +2084,20 @@ def test_newton_tolerance_safety_is_a_runner_option_mapped_only_when_given(tmp_p
     assert runner.option_problems(args) == []
 
 
+def test_newton_observer_is_an_opt_in_runner_option(tmp_path: Path) -> None:
+    case = _case({"kind": "time", "value": 0.04, "allow_recoil": True})
+    case_path = _write_case(tmp_path, case)
+    default = adapter.case_to_driver_args(case_path, tmp_path / "default")
+    observed = adapter.case_to_driver_args(case_path, tmp_path / "observed", newton_observer=True)
+    assert default.newton_observer is False
+    assert observed.newton_observer is True
+    assert default.serialized_case == observed.serialized_case
+    assert not runner.build_parser().parse_args(
+        [str(case_path), "--out", str(tmp_path / "r")]).newton_observer
+    assert runner.build_parser().parse_args(
+        [str(case_path), "--out", str(tmp_path / "r"), "--newton-observer"]).newton_observer
+
+
 def test_small_fem_restart_may_change_the_newton_tolerance_safety(tmp_path):
     from taylor_culick_fem import viscoelastic_driver as driver
 

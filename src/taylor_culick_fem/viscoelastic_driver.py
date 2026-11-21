@@ -1337,7 +1337,13 @@ def run_case(args: argparse.Namespace) -> dict:
 
     previous_cwd = Path.cwd()
     try:
-        with AxisymmetricViscoelasticProblem() as problem:
+        if getattr(args, "newton_observer", False):
+            from taylor_culick_fem.newton_observer_problem import ObservedAxisymmetricViscoelasticProblem
+
+            problem_instance = ObservedAxisymmetricViscoelasticProblem(run_dir / "newton-observer.jsonl")
+        else:
+            problem_instance = AxisymmetricViscoelasticProblem()
+        with problem_instance as problem:
             problem.set_output_directory(str(run_dir / "run_viscoelastic_axi"))
             # pyoomph parses sys.argv with abbreviations allowed, so a calling runner's own
             # options (``--out`` abbreviates ``--outdir``) would reach it; a case runner owns argv.
@@ -1867,6 +1873,8 @@ def run_case(args: argparse.Namespace) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--newton-observer", action="store_true",
+                        help="record bounded Newton iteration diagnostics in the run directory")
     parser.add_argument(
         "--restart-case", type=Path, help="serialized case with hash-bound parent lineage"
     )

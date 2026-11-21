@@ -74,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--newton-tolerance-safety", type=float, default=None,
                         help="accept a Newton solve below this multiple of the eps*R^2/dt "
                              "roundoff floor (default 10; at least 1)")
+    parser.add_argument("--newton-observer", action="store_true",
+                        help="record bounded Newton iteration diagnostics in the run directory")
     parser.add_argument("--check", action="store_true",
                         help="validate the case, options and output folder, then exit without output")
     return parser
@@ -130,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         driver_args = case_to_driver_args(case_path, args.out, restart_evidence=evidence,
                                           t_end=args.t_end, far_field_extension=args.far_field_extension,
                                           newton_tolerance_safety=args.newton_tolerance_safety,
+                                          newton_observer=args.newton_observer,
                                           run_dir=args.out)
         _read_restart(driver_args)
     except (OSError, KeyError, TypeError, ValueError) as exc:
