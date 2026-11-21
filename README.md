@@ -22,6 +22,14 @@ V_TC = sqrt(2 sigma / (rho h0))  ->  sqrt(2) = 1.41421...
 
 and results are reported as `u* = U / V_TC`, where `U` is the tip speed.
 
+**Ohnesorge number in the code and in the paper.** The upcoming paper and its
+reports define `Oh = mu / sqrt(rho sigma h0)`, which in these units is the
+coded viscosity `mu` itself. The code keeps the convention above: its `Oh`
+(case files, CLI options, run tags and post-processing) is
+`mu / sqrt(2 h0 rho sigma)`, smaller by `sqrt(2)`. A code value converts to
+the paper value as `Oh_paper = sqrt(2) Oh_code`; for example, the `Oh = 1`
+cases are `Oh = sqrt(2)` in the paper.
+
 Three configurations share one formulation:
 
 1. **Planar sheet.** A semi-infinite two-dimensional sheet retracts into a rim.
