@@ -72,7 +72,8 @@ class NeoHookeanDisplacementEquations(Equations):
     """
 
     def __init__(self, shear_modulus, displacement_space="C2", pressure_space="DL", damping=1,
-                 error_estimators=False, stiffening=None, volume_penalty=0.0):
+                 error_estimators=False, stiffening=None, volume_penalty=0.0,
+                 displacement_background=False):
         super().__init__()
         self.shear_modulus = shear_modulus
         self.stiffening = stiffening
@@ -81,13 +82,17 @@ class NeoHookeanDisplacementEquations(Equations):
         self.displacement_space = displacement_space
         self.pressure_space = pressure_space
         self.damping = damping
+        self.displacement_background = displacement_background
 
     def define_fields(self):
         self.define_vector_field("displacement", self.displacement_space)
         self.define_scalar_field("pressure", self.pressure_space)
+        if self.displacement_background:
+            self.define_vector_field("displacement_background", self.displacement_space)
 
     def define_residuals(self):
-        u, pressure = var("displacement"), var("pressure")
+        u = physical_displacement(self.displacement_background)
+        pressure = var("pressure")
         g = grad(u)
         g00, g01, g10, g11 = g[0, 0], g[0, 1], g[1, 0], g[1, 1]
         eta = u[0] / var("coordinate_x")
@@ -118,15 +123,26 @@ class NeoHookeanDisplacementEquations(Equations):
         self.add_weak(volume_change, testfunction("pressure"))
         if self.damping:
             self.add_weak(self.damping * partial_t(u), testfunction("displacement"))
+        if self.displacement_background:
+            # Pin coefficients without prescribing their values: this translates the
+            # displacement trial space and adds no physical degree of freedom.
+            self.set_Dirichlet_condition("displacement_background_x", True)
+            self.set_Dirichlet_condition("displacement_background_y", True)
 
     def define_error_estimators(self):
         """Z2 estimators on the displacement gradient and the hoop strain, for local refinement."""
         if not self.error_estimators:
             return
-        u = var("displacement")
+        u = physical_displacement(self.displacement_background)
         g = grad(u)
         for component in (g[0, 0], g[0, 1], g[1, 0], g[1, 1], u[0] / var("coordinate_x")):
             self.add_spatial_error_estimator(component)
+
+
+def physical_displacement(background=False):
+    """Total Q2 displacement; a pinned background translates the trial space."""
+    u = var("displacement")
+    return u + var("displacement_background") if background else u
 
 
 class DeformedSurfaceEnergy(InterfaceEquations):
@@ -139,12 +155,14 @@ class DeformedSurfaceEnergy(InterfaceEquations):
 
     required_parent_type = NeoHookeanDisplacementEquations
 
-    def __init__(self, surface_tension=1):
+    def __init__(self, surface_tension=1, displacement_background=False):
         super().__init__()
         self.surface_tension = surface_tension
+        self.displacement_background = displacement_background
 
     def define_residuals(self):
-        u, test = var("displacement"), testfunction("displacement")
+        u = physical_displacement(self.displacement_background)
+        test = testfunction("displacement")
         normal = var("normal")
         t0 = (-normal[1], normal[0])
         g, gt = grad(u), grad(test)
@@ -164,12 +182,13 @@ class FarFieldTraction(InterfaceEquations):
 
     required_parent_type = NeoHookeanDisplacementEquations
 
-    def __init__(self, shear_modulus):
+    def __init__(self, shear_modulus, displacement_background=False):
         super().__init__()
         self.shear_modulus = shear_modulus
+        self.displacement_background = displacement_background
 
     def define_residuals(self):
-        u = var("displacement")
+        u = physical_displacement(self.displacement_background)
         self.add_weak(vector(2 * self.shear_modulus * u[0] / var("coordinate_x"), 0),
                       testfunction("displacement"))
 
@@ -177,12 +196,13 @@ class FarFieldTraction(InterfaceEquations):
 class SurfaceContinuation(InterfaceEquations):
     """Pull of the free surface beyond a truncation point: ``sigma (x_r / X_r)`` along the conormal."""
 
-    def __init__(self, surface_tension=1):
+    def __init__(self, surface_tension=1, displacement_background=False):
         super().__init__()
         self.surface_tension = surface_tension
+        self.displacement_background = displacement_background
 
     def define_residuals(self):
-        u = var("displacement")
+        u = physical_displacement(self.displacement_background)
         hoop = 1 + u[0] / var("coordinate_x")
         self.add_weak(-self.surface_tension * hoop * self.get_normal(), testfunction("displacement"))
 
@@ -296,6 +316,7 @@ class ElastocapillaryEquilibriumProblem(Problem):
         self.pressure_space = "DL"
         self.surface_tension = 1.0
         self.with_stability_mass = True
+        self.displacement_background = False
 
     def define_problem(self):
         if self.far_edge not in ("robin", "clamped"):
@@ -320,14 +341,15 @@ class ElastocapillaryEquilibriumProblem(Problem):
         eqs = NeoHookeanDisplacementEquations(modulus, displacement_space="C2TB" if self.triangles else "C2",
                                               pressure_space=self.pressure_space, damping=damping,
                                               error_estimators=self.adaptive, stiffening=stiffening,
-                                              volume_penalty=self.volume_penalty)
-        eqs += DeformedSurfaceEnergy(self.surface_tension) @ "interface"
+                                              volume_penalty=self.volume_penalty,
+                                              displacement_background=self.displacement_background)
+        eqs += DeformedSurfaceEnergy(self.surface_tension, self.displacement_background) @ "interface"
         eqs += DirichletBC(displacement_y=0) @ "symmetry"
         if self.far_edge == "clamped":
             eqs += DirichletBC(displacement_x=0) @ "far"
         else:
-            eqs += FarFieldTraction(modulus) @ "far"
-            eqs += SurfaceContinuation(self.surface_tension) @ "interface/far"
+            eqs += FarFieldTraction(modulus, self.displacement_background) @ "far"
+            eqs += SurfaceContinuation(self.surface_tension, self.displacement_background) @ "interface/far"
         self.add_equations(eqs @ "solid")
 
     @property
@@ -339,10 +361,19 @@ class ElastocapillaryEquilibriumProblem(Problem):
         indices = mesh.get_nodal_field_indices()
         return mesh, indices["displacement_x"], indices["displacement_y"]
 
+    def _total_nodal_displacement(self, node, indices, component):
+        value = node.value(indices["displacement_" + component])
+        if self.displacement_background:
+            value += node.value(indices["displacement_background_" + component])
+        return value
+
     def deformed_surface(self) -> np.ndarray:
         """Deformed free-surface nodes ``(r, z)``, ordered by reference arclength."""
-        mesh, ix, iy = self._displacement("solid/interface")
-        points = [(nd.x(0) + nd.value(ix), nd.x(1) + nd.value(iy), nd.x(0), nd.x(1)) for nd in mesh.nodes()]
+        mesh, _, _ = self._displacement("solid/interface")
+        indices = mesh.get_nodal_field_indices()
+        points = [(nd.x(0) + self._total_nodal_displacement(nd, indices, "x"),
+                   nd.x(1) + self._total_nodal_displacement(nd, indices, "y"), nd.x(0), nd.x(1))
+                  for nd in mesh.nodes()]
         return np.asarray(points)
 
     def hole_radius(self) -> float:
@@ -356,13 +387,15 @@ class ElastocapillaryEquilibriumProblem(Problem):
         maximum between nodes counts, as in the dynamic runs.
         """
         mesh, _, iy = self._displacement("solid/interface")
+        indices = mesh.get_nodal_field_indices()
         maximum = -math.inf
         for element in mesh.elements():
             points = []
             for local_node in range(element.nnode()):
                 local = element.local_coordinate_of_node(local_node)
                 node = element.node_pt(local_node)
-                points.append((float(local[0]), float(node.x(1) + node.value(iy))))
+                points.append((float(local[0]), float(node.x(1) +
+                               self._total_nodal_displacement(node, indices, "y"))))
             maximum = max(maximum, *(height for _, height in points))
             if len(points) >= 3:
                 s = np.asarray([p[0] for p in points])
@@ -379,4 +412,4 @@ class ElastocapillaryEquilibriumProblem(Problem):
         """Radial displacement of the far edge at the midplane."""
         mesh, ix, _ = self._displacement("solid/far")
         bottom = min(mesh.nodes(), key=lambda nd: nd.x(1))
-        return float(bottom.value(ix))
+        return float(self._total_nodal_displacement(bottom, mesh.get_nodal_field_indices(), "x"))
