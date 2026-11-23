@@ -1,0 +1,30 @@
+{
+  "schema": "pyoomph-case-v1",
+  "case_id": "depth-averaged-equilibrium",
+  "description": "Arrested holes of the depth-averaged incompressible neo-Hookean sheet in plane stress with a sharp free edge, the thin-sheet special case of the axisymmetric elastocapillary equilibrium: one Ec-independent trajectory, stopped at T = -2/Ec for each listed Ec.",
+  "geometry": {
+    "kind": "axisymmetric",
+    "coordinates": ["r", "z"],
+    "frame": "lagrangian"
+  },
+  "nondimensionalization": {
+    "length_scale": "h0",
+    "stress_scale": "sigma/h0",
+    "modulus": "Ec = G h0 / sigma"
+  },
+  "physics": {
+    "problem": "depth_averaged_equilibrium",
+    "r0": 1.0,
+    "Ec": [10.0, 5.0, 2.0, 1.0, 0.5, 0.3, 0.2, 0.15, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001]
+  },
+  "evaluation": {
+    "distances": [0.5, 1.0, 1.5, 2.0]
+  },
+  "solver": {
+    "far_seed": 0.001,
+    "rtol": 1e-12,
+    "atol": 1e-14,
+    "log_radius_max": 2020.0,
+    "max_step": 0.25
+  }
+}

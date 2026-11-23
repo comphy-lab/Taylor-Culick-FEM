@@ -50,7 +50,7 @@ Three configurations share one formulation:
 | Path | Contents |
 |---|---|
 | `src/taylor_culick_fem/` | Library code: the problem definitions (planar, axisymmetric laboratory and co-moving, elastic axisymmetric, one-dimensional Trouton models), the independent comparison solvers, the elastic driver, the far-field membrane and absorbing layer, the case validator (`cases.py`), restart lineage (`lineage.py`) and the run-provenance helper (`provenance.py`). |
-| `simulationCases/` | The entry points `run_axisymmetric_viscoelastic.py` (the opening hole in time) and `run_elastocapillary_equilibrium.py` (the arrested hole of the elastic sheet as a steady equilibrium), their default cases and the case-schema tables. |
+| `simulationCases/` | The entry points `run_axisymmetric_viscoelastic.py` (the opening hole in time), `run_elastocapillary_equilibrium.py` (the arrested hole of the elastic sheet as a steady equilibrium) and `run_depth_averaged_equilibrium.py` (its depth-averaged special case for many `Ec`), their default cases and the case-schema tables. |
 | `validationCases/<study>/` | Comparisons with independent published numerical solutions: their drivers, digitised reference data with its extraction record, and the comparison scripts. |
 | `verificationCases/<study>/` | Comparisons between independent discretisations in this repository, and solver construction checks. |
 | `modelComparisonCases/<study>/` | Comparisons with reduced models: the two-dimensional solution against the one-dimensional long-wave model, and the steady axisymmetric equilibria against the depth-averaged theory. |
@@ -88,6 +88,18 @@ axisymmetric body in displacement form on its reference configuration, followed
 in `Ec` by arclength continuation, with the stability of each equilibrium from
 the eigenvalues of an overdamped energy flow.
 
+Its thin-sheet special case is the depth-averaged sheet: each material column at
+reference radius `xi` is stretched by `lambda_r = dr/dxi` and `lambda_theta = r/xi`
+and changes thickness by `lambda_z = 1/(lambda_r lambda_theta)`, the neo-Hookean
+membrane is in plane stress, and the free edge at `xi = r0` is sharp and carries the tension
+`-2 sigma` of both faces. In the logarithmic variables `y = ln(r/xi)`,
+`k = lambda_r/lambda_theta` and `T = N_rr/(G h0)`, radial equilibrium is one
+trajectory, `dT/dy = -(1 + k)`, independent of `Ec`, leaving the linear far field
+at `y = T = 0`; a sheet with elastocapillary number `Ec` arrests where
+`T = -2/Ec`, at `y = ln(R/r0)`. `run_depth_averaged_equilibrium.py` integrates
+that trajectory once and evaluates the hole radius, the edge thickness and the
+thickness behind the edge for a list of `Ec`.
+
 ## Running
 
 [uv](https://docs.astral.sh/uv/) owns the environment. Python is pinned by
@@ -105,6 +117,8 @@ uv run python simulationCases/run_axisymmetric_viscoelastic.py \
     simulationCases/axisymmetric_viscoelastic.json --out <new folder> --check
 uv run python simulationCases/run_elastocapillary_equilibrium.py \
     simulationCases/elastocapillary_equilibrium.json --out <new folder>
+uv run python simulationCases/run_depth_averaged_equilibrium.py \
+    simulationCases/depth_averaged_equilibrium.json --out <new folder>
 uv run python -m pytest testCases
 ```
 

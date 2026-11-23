@@ -81,8 +81,9 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
 ## Repository rules
 
 - Layout: library code in `src/taylor_culick_fem/`; the entry points
-  `simulationCases/run_axisymmetric_viscoelastic.py` and
-  `simulationCases/run_elastocapillary_equilibrium.py` and their default cases in
+  `simulationCases/run_axisymmetric_viscoelastic.py`,
+  `simulationCases/run_elastocapillary_equilibrium.py` and
+  `simulationCases/run_depth_averaged_equilibrium.py` and their default cases in
   `simulationCases/`; each evidence folder owns its drivers, cases and reference data;
   tools acting on run outputs in `postProcess/`; tests in `testCases/`. No `docs/`, no
   second cases tree and no runner at the repository root. Library code imports no
@@ -94,9 +95,9 @@ These are load-bearing. Violating them produces a plausible, wrong answer.
   `testCases/__init__.py` put it on `sys.path`; run the tests from the repository root
   with `python -m pytest testCases`.
 - Every case is validated by `src/taylor_culick_fem/cases.py` before any output, and the
-  validator names every problem. Keep `CASE_FIELDS_USED`, `EQUILIBRIUM_FIELDS_USED` and the
-  case-schema tables in `simulationCases/README.md` in step with the fields the runners
-  read.
+  validator names every problem. Keep `CASE_FIELDS_USED`, `EQUILIBRIUM_FIELDS_USED`,
+  `DEPTH_AVERAGED_FIELDS_USED` and the case-schema tables in `simulationCases/README.md` in
+  step with the fields the runners read.
 - Every run writes `run-manifest.json` before any other output, binding the case hash, the
   component commit and the pyoomph commit, and never replaces it. Every run, fresh or
   restart, uses a new output folder; a continuation uses the same case with

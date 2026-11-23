@@ -144,3 +144,47 @@ when the branch passes `Ec_stop` and 1 when it stalls.
 | `solver.newton_tolerance`, `.max_newton`, `.eigenvalues` | Newton tolerance, iteration limit and the number of eigenvalues computed per point |
 | `regularisation.cap_beta` | optional Mooney--Rivlin stiffening of the edge-cap material (default 0); a numerical regularisation for the most compressed cap |
 | `regularisation.volume_penalty` | optional non-negative coefficient of the augmented energy `Ec (J-1)^2/2` (default 0); the mixed pressure constraint remains in place and the added stress vanishes at `J=1` |
+
+# depth_averaged_equilibrium
+
+The thin-sheet special case of the equilibrium above. The sheet is depth-averaged: each
+material column at reference radius `xi` stays one column, is stretched by
+`lambda_r = dr/dxi` and `lambda_theta = r/xi`, and changes thickness by
+`lambda_z = 1/(lambda_r lambda_theta)`; the neo-Hookean membrane is in plane stress and the free edge is sharp, with
+the tension `-2 sigma` of both faces. In `y = ln(r/xi)`, `k = lambda_r/lambda_theta` and
+`T = N_rr/(G h0)`, radial equilibrium becomes one trajectory, `dT/dy = -(1 + k)`, that does
+not depend on `Ec`; it leaves the linear far field at `y = 0`, `T = 0`, and a sheet with
+elastocapillary number `Ec` stops at the free edge `T = -2/Ec`, where `y = ln(R/r0)`.
+[`run_depth_averaged_equilibrium.py`](run_depth_averaged_equilibrium.py) integrates that
+trajectory once (`taylor_culick_fem.depth_averaged_equilibrium.universal_trajectory`, in the
+state `zeta = -ln(lambda_z)`, `I = int_0^y k`, from the far-field series with DOP853) and
+evaluates every listed `Ec` from it. [`depth_averaged_equilibrium.json`](depth_averaged_equilibrium.json)
+is the default case.
+
+```bash
+python simulationCases/run_depth_averaged_equilibrium.py simulationCases/depth_averaged_equilibrium.json --out <new folder>
+```
+
+The output folder holds `run-manifest.json` first, then `progress.jsonl`, `arrest.csv` and
+the metadata `case.json` (the constant `C = int_0^inf k dy`, so that `ln(R/r0) -> 2/Ec - C`
+as `Ec -> 0`, and the trajectory numerics). `arrest.csv` has one row per `Ec`: `Ec`,
+`log_radius_ratio` (`ln(R/r0)`), its lower bound `log_radius_ratio_lower_bound` (from
+`lambda_z >= 1`), `log_remainder` (the log of the stopping remainder
+`int_Y^inf k dy`), `edge_thickness` (`lambda_z` at the edge), `edge_quartic_residual` (the
+edge thickness less the root of the edge identity `lambda^4 - (2/Ec) lambda - exp(-2Y) = 0`)
+and `h_at_<d>`, the thickness `h/h0` a deformed distance `d` behind the edge for each listed
+distance. Radii appear only as logarithms, so `Ec` down to `1e-3` needs no representable
+`R`. The problem is static and has no restart; `--check` stops after the checks.
+
+| Field | Meaning |
+|---|---|
+| `schema`, `case_id`, `nondimensionalization` | as above; lengths on `h0`, tensions on `sigma` |
+| `geometry` | `{"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "lagrangian"}` |
+| `physics.problem` | `"depth_averaged_equilibrium"` |
+| `physics.r0` | reference edge radius; the hole radius and the distances scale with it |
+| `physics.Ec` | the elastocapillary numbers to evaluate, distinct, each with `2/Ec + 20 <= solver.log_radius_max` |
+| `evaluation.distances` | distinct non-negative deformed distances behind the edge (on `h0`) at which to report the thickness, each with a finite `distance / r0`; may be empty |
+| `solver.far_seed` | `y` at which the far-field series starts the trajectory (at most `1e-2`; its truncation error is `O(far_seed^5)`) |
+| `solver.rtol`, `solver.atol` | DOP853 tolerances of the trajectory |
+| `solver.log_radius_max` | largest `y` integrated (at least 60) |
+| `solver.max_step` | largest DOP853 step in `y` |

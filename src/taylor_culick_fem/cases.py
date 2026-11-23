@@ -2,7 +2,9 @@
 
 The axisymmetric viscoelastic runner reads physics and numerics from its case, and so does
 the equilibrium runner (``physics.problem`` = ``axisymmetric_elastocapillary_equilibrium``),
-whose case carries the reference geometry, mesh, continuation and solver settings. The
+whose case carries the reference geometry, mesh, continuation and solver settings, and so
+does its depth-averaged special case (``physics.problem`` = ``depth_averaged_equilibrium``),
+whose case lists the ``Ec`` values, the distances and the trajectory numerics. The
 Newtonian study runners (``physics.problem`` = ``planar_comoving``, ``axisymmetric_lab``
 or ``axisymmetric_comoving``) read only the physics, ``physics.Oh``, and take every
 numerical parameter from their options.
@@ -59,6 +61,15 @@ EQUILIBRIUM_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coor
                               for key, _ in keys]
                            + ["mesh.columns", "mesh.shoulder_angle", "mesh.blend", "mesh.template",
                               "regularisation.cap_beta", "regularisation.volume_penalty"])
+#: The depth-averaged arrested hole: the thin-sheet special case of ``EQUILIBRIUM``, evaluated
+#: for a list of ``Ec`` from one ``Ec``-independent trajectory (``depth_averaged_equilibrium``).
+DEPTH_AVERAGED = "depth_averaged_equilibrium"
+DEPTH_AVERAGED_GEOMETRY = {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "lagrangian"}
+DEPTH_AVERAGED_SOLVER = ("far_seed", "rtol", "atol", "log_radius_max", "max_step")
+DEPTH_AVERAGED_FIELDS_USED = (["schema", "case_id", "geometry.kind", "geometry.coordinates",
+                               "geometry.frame", "nondimensionalization", "physics.problem",
+                               "physics.r0", "physics.Ec", "evaluation.distances"]
+                              + [f"solver.{key}" for key in DEPTH_AVERAGED_SOLVER])
 LAGRANGIAN = "axisymmetric_lagrangian_retraction"
 LAGRANGIAN_GEOMETRY = {"kind": "axisymmetric", "coordinates": ["r", "z"], "frame": "lagrangian"}
 LAGRANGIAN_SECTIONS = {
@@ -523,6 +534,56 @@ def _equilibrium_problems(case: dict) -> list[str]:
     return problems
 
 
+def _depth_averaged_problems(case: dict) -> list[str]:
+    """The depth-averaged arrested hole: ``Ec`` values, distances and trajectory numerics."""
+    problems: list[str] = []
+    if case.get("schema") != SCHEMA:
+        problems.append(f"case.schema must be {SCHEMA!r}")
+    if not isinstance(case.get("case_id"), str) or not CASE_ID.fullmatch(case["case_id"]):
+        problems.append("case.case_id must match " + CASE_ID.pattern)
+    if "restart" in case:
+        problems.append("case.restart is not accepted: this static problem has no restart")
+    geometry = case.get("geometry")
+    if not isinstance(geometry, dict) or any(geometry.get(k) != v
+                                             for k, v in DEPTH_AVERAGED_GEOMETRY.items()):
+        problems.append(f"case.geometry must be {DEPTH_AVERAGED_GEOMETRY}")
+    nondim = case.get("nondimensionalization")
+    if not isinstance(nondim, dict) or not nondim:
+        problems.append("case.nondimensionalization must be a non-empty object")
+    physics = _section(case, "physics", problems)
+    evaluation = _section(case, "evaluation", problems)
+    solver = _section(case, "solver", problems)
+    if physics.get("problem") != DEPTH_AVERAGED:
+        problems.append(f"physics.problem must be {DEPTH_AVERAGED!r}")
+    _positive(physics, "r0", "physics", problems)
+    for key in DEPTH_AVERAGED_SOLVER:
+        _positive(solver, key, "solver", problems)
+    if _number(solver.get("far_seed")) and solver["far_seed"] > 1e-2:
+        problems.append("solver.far_seed must be at most 1e-2 (the far-field series start)")
+    if _number(solver.get("log_radius_max")) and solver["log_radius_max"] < 60:
+        problems.append("solver.log_radius_max must be at least 60")
+    values = physics.get("Ec")
+    if not isinstance(values, list) or not values or not all(_number(v) and v > 0 for v in values):
+        problems.append("physics.Ec must be a non-empty list of finite positive numbers")
+    elif len(set(values)) != len(values):
+        problems.append("physics.Ec must not repeat a value")
+    else:
+        top, seed = solver.get("log_radius_max"), solver.get("far_seed")
+        if _number(top) and any(2 / v + 20 > top for v in values):
+            problems.append("every physics.Ec needs 2/Ec + 20 <= solver.log_radius_max")
+        if _number(seed) and any(2 / v <= 2 * seed for v in values):
+            problems.append("every physics.Ec needs 2/Ec > 2 solver.far_seed")
+    distances = evaluation.get("distances")
+    if not isinstance(distances, list) or not all(_number(d) and d >= 0 for d in distances):
+        problems.append("evaluation.distances must be a list of finite non-negative numbers")
+    elif len(set(distances)) != len(distances):
+        problems.append("evaluation.distances must not repeat a value")
+    elif distances and _number(physics.get("r0")) and physics["r0"] > 0 \
+            and not math.isfinite(max(distances) / physics["r0"]):
+        problems.append("evaluation.distances / physics.r0 must be representable as a float")
+    return problems
+
+
 def _lagrangian_problems(case: dict) -> list[str]:
     """The transient Lagrangian solver's case: a Kelvin--Voigt sheet (``lambda = inf``)."""
     problems: list[str] = []
@@ -621,6 +682,8 @@ def case_problems(case: object, problem: str | None = None) -> list[str]:
         return _equilibrium_problems(case)
     if wanted == LAGRANGIAN:
         return _lagrangian_problems(case)
+    if wanted == DEPTH_AVERAGED:
+        return _depth_averaged_problems(case)
     if wanted != VISCOELASTIC:
         return [f"unknown problem {wanted!r}"]
     problems: list[str] = []
